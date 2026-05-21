@@ -14,7 +14,6 @@ const App = {
     PoolView.init();
     GanttView.init();
     DashboardView.init();
-    QualificationView.init();
 
     if (Auth.getSession()) {
       this.showMain();
@@ -57,7 +56,6 @@ const App = {
       p.classList.toggle('hidden', p.id !== 'tab-' + name);
     });
     if (name === 'gantt') GanttView.refresh();
-    if (name === 'qual') QualificationView.refresh();
   },
 
   setupLogout() {
@@ -80,7 +78,6 @@ const App = {
       PoolView.refresh();
       GanttView.refresh();
       DashboardView.refresh();
-      QualificationView.refresh();
     } catch (err) {
       console.error('データ取得失敗:', err);
       alert('データ取得に失敗しました: ' + err.message);
