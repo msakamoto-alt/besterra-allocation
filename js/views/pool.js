@@ -59,7 +59,7 @@ const PoolView = {
     tbody.innerHTML = rows.map(e => {
       const asgs = (Sync.cache.assignments || []).filter(a => a.emp_id === e.id);
       const asgStr = asgs.length
-        ? asgs.map(a => this.escape(a.project_name) + ' (' + Math.round(a.allocation * 100) + '%)').join(', ')
+        ? asgs.map(a => this.escape(a.project_name)).join(', ')
         : '<span class="text-slate-400">なし</span>';
 
       const myQuals = (Sync.cache.employee_qualifications || []).filter(eq => eq.emp_id === e.id);

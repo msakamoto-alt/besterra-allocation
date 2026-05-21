@@ -28,8 +28,6 @@ const DashboardView = {
     const emp = (Sync.cache.employees || []).find(e => e.id === empId);
     if (!emp) return;
     const asgs = (Sync.cache.assignments || []).filter(a => a.emp_id === empId);
-    const totalAlloc = asgs.reduce((s, a) => s + a.allocation, 0);
-    const free = Math.max(0, 1 - totalAlloc);
 
     // G工番モック（仕様書 §3.7 g_work_logs 投入前のデモ）
     const gMockCats = { '資料作成・事務': 18, '安全衛生・KY': 6, '視察・調査': 4, '会議・打合せ': 2, '教育・研修': 3 };
@@ -47,11 +45,11 @@ const DashboardView = {
       asgTbl = '<p class="text-slate-400 text-sm">配置なし</p>';
     } else {
       asgTbl = '<table class="w-full text-sm"><thead class="bg-slate-50"><tr>' +
-        '<th class="p-2 text-left">現場</th><th class="p-2">配置率</th><th class="p-2">役割</th><th class="p-2">予定終了</th></tr></thead><tbody>';
+        '<th class="p-2 text-left">現場</th><th class="p-2">役割</th><th class="p-2">開始</th><th class="p-2">予定終了</th></tr></thead><tbody>';
       asgs.forEach(a => {
         asgTbl += `<tr class="border-t"><td class="p-2">${this.esc(a.project_name)}</td>` +
-          `<td class="p-2 text-center">${Math.round(a.allocation * 100)}%</td>` +
           `<td class="p-2 text-center">${this.esc(a.role)}</td>` +
+          `<td class="p-2 text-center text-xs">${this.esc(a.join || '-')}</td>` +
           `<td class="p-2 text-center text-xs">${this.esc(a.planned_end || '-')}</td></tr>`;
       });
       asgTbl += '</tbody></table>';
@@ -86,20 +84,13 @@ const DashboardView = {
       qualHtml += '</div>';
     }
 
-    const allocColor = totalAlloc >= 1 ? 'text-red-600' : (totalAlloc >= 0.5 ? 'text-amber-600' : 'text-emerald-600');
-
     document.getElementById('dash-content').innerHTML =
-      '<div class="grid grid-cols-3 gap-4 mb-4">' +
+      '<div class="grid grid-cols-2 gap-4 mb-4">' +
         '<div class="bg-white rounded-lg shadow p-4">' +
           '<div class="text-sm text-slate-600">監督名</div>' +
           `<div class="text-xl font-bold mt-1">${this.esc(emp.name)}</div>` +
           `<div class="text-xs text-slate-500 mt-1">${this.esc(emp.department || '-')} / ${this.esc(emp.role || '一般')}</div>` +
           `<div class="mt-2">${PoolView.categoryBadge(emp.category)}</div>` +
-        '</div>' +
-        '<div class="bg-white rounded-lg shadow p-4">' +
-          '<div class="text-sm text-slate-600">現在の配置率</div>' +
-          `<div class="text-3xl font-bold mt-1 ${allocColor}">${Math.round(totalAlloc * 100)}%</div>` +
-          `<div class="text-xs text-slate-500 mt-1">${totalAlloc >= 1 ? '満杯' : '余裕 ' + Math.round(free * 100) + '%'}</div>` +
         '</div>' +
         '<div class="bg-white rounded-lg shadow p-4">' +
           '<div class="text-sm text-slate-600">配置現場数</div>' +

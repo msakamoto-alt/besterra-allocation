@@ -1,18 +1,20 @@
 /**
- * gantt.js - 現場人員配置（4軸ガント＋月→日ドリルダウン）
+ * gantt.js - 現場人員配置（4軸ガント＋月→日ドリルダウン＋期間フィルタ＋今日マーカー）
  *
- * 縦軸ごとの仕様:
- * - project（現場）: 縦=現場、各現場の配置監督ごとに個別バー（横=join〜leave）、色=役割
- * - person（人）:    縦=監督職員、各人の配置現場ごとに個別バー（横=join〜leave）、色=現場ID
- * - department（事務所）: 縦=事務所配下の個人、各人の配置現場ごとに個別バー、色=現場ID
- * - qualification（資格）: 縦=資格別の保有者、各人の配置現場ごとに個別バー、色=現場ID
- *
- * 横軸: 2行ヘッダ（月行＋日行）。月ヘッダクリックで該当月を日次展開（⌄→⌃）。
+ * 全軸共通：
+ * - バー色は役割（主任監督=濃青/副監督=シアン/支援=スレート/視察=ブラウン）
+ * - バー内テキストに配置率(%)は表示しない
+ * - 表示期間は displayStart 〜 displayEnd で制御
+ * - 今日の縦赤線マーカー
  */
 
 const GanttView = {
   currentAxis: 'project',
   expandedMonths: new Set(),
+
+  // 表示期間（初期化時に設定）
+  displayStart: null,
+  displayEnd: null,
 
   MONTH_WIDTH: 70,
   DAY_WIDTH: 26,
@@ -20,7 +22,7 @@ const GanttView = {
   BAR_HEIGHT: 22,
   BAR_GAP: 4,
 
-  // 役割→色（現場軸用）
+  // 役割→色（全軸共通）
   ROLE_COLOR: {
     '主任監督': '#1e40af',
     '副監督': '#0891b2',
@@ -28,27 +30,26 @@ const GanttView = {
     '視察': '#a16207',
   },
 
-  // 現場識別用パレット（人・事務所・資格軸で各現場に固有色）
-  PROJECT_PALETTE: [
-    '#1e40af', '#0891b2', '#059669', '#ea580c', '#7c3aed',
-    '#db2777', '#a16207', '#0e7490', '#9f1239', '#475569',
-    '#15803d', '#b45309', '#1d4ed8',
-  ],
-
   AXIS_DESC: {
-    project: '縦軸＝現場、各現場の配置監督ごとに個別バー（横軸＝配置期間 join〜leave）。色は役割。同じ現場でも人によって配置期間が異なる場合は別バーで表示。',
-    person: '縦軸＝監督職員、横軸＝配置現場の期間。色は現場ごとに固有（色＝現場識別）。1人複数現場の配置はバーを縦積み。',
-    department: '縦軸＝事務所配下の個人、横軸＝配置現場の期間。色は現場ごとに固有。事務所別キャパが個人別に分かる。',
-    qualification: '縦軸＝資格別の保有者、横軸＝配置現場の期間。色は現場ごとに固有。同一人が複数資格を持つ場合は各資格グループに繰り返し表示。',
+    project: '縦軸＝現場、横軸＝配置期間（join〜leave）。配置監督ごとに個別バー表示。色は役割。',
+    person: '縦軸＝監督職員、横軸＝配置現場の期間。色は配置現場での役割。複数現場の配置はバー縦積み。',
+    department: '縦軸＝事務所配下の個人、横軸＝配置現場の期間。色は役割。事務所別キャパが個人別に分かる。',
+    qualification: '縦軸＝資格別の保有者、横軸＝配置現場の期間。色は役割。同一人複数資格は各グループに繰り返し表示。',
   },
 
   init() {
+    // デフォルト期間：今年1月〜2年後の12月
+    const now = new Date();
+    this.displayStart = new Date(2026, 0, 1);  // 2026/1
+    this.displayEnd = new Date(now.getFullYear() + 2, 11, 31);
+
     document.querySelectorAll('.gantt-axis-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         this.currentAxis = btn.dataset.axis;
         this.refresh();
       });
     });
+
     document.getElementById('gantt-container').addEventListener('click', (e) => {
       const th = e.target.closest('[data-month-key]');
       if (!th) return;
@@ -57,6 +58,50 @@ const GanttView = {
       else this.expandedMonths.add(key);
       this.refresh();
     });
+
+    // 期間フィルタ
+    const startInput = document.getElementById('gantt-start');
+    const endInput = document.getElementById('gantt-end');
+    startInput.value = this.formatMonth(this.displayStart);
+    endInput.value = this.formatMonth(this.displayEnd);
+    startInput.addEventListener('change', () => {
+      if (startInput.value) {
+        const [y, m] = startInput.value.split('-').map(Number);
+        this.displayStart = new Date(y, m - 1, 1);
+        this.refresh();
+      }
+    });
+    endInput.addEventListener('change', () => {
+      if (endInput.value) {
+        const [y, m] = endInput.value.split('-').map(Number);
+        this.displayEnd = new Date(y, m, 0);
+        this.refresh();
+      }
+    });
+
+    // 今日ボタン
+    document.getElementById('gantt-today').addEventListener('click', () => {
+      this.scrollToToday();
+    });
+
+    // 期間リセット
+    document.getElementById('gantt-reset').addEventListener('click', () => {
+      this.displayStart = new Date(2026, 0, 1);
+      this.displayEnd = new Date(new Date().getFullYear() + 2, 11, 31);
+      this.expandedMonths.clear();
+      startInput.value = this.formatMonth(this.displayStart);
+      endInput.value = this.formatMonth(this.displayEnd);
+      this.refresh();
+    });
+
+    // 今日ラベル
+    const today = new Date();
+    document.getElementById('gantt-today-label').textContent =
+      `今日: ${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
+  },
+
+  formatMonth(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   },
 
   refresh() {
@@ -74,7 +119,18 @@ const GanttView = {
     }
   },
 
-  // ===== 共通：日付・セル =====
+  scrollToToday() {
+    const cells = this.buildCells();
+    if (cells.length === 0) return;
+    const today = new Date();
+    const px = this.dateToPx(today, cells);
+    const container = document.getElementById('gantt-container');
+    // スクロール位置：今日が画面中央付近に来るように
+    const scrollX = Math.max(0, this.LABEL_WIDTH + px - container.clientWidth / 2);
+    container.scrollTo({ left: scrollX, behavior: 'smooth' });
+  },
+
+  // ===== セル生成（期間フィルタ反映） =====
 
   parseDate(s) {
     if (s instanceof Date) return s;
@@ -83,15 +139,10 @@ const GanttView = {
 
   monthKey(date) { return date.getFullYear() + '-' + (date.getMonth() + 1); },
 
-  buildCells(extraDates = []) {
-    const projects = Sync.cache.projects || [];
-    let dates = projects.flatMap(p => [p.start, p.end]).filter(Boolean).map(s => this.parseDate(s));
-    dates = dates.concat(extraDates.filter(Boolean).map(s => this.parseDate(s)));
-    if (dates.length === 0) return [];
-    let minD = new Date(Math.min(...dates));
-    let maxD = new Date(Math.max(...dates));
-    minD = new Date(minD.getFullYear(), minD.getMonth(), 1);
-    maxD = new Date(maxD.getFullYear(), maxD.getMonth() + 1, 1);
+  buildCells() {
+    const minD = new Date(this.displayStart.getFullYear(), this.displayStart.getMonth(), 1);
+    const maxD = new Date(this.displayEnd.getFullYear(), this.displayEnd.getMonth() + 1, 1);
+    if (maxD <= minD) return [];
 
     const cells = [];
     let cur = new Date(minD);
@@ -143,7 +194,23 @@ const GanttView = {
     return px;
   },
 
-  // 2行ヘッダ
+  // 期間にバー範囲をクリップ（表示範囲外なら null）
+  clipRange(start, end, cells) {
+    if (cells.length === 0) return null;
+    const rangeStart = cells[0].date;
+    const last = cells[cells.length - 1];
+    const rangeEnd = last.type === 'month'
+      ? new Date(last.date.getFullYear(), last.date.getMonth() + 1, 1)
+      : new Date(last.date.getFullYear(), last.date.getMonth(), last.date.getDate() + 1);
+    if (end < rangeStart || start > rangeEnd) return null;
+    return {
+      start: start < rangeStart ? rangeStart : start,
+      end: end > rangeEnd ? rangeEnd : end,
+      truncStart: start < rangeStart,
+      truncEnd: end > rangeEnd,
+    };
+  },
+
   headerHtml(cells) {
     let row1 = `<tr><th rowspan="2" class="p-2 bg-slate-200 sticky left-0 border-r text-left z-20 align-middle" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px;height:60px">縦軸 / 配置</th>`;
     let row2 = '<tr>';
@@ -172,7 +239,6 @@ const GanttView = {
     return '<thead>' + row1 + row2 + '</thead>';
   },
 
-  // 背景の縦罫線
   gridDivs(cells) {
     let html = '';
     let px = 0;
@@ -184,12 +250,25 @@ const GanttView = {
     return html;
   },
 
-  // バー描画ヘルパ
+  // 今日マーカー（縦赤線）
+  todayMarker(cells) {
+    const today = new Date();
+    const clip = this.clipRange(today, today, cells);
+    if (!clip) return '';
+    const px = this.dateToPx(today, cells);
+    return `<div class="gantt-today-line" style="position:absolute;left:${px}px;top:0;bottom:0;width:2px;background:#ef4444;z-index:2;pointer-events:none"><div style="position:absolute;top:-4px;left:-4px;width:10px;height:10px;background:#ef4444;border-radius:50%"></div></div>`;
+  },
+
+  // バー描画（左切れ・右切れの矢印付き）
   renderBar(start, end, cells, color, label, top, title) {
-    const left = this.dateToPx(start, cells);
-    const right = this.dateToPx(end, cells);
+    const clip = this.clipRange(start, end, cells);
+    if (!clip) return '';
+    const left = this.dateToPx(clip.start, cells);
+    const right = this.dateToPx(clip.end, cells);
     const width = Math.max(16, right - left - 2);
-    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${color};height:${this.BAR_HEIGHT}px" title="${this.esc(title || '')}">${this.esc(label || '')}</div>`;
+    const truncLeft = clip.truncStart ? 'border-left:2px dashed #fff;' : '';
+    const truncRight = clip.truncEnd ? 'border-right:2px dashed #fff;' : '';
+    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${color};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}" title="${this.esc(title || '')}">${this.esc(label || '')}</div>`;
   },
 
   esc(text) {
@@ -197,33 +276,30 @@ const GanttView = {
     return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   },
 
-  // 現場ID→色（パレットからハッシュで決定）
-  projectColor(projectId) {
-    let hash = 0;
-    for (let i = 0; i < String(projectId).length; i++) {
-      hash = ((hash << 5) - hash) + String(projectId).charCodeAt(i);
-    }
-    return this.PROJECT_PALETTE[Math.abs(hash) % this.PROJECT_PALETTE.length];
-  },
-
-  // ===== 1. 現場軸（各現場の配置監督ごとに個別バー） =====
+  // ===== 1. 現場軸 =====
 
   renderProjectAxis() {
     const projects = Sync.cache.projects || [];
     const assignments = Sync.cache.assignments || [];
     const cells = this.buildCells();
-    if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
-    const totalW = this.cellsTotalWidth(cells);
+    if (cells.length === 0) return '<p class="p-4 text-slate-500">表示範囲のデータがありません</p>';
     const colCount = cells.length;
+    const todayMarkerHtml = this.todayMarker(cells);
+
+    // 表示範囲に1日でも重なる現場のみ
+    const visibleProjects = projects.filter(p => {
+      const s = this.parseDate(p.start);
+      const e = this.parseDate(p.end);
+      return this.clipRange(s, e, cells);
+    });
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
-    projects.forEach(p => {
+    visibleProjects.forEach(p => {
       const projAsgs = assignments.filter(a => a.project_id === p.project_id);
       const rowH = Math.max(64, 16 + Math.max(1, projAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
-      // ラベル列：現場情報＋配置者名＋配置率
       const labelMembers = projAsgs.map(a =>
-        `<span class="inline-block mr-2"><span class="font-medium">${this.esc(a.emp_name)}</span><span class="text-slate-500">(${Math.round(a.allocation * 100)}%)</span></span>`
+        `<span class="inline-block mr-2 font-medium">${this.esc(a.emp_name)}</span>`
       ).join('');
 
       html += '<tr class="border-t">' +
@@ -233,11 +309,10 @@ const GanttView = {
           `<div class="text-xs mt-1">${labelMembers || '<span class="text-slate-400">配置未登録</span>'}</div>` +
         '</td>' +
         `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
-          this.gridDivs(cells);
+          this.gridDivs(cells) +
+          todayMarkerHtml;
 
-      // 各配置監督ごとに個別バー
       if (projAsgs.length === 0) {
-        // 配置なしの場合は工期全体を薄いグレーで表示
         const start = this.parseDate(p.start);
         const end = this.parseDate(p.end);
         html += this.renderBar(start, end, cells, '#cbd5e1', '配置未登録', 8, `${p.name}（${p.start}〜${p.end}）配置未登録`);
@@ -265,8 +340,9 @@ const GanttView = {
     const assignments = Sync.cache.assignments || [];
     const projects = Sync.cache.projects || [];
     const cells = this.buildCells();
-    if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
+    if (cells.length === 0) return '<p class="p-4 text-slate-500">表示範囲のデータがありません</p>';
     const colCount = cells.length;
+    const todayMarkerHtml = this.todayMarker(cells);
 
     const assignedIds = new Set(assignments.map(a => a.emp_id));
     const sorted = [...employees].sort((a, b) => {
@@ -279,24 +355,24 @@ const GanttView = {
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     sorted.forEach(e => {
       const myAsgs = assignments.filter(a => a.emp_id === e.id);
-      const totalAlloc = myAsgs.reduce((s, a) => s + a.allocation, 0);
       const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
       html += '<tr class="border-t">' +
         `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
           `<div class="font-medium text-sm">${this.esc(e.name)}</div>` +
-          `<div class="text-xs text-slate-500">${this.esc(e.department || '')} / 配置率 ${Math.round(totalAlloc * 100)}%</div>` +
+          `<div class="text-xs text-slate-500">${this.esc(e.department || '')}</div>` +
           `<div class="mt-1">${PoolView.categoryBadge(e.category)}</div>` +
         '</td>' +
         `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
-          this.gridDivs(cells);
+          this.gridDivs(cells) +
+          todayMarkerHtml;
 
       myAsgs.forEach((a, idx) => {
         const proj = projects.find(p => p.project_id === a.project_id);
         if (!proj) return;
         const start = this.parseDate(a.join);
         const end = this.parseDate(a.planned_end || proj.end);
-        const color = this.projectColor(a.project_id);
+        const color = this.ROLE_COLOR[a.role] || '#64748b';
         const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
         html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}`);
       });
@@ -304,7 +380,7 @@ const GanttView = {
     });
     html += '</tbody></table>';
 
-    html += this.legendProjects();
+    html += this.legendRole();
     return html;
   },
 
@@ -315,9 +391,9 @@ const GanttView = {
     const assignments = Sync.cache.assignments || [];
     const projects = Sync.cache.projects || [];
     const cells = this.buildCells();
-    if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
-    const totalW = this.cellsTotalWidth(cells);
+    if (cells.length === 0) return '<p class="p-4 text-slate-500">表示範囲のデータがありません</p>';
     const colCount = cells.length;
+    const todayMarkerHtml = this.todayMarker(cells);
 
     const empByDept = {};
     employees.forEach(e => {
@@ -341,22 +417,22 @@ const GanttView = {
 
       emps.forEach(e => {
         const myAsgs = assignments.filter(a => a.emp_id === e.id);
-        const totalAlloc = myAsgs.reduce((s, a) => s + a.allocation, 0);
         const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
         html += '<tr class="border-t">' +
           `<td class="p-2 sticky left-0 bg-white border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
             `<div class="text-sm font-medium">${this.esc(e.name)}</div>` +
-            `<div class="text-xs text-slate-500 mt-1">配置率 ${Math.round(totalAlloc * 100)}% ${PoolView.categoryBadge(e.category)}</div>` +
+            `<div class="text-xs text-slate-500 mt-1">${PoolView.categoryBadge(e.category)}</div>` +
           '</td>' +
           `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
-            this.gridDivs(cells);
+            this.gridDivs(cells) +
+            todayMarkerHtml;
         myAsgs.forEach((a, idx) => {
           const proj = projects.find(p => p.project_id === a.project_id);
           if (!proj) return;
           const start = this.parseDate(a.join);
           const end = this.parseDate(a.planned_end || proj.end);
-          const color = this.projectColor(a.project_id);
+          const color = this.ROLE_COLOR[a.role] || '#64748b';
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
           html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}`);
         });
@@ -365,7 +441,7 @@ const GanttView = {
     });
     html += '</tbody></table>';
 
-    html += this.legendProjects();
+    html += this.legendRole();
     return html;
   },
 
@@ -385,8 +461,9 @@ const GanttView = {
     const empMap = {};
     employees.forEach(e => empMap[e.id] = e);
     const cells = this.buildCells();
-    if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
+    if (cells.length === 0) return '<p class="p-4 text-slate-500">表示範囲のデータがありません</p>';
     const colCount = cells.length;
+    const todayMarkerHtml = this.todayMarker(cells);
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
 
@@ -424,14 +501,15 @@ const GanttView = {
             `<div class="text-xs text-slate-500 mt-1">${this.esc(emp.department || '')} ${PoolView.categoryBadge(emp.category)}</div>` +
           '</td>' +
           `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
-            this.gridDivs(cells);
+            this.gridDivs(cells) +
+            todayMarkerHtml;
 
         myAsgs.forEach((a, idx) => {
           const proj = projects.find(p => p.project_id === a.project_id);
           if (!proj) return;
           const start = this.parseDate(a.join);
           const end = this.parseDate(a.planned_end || proj.end);
-          const color = this.projectColor(a.project_id);
+          const color = this.ROLE_COLOR[a.role] || '#64748b';
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
           html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}`);
         });
@@ -443,12 +521,11 @@ const GanttView = {
     });
     html += '</tbody></table>';
 
-    html += this.legendProjects();
-    html += '<p class="text-xs text-slate-500 p-3 border-t">※ 縦軸は資格別グループ。同一人が複数資格を保有する場合、各資格グループに重複表示されます。期限・有効期間の詳細は「4.資格管理」タブを参照。</p>';
+    html += this.legendRole();
+    html += '<p class="text-xs text-slate-500 p-3 border-t">※ 縦軸は資格別グループ。同一人が複数資格を保有する場合、各資格グループに重複表示されます。期限詳細は「4.資格管理」タブを参照。</p>';
     return html;
   },
 
-  // 凡例（役割）
   legendRole() {
     let html = '<div class="p-3 border-t bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
       '<span class="font-semibold text-slate-700">色＝役割:</span>';
@@ -456,19 +533,7 @@ const GanttView = {
       html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${this.esc(k)}</span>`;
     });
     html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;background:#cbd5e1;border-radius:3px"></span>配置未登録</span>';
-    html += '</div>';
-    return html;
-  },
-
-  // 凡例（現場ID色）
-  legendProjects() {
-    const projects = Sync.cache.projects || [];
-    let html = '<div class="p-3 border-t bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
-      '<span class="font-semibold text-slate-700">色＝現場:</span>';
-    projects.forEach(p => {
-      const color = this.projectColor(p.project_id);
-      html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${color};border-radius:3px"></span>${this.esc(p.name.length > 18 ? p.name.substring(0, 17) + '…' : p.name)}</span>`;
-    });
+    html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:2px;height:14px;background:#ef4444"></span>今日</span>';
     html += '</div>';
     return html;
   },
