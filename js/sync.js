@@ -19,6 +19,7 @@ const Sync = {
     qualifications: 'qualifications',
     employee_qualifications: 'employee_qualifications',
     salesforce_imports: 'salesforce_imports',
+    prospects: 'prospects',
   },
 
   cache: {},
@@ -138,6 +139,77 @@ const Sync = {
     return /完成|完工|完了|終了/.test(s);
   },
 
+  // 見込み案件（prospects）から projects と assignments を派生
+  // 1行 = 1配置候補（人×現場×期間）。同じ prospect_id の複数行は projects は1件、assignments は複数
+  deriveFromProspects(prospectRows, employees) {
+    const projectsMap = {};
+    const assignments = [];
+    const empByName = {};
+    (employees || []).forEach(e => {
+      const key = (e.name || '').replace(/\s+/g, '');
+      if (key) empByName[key] = e;
+    });
+
+    let asgIdSeq = 10000;  // Salesforce由来と衝突しないよう大きな値から
+    prospectRows.forEach(r => {
+      const pid = String(r.prospect_id || '').trim();
+      if (!pid) return;
+
+      if (!projectsMap[pid]) {
+        projectsMap[pid] = {
+          project_id: pid,
+          name: r.project_name,
+          customer: r.customer,
+          start: this.normalizeDate(r.start_date),
+          end: this.normalizeDate(r.end_date),
+          amount: this.parseAmount(r.amount),
+          kind: '見込み',
+          dept: r.managing_dept || '',
+          status: r.status || '見込み',
+          probability: r.probability || '',
+          prospect: true,
+          completed: false,
+        };
+      }
+
+      const empName = this.normalizeName(r.proposed_member || '');
+      if (!empName) return;
+      const empKey = empName.replace(/\s+/g, '');
+      const emp = empByName[empKey];
+
+      assignments.push({
+        assignment_id: asgIdSeq++,
+        emp_id: emp ? emp.id : null,
+        emp_name: empName,
+        project_id: pid,
+        project_name: r.project_name,
+        allocation: 1,
+        join: this.normalizeDate(r.start_date),
+        leave: null,
+        planned_end: this.normalizeDate(r.end_date),
+        role: this.mapRole(r.role) || (r.role || '副監督'),
+        role_sf: r.role,
+        confirmed: false,
+        completed: false,
+        prospect: true,
+        source: 'prospect',
+      });
+    });
+
+    // 役割順→氏名でソート
+    assignments.sort((a, b) => {
+      const ra = this.ROLE_ORDER[a.role] ?? 99;
+      const rb = this.ROLE_ORDER[b.role] ?? 99;
+      if (ra !== rb) return ra - rb;
+      return (a.emp_name || '').localeCompare(b.emp_name || '');
+    });
+
+    return {
+      projects: Object.values(projectsMap),
+      assignments,
+    };
+  },
+
   // Salesforceデータから projects と assignments を派生
   // 完成工事は projects.completed=true でフラグ付与（表示制御はビュー側）
   // 工事番号が空の行はスキップ（parseSalesforceCsv 段階で既に対応）
@@ -216,6 +288,7 @@ const Sync = {
         { name: 'qualifications', sheet: this.SHEET_NAMES.qualifications, parser: 'normal' },
         { name: 'employee_qualifications', sheet: this.SHEET_NAMES.employee_qualifications, parser: 'normal' },
         { name: 'salesforce_imports', sheet: this.SHEET_NAMES.salesforce_imports, parser: 'salesforce' },
+        { name: 'prospects', sheet: this.SHEET_NAMES.prospects, parser: 'normal' },
       ];
       const results = await Promise.allSettled(tasks.map(t => this.fetchSheetRaw(t.sheet)));
 
@@ -247,13 +320,23 @@ const Sync = {
         this.cache.employee_qualifications = MOCK_DATA.employee_qualifications;
       }
 
-      // Salesforce レポートから projects と assignments を派生
+      // Salesforce + prospects から projects と assignments を派生
+      let allProjects = [];
+      let allAssignments = [];
       if (this.cache.salesforce_imports && this.cache.salesforce_imports.length > 0) {
-        const derived = this.deriveFromSalesforce(this.cache.salesforce_imports, this.cache.employees);
-        this.cache.projects = derived.projects;
-        this.cache.assignments = derived.assignments;
+        const d = this.deriveFromSalesforce(this.cache.salesforce_imports, this.cache.employees);
+        allProjects = allProjects.concat(d.projects);
+        allAssignments = allAssignments.concat(d.assignments);
+      }
+      if (this.cache.prospects && this.cache.prospects.length > 0) {
+        const d = this.deriveFromProspects(this.cache.prospects, this.cache.employees);
+        allProjects = allProjects.concat(d.projects);
+        allAssignments = allAssignments.concat(d.assignments);
+      }
+      if (allProjects.length > 0 || allAssignments.length > 0) {
+        this.cache.projects = allProjects;
+        this.cache.assignments = allAssignments;
       } else {
-        // Salesforceデータが無ければモック
         this.cache.projects = MOCK_DATA.projects;
         this.cache.assignments = MOCK_DATA.assignments;
       }

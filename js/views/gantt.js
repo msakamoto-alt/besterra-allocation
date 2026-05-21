@@ -18,6 +18,8 @@ const GanttView = {
 
   // 完成工事の表示トグル（デフォルト：非表示）
   showCompleted: false,
+  // 見込み案件の表示トグル（デフォルト：非表示）
+  showProspects: false,
 
   MONTH_WIDTH: 70,
   DAY_WIDTH: 26,
@@ -103,6 +105,16 @@ const GanttView = {
       showCompletedCb.checked = this.showCompleted;
       showCompletedCb.addEventListener('change', () => {
         this.showCompleted = showCompletedCb.checked;
+        this.refresh();
+      });
+    }
+
+    // 見込み案件トグル
+    const showProspectsCb = document.getElementById('gantt-show-prospects');
+    if (showProspectsCb) {
+      showProspectsCb.checked = this.showProspects;
+      showProspectsCb.addEventListener('change', () => {
+        this.showProspects = showProspectsCb.checked;
         this.refresh();
       });
     }
@@ -272,8 +284,8 @@ const GanttView = {
     return `<div class="gantt-today-line" style="position:absolute;left:${px}px;top:0;bottom:0;width:2px;background:#ef4444;z-index:2;pointer-events:none"><div style="position:absolute;top:-4px;left:-4px;width:10px;height:10px;background:#ef4444;border-radius:50%"></div></div>`;
   },
 
-  // バー描画（左切れ・右切れの矢印付き）
-  renderBar(start, end, cells, color, label, top, title) {
+  // バー描画（左切れ・右切れの矢印付き・prospect は点線枠で区別）
+  renderBar(start, end, cells, color, label, top, title, prospect = false) {
     const clip = this.clipRange(start, end, cells);
     if (!clip) return '';
     const left = this.dateToPx(clip.start, cells);
@@ -281,7 +293,9 @@ const GanttView = {
     const width = Math.max(16, right - left - 2);
     const truncLeft = clip.truncStart ? 'border-left:2px dashed #fff;' : '';
     const truncRight = clip.truncEnd ? 'border-right:2px dashed #fff;' : '';
-    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${color};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}" title="${this.esc(title || '')}">${this.esc(label || '')}</div>`;
+    const prospectStyle = prospect ? 'opacity:0.6;border:2px dashed #fff;outline:1px solid ' + color + ';' : '';
+    const prospectIcon = prospect ? '⊘ ' : '';
+    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${color};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}${prospectStyle}" title="${this.esc(title || '')}">${prospectIcon}${this.esc(label || '')}</div>`;
   },
 
   esc(text) {
@@ -299,9 +313,10 @@ const GanttView = {
     const colCount = cells.length;
     const todayMarkerHtml = this.todayMarker(cells);
 
-    // 表示範囲に1日でも重なる現場のみ・完成は showCompleted で制御
+    // 表示範囲フィルタ・完成/見込みトグル
     const visibleProjects = projects.filter(p => {
       if (p.completed && !this.showCompleted) return false;
+      if (p.prospect && !this.showProspects) return false;
       const s = this.parseDate(p.start);
       const e = this.parseDate(p.end);
       return this.clipRange(s, e, cells);
@@ -336,7 +351,7 @@ const GanttView = {
           const end = this.parseDate(a.planned_end || p.end);
           const color = this.ROLE_COLOR[a.role] || '#64748b';
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          html += this.renderBar(start, end, cells, color, a.emp_name, top, `${a.emp_name}（${a.role}） ${a.join}〜${a.planned_end || p.end}`);
+          html += this.renderBar(start, end, cells, color, a.emp_name, top, `${a.emp_name}（${a.role}） ${a.join}〜${a.planned_end || p.end}${a.prospect ? '【見込み】' : ''}`, a.prospect);
         });
       }
       html += '</td></tr>';
@@ -368,7 +383,7 @@ const GanttView = {
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     sorted.forEach(e => {
-      const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed));
+      const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect));
       const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
       html += '<tr class="border-t">' +
@@ -388,7 +403,7 @@ const GanttView = {
         const end = this.parseDate(a.planned_end || proj.end);
         const color = this.ROLE_COLOR[a.role] || '#64748b';
         const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-        html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}`);
+        html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect);
       });
       html += '</td></tr>';
     });
@@ -419,7 +434,7 @@ const GanttView = {
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     depts.forEach(dept => {
       const emps = empByDept[dept];
-      const assignedInDept = emps.filter(e => assignments.some(a => a.emp_id === e.id && (this.showCompleted || !a.completed))).length;
+      const assignedInDept = emps.filter(e => assignments.some(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect))).length;
 
       html += '<tr class="bg-slate-800 text-white">' +
         `<td class="p-2 sticky left-0 bg-slate-800 border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
@@ -430,7 +445,7 @@ const GanttView = {
       '</tr>';
 
       emps.forEach(e => {
-        const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed));
+        const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect));
         const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
         html += '<tr class="border-t">' +
@@ -448,7 +463,7 @@ const GanttView = {
           const end = this.parseDate(a.planned_end || proj.end);
           const color = this.ROLE_COLOR[a.role] || '#64748b';
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}`);
+          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect);
         });
         html += '</td></tr>';
       });
@@ -497,7 +512,7 @@ const GanttView = {
       '</tr>';
 
       holders.forEach(({ emp, eq }) => {
-        const myAsgs = assignments.filter(a => a.emp_id === emp.id && (this.showCompleted || !a.completed));
+        const myAsgs = assignments.filter(a => a.emp_id === emp.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect));
         const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
         let expWarn = '';
@@ -525,7 +540,7 @@ const GanttView = {
           const end = this.parseDate(a.planned_end || proj.end);
           const color = this.ROLE_COLOR[a.role] || '#64748b';
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}`);
+          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect);
         });
         if (myAsgs.length === 0) {
           html += '<div style="position:absolute;left:8px;top:14px;color:#94a3b8;font-size:11px">配置なし</div>';
