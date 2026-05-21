@@ -27,7 +27,10 @@ const DashboardView = {
     }
     const emp = (Sync.cache.employees || []).find(e => e.id === empId);
     if (!emp) return;
-    const asgs = (Sync.cache.assignments || []).filter(a => a.emp_id === empId);
+    // 現在進行形の配置のみ（完成・未開始は除外）
+    const asgs = (Sync.cache.assignments || []).filter(a =>
+      a.emp_id === empId && !a.completed && Sync.isActiveAssignment(a)
+    );
 
     // G工番モック（仕様書 §3.7 g_work_logs 投入前のデモ）
     const gMockCats = { '資料作成・事務': 18, '安全衛生・KY': 6, '視察・調査': 4, '会議・打合せ': 2, '教育・研修': 3 };

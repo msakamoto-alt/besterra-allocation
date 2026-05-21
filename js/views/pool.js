@@ -57,9 +57,14 @@ const PoolView = {
 
     const tbody = document.getElementById('emp-table-body');
     tbody.innerHTML = rows.map(e => {
-      const asgs = (Sync.cache.assignments || []).filter(a => a.emp_id === e.id);
+      // 現在進行形の配置のみ（完成・未開始は除外）
+      const asgs = (Sync.cache.assignments || []).filter(a =>
+        a.emp_id === e.id && !a.completed && Sync.isActiveAssignment(a)
+      );
+      const MAX_SHOW = 3;
       const asgStr = asgs.length
-        ? asgs.map(a => this.escape(a.project_name)).join(', ')
+        ? asgs.slice(0, MAX_SHOW).map(a => this.escape(a.project_name)).join(', ')
+          + (asgs.length > MAX_SHOW ? `<span class="text-slate-400 text-xs ml-1">…他${asgs.length - MAX_SHOW}件</span>` : '')
         : '<span class="text-slate-400">なし</span>';
 
       const myQuals = (Sync.cache.employee_qualifications || []).filter(eq => eq.emp_id === e.id);

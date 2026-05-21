@@ -120,7 +120,11 @@ const Sync = {
       if ((c[1] || '').includes('合計')) continue;
       const emp_name = this.normalizeName(c[3] || '');
       const project_id = (c[6] || '').trim();
+      // 工事番号必須・空/合計/プレースホルダー/英数字-形式外をスキップ
       if (!emp_name || !project_id) continue;
+      if (/^(-|nan|null|na|n\/a|undefined)$/i.test(project_id)) continue;
+      // 工事番号は通常 K\d+-\d+ 形式。最低限「英字 + 数字」が含まれていること
+      if (!/[A-Za-z]/.test(project_id) || !/\d/.test(project_id)) continue;
       rows.push({
         department: c[1] || '',
         emp_name,
@@ -226,10 +230,30 @@ const Sync = {
   // 役割表示順（バー描画・ソート用）
   ROLE_ORDER: { '主任技術者': 0, '副監督': 1, '支援': 2, '視察': 3 },
 
-  // 完成工事の判定
-  isCompletedProject(status) {
+  // 完成工事の判定（status + 計画終了日の両方を見る）
+  isCompletedProject(status, endDate) {
     const s = String(status || '');
-    return /完成|完工|完了|終了/.test(s);
+    if (/完成|完工|完了|終了|引渡/.test(s)) return true;
+    if (endDate) {
+      const d = new Date(String(endDate).replace(/\//g, '-'));
+      if (!isNaN(d)) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (d < today) return true;
+      }
+    }
+    return false;
+  },
+
+  // 現在進行形の配置か判定（今日が join〜planned_end の範囲内）
+  isActiveAssignment(a, today) {
+    const t = today || new Date();
+    t.setHours(0, 0, 0, 0);
+    const start = a.join ? new Date(String(a.join).replace(/\//g, '-')) : null;
+    const end = a.planned_end ? new Date(String(a.planned_end).replace(/\//g, '-')) : null;
+    if (start && !isNaN(start) && start > t) return false;
+    if (end && !isNaN(end) && end < t) return false;
+    return true;
   },
 
   // 氏名先頭の絵文字から資格を判定（🔴=専任技術者 / 🔵=主任技術者）
@@ -366,7 +390,7 @@ const Sync = {
 
     let asgIdSeq = 1;
     sfRows.forEach(r => {
-      const completed = this.isCompletedProject(r.status);
+      const completed = this.isCompletedProject(r.status, r.end);
 
       if (!projectsMap[r.project_id]) {
         const deptParts = String(r.department || '').split('/');
