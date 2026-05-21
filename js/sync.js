@@ -429,24 +429,35 @@ const Sync = {
         this.cache.employee_qualifications = MOCK_DATA.employee_qualifications;
       }
 
-      // Salesforce + prospects から projects と assignments を派生
+      // Salesforce + prospects から projects と assignments を派生（個別に try-catch）
       let allProjects = [];
       let allAssignments = [];
       if (this.cache.salesforce_imports && this.cache.salesforce_imports.length > 0) {
-        const d = this.deriveFromSalesforce(this.cache.salesforce_imports, this.cache.employees);
-        allProjects = allProjects.concat(d.projects);
-        allAssignments = allAssignments.concat(d.assignments);
-        // 絵文字（🔴🔵）から資格を派生してマージ
-        this.cache.employee_qualifications = this.deriveQualificationsFromSalesforce(
-          this.cache.salesforce_imports,
-          this.cache.employees,
-          this.cache.employee_qualifications
-        );
+        try {
+          const d = this.deriveFromSalesforce(this.cache.salesforce_imports, this.cache.employees);
+          allProjects = allProjects.concat(d.projects);
+          allAssignments = allAssignments.concat(d.assignments);
+        } catch (e) {
+          console.error('deriveFromSalesforce 失敗:', e);
+        }
+        try {
+          this.cache.employee_qualifications = this.deriveQualificationsFromSalesforce(
+            this.cache.salesforce_imports,
+            this.cache.employees,
+            this.cache.employee_qualifications
+          );
+        } catch (e) {
+          console.error('deriveQualificationsFromSalesforce 失敗:', e);
+        }
       }
       if (this.cache.prospects && this.cache.prospects.length > 0) {
-        const d = this.deriveFromProspects(this.cache.prospects, this.cache.employees);
-        allProjects = allProjects.concat(d.projects);
-        allAssignments = allAssignments.concat(d.assignments);
+        try {
+          const d = this.deriveFromProspects(this.cache.prospects, this.cache.employees);
+          allProjects = allProjects.concat(d.projects);
+          allAssignments = allAssignments.concat(d.assignments);
+        } catch (e) {
+          console.error('deriveFromProspects 失敗:', e);
+        }
       }
       if (allProjects.length > 0 || allAssignments.length > 0) {
         this.cache.projects = allProjects;

@@ -133,14 +133,21 @@ const GanttView = {
     document.querySelectorAll('.gantt-axis-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.axis === this.currentAxis);
     });
-    document.getElementById('gantt-description').textContent = this.AXIS_DESC[this.currentAxis] || '';
+    const descEl = document.getElementById('gantt-description');
+    if (descEl) descEl.textContent = this.AXIS_DESC[this.currentAxis] || '';
 
     const container = document.getElementById('gantt-container');
-    switch (this.currentAxis) {
-      case 'project': container.innerHTML = this.renderProjectAxis(); break;
-      case 'person': container.innerHTML = this.renderPersonAxis(); break;
-      case 'department': container.innerHTML = this.renderDepartmentAxis(); break;
-      case 'qualification': container.innerHTML = this.renderQualificationGantt(); break;
+    if (!container) return;
+    try {
+      switch (this.currentAxis) {
+        case 'project': container.innerHTML = this.renderProjectAxis(); break;
+        case 'person': container.innerHTML = this.renderPersonAxis(); break;
+        case 'department': container.innerHTML = this.renderDepartmentAxis(); break;
+        case 'qualification': container.innerHTML = this.renderQualificationGantt(); break;
+      }
+    } catch (e) {
+      console.error('Gantt render失敗 (' + this.currentAxis + '):', e);
+      container.innerHTML = '<div class="p-4 text-red-600">ガント描画でエラーが発生しました。F12 → Console タブのエラー詳細を共有してください。<br><span class="text-xs text-slate-500">' + (e.message || e) + '</span></div>';
     }
   },
 

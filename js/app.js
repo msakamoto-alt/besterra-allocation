@@ -72,16 +72,11 @@ const App = {
   },
 
   async loadData() {
-    try {
-      await Sync.syncAll();
-      this.updateLastSync();
-      PoolView.refresh();
-      GanttView.refresh();
-      DashboardView.refresh();
-    } catch (err) {
-      console.error('データ取得失敗:', err);
-      alert('データ取得に失敗しました: ' + err.message);
-    }
+    try { await Sync.syncAll(); } catch (e) { console.error('Sync失敗:', e); }
+    try { this.updateLastSync(); } catch (e) { console.error('updateLastSync失敗:', e); }
+    try { PoolView.refresh(); } catch (e) { console.error('PoolView失敗:', e); }
+    try { GanttView.refresh(); } catch (e) { console.error('GanttView失敗:', e); }
+    try { DashboardView.refresh(); } catch (e) { console.error('DashboardView失敗:', e); }
   },
 
   updateLastSync() {
