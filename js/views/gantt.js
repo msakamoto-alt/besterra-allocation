@@ -1,16 +1,16 @@
 /**
- * gantt.js - ガントビュー（4軸ボタン切替 + 月→日ドリルダウン）
+ * gantt.js - 現場人員配置（4軸ガント＋月→日ドリルダウン）
  *
  * 縦軸：project（現場）/ person（人）/ department（事務所）/ qualification（資格）
- * 横軸：時間（月単位・クリックで該当月を日単位に展開）
+ * 横軸：時間（2行ヘッダ：月行＋日行）
  */
 
 const GanttView = {
   currentAxis: 'project',
   expandedMonths: new Set(),  // 'YYYY-M' のキーで展開状態を保持
 
-  MONTH_WIDTH: 60,
-  DAY_WIDTH: 22,
+  MONTH_WIDTH: 70,
+  DAY_WIDTH: 26,
   LABEL_WIDTH: 300,
   ROW_HEIGHT: 48,
 
@@ -18,7 +18,7 @@ const GanttView = {
     project: '各現場の工期と配置されている監督職を時系列で可視化。月ヘッダクリックで該当月を日単位にドリルダウン。',
     person: '各監督職の配置状況を時系列で可視化。1人複数現場の配置も把握可能。月ヘッダクリックで日単位展開。',
     department: '事務所ごとに、所属する監督職を個人別に縦に並べて配置を表示。事務所別キャパが視覚で分かる。',
-    qualification: '資格ごとの保有者と期限を可視化。期限切れ予定が直近にある資格は警告表示。',
+    qualification: '各監督職の保有資格を時系列バーで表示。期限切れは赤、期限間近(90日)はアンバー、有効は資格種別の色。',
   },
 
   init() {
@@ -28,7 +28,6 @@ const GanttView = {
         this.refresh();
       });
     });
-    // 月ヘッダクリックでドリルダウン
     document.getElementById('gantt-container').addEventListener('click', (e) => {
       const th = e.target.closest('[data-month-key]');
       if (!th) return;
@@ -50,20 +49,24 @@ const GanttView = {
       case 'project': container.innerHTML = this.renderProjectAxis(); break;
       case 'person': container.innerHTML = this.renderPersonAxis(); break;
       case 'department': container.innerHTML = this.renderDepartmentAxis(); break;
-      case 'qualification': container.innerHTML = this.renderQualificationAxis(); break;
+      case 'qualification': container.innerHTML = this.renderQualificationGantt(); break;
     }
   },
 
-  // ===== 共通：セル配列とヘッダ生成 =====
+  // ===== 共通：日付・セル =====
 
-  parseDate(s) { return new Date(s.replace(/\//g, '-')); },
+  parseDate(s) {
+    if (s instanceof Date) return s;
+    return new Date(String(s).replace(/\//g, '-'));
+  },
 
   monthKey(date) { return date.getFullYear() + '-' + (date.getMonth() + 1); },
 
-  // 月単位＋展開月の日セルを混在した cells 配列を生成
-  buildCells() {
+  // 表示範囲：projects と employee_qualifications を考慮
+  buildCells(extraDates = []) {
     const projects = Sync.cache.projects || [];
-    const dates = projects.flatMap(p => [p.start, p.end]).filter(Boolean).map(s => this.parseDate(s));
+    let dates = projects.flatMap(p => [p.start, p.end]).filter(Boolean).map(s => this.parseDate(s));
+    dates = dates.concat(extraDates.filter(Boolean).map(s => this.parseDate(s)));
     if (dates.length === 0) return [];
     let minD = new Date(Math.min(...dates));
     let maxD = new Date(Math.max(...dates));
@@ -75,25 +78,19 @@ const GanttView = {
     while (cur < maxD) {
       const key = this.monthKey(cur);
       if (this.expandedMonths.has(key)) {
-        // 日セルに展開
         const daysInMonth = new Date(cur.getFullYear(), cur.getMonth() + 1, 0).getDate();
         for (let d = 1; d <= daysInMonth; d++) {
           cells.push({
-            type: 'day',
-            date: new Date(cur.getFullYear(), cur.getMonth(), d),
-            width: this.DAY_WIDTH,
-            label: d,
-            monthKey: key,
-            isFirstOfMonth: d === 1,
+            type: 'day', date: new Date(cur.getFullYear(), cur.getMonth(), d),
+            width: this.DAY_WIDTH, label: d, monthKey: key,
+            monthLabel: cur.getFullYear() + '/' + (cur.getMonth() + 1),
           });
         }
       } else {
         cells.push({
-          type: 'month',
-          date: new Date(cur),
+          type: 'month', date: new Date(cur),
           width: this.MONTH_WIDTH,
-          label: cur.getFullYear() + '/' + (cur.getMonth() + 1),
-          monthKey: key,
+          label: cur.getFullYear() + '/' + (cur.getMonth() + 1), monthKey: key,
         });
       }
       cur.setMonth(cur.getMonth() + 1);
@@ -105,13 +102,7 @@ const GanttView = {
     return cells.reduce((s, c) => s + c.width, 0);
   },
 
-  cellLeft(cells, idx) {
-    let px = 0;
-    for (let i = 0; i < idx; i++) px += cells[i].width;
-    return px;
-  },
-
-  // 日付をpx座標に変換（cellsを走査）
+  // 日付をpx座標に変換
   dateToPx(date, cells) {
     let px = 0;
     for (const cell of cells) {
@@ -133,22 +124,37 @@ const GanttView = {
     return px;
   },
 
+  // 2行ヘッダ：月行＋日行
   headerHtml(cells) {
-    let html = '<thead><tr>' +
-      `<th class="p-2 bg-slate-100 sticky left-0 border-r text-left z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">縦軸 / 配置</th>`;
-    cells.forEach(c => {
+    let row1 = `<tr><th rowspan="2" class="p-2 bg-slate-100 sticky left-0 border-r text-left z-20 align-middle" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">縦軸 / 配置</th>`;
+    let row2 = '<tr>';
+
+    let i = 0;
+    while (i < cells.length) {
+      const c = cells[i];
       if (c.type === 'month') {
-        html += `<th data-month-key="${c.monthKey}" class="bg-slate-100 border-r px-1 py-2 text-xs cursor-pointer hover:bg-slate-200" style="min-width:${c.width}px;width:${c.width}px" title="クリックで日次展開">${c.label}</th>`;
+        row1 += `<th data-month-key="${c.monthKey}" class="bg-slate-100 border-r px-1 py-2 text-xs cursor-pointer hover:bg-slate-200 align-middle" style="min-width:${c.width}px;width:${c.width}px" title="クリックで日次展開">${c.label}</th>`;
+        row2 += `<th class="bg-slate-50 border-r" style="min-width:${c.width}px;width:${c.width}px;height:24px"></th>`;
+        i++;
       } else {
-        const monthLabel = c.isFirstOfMonth ? `<div class="text-[10px] text-slate-500">${c.date.getFullYear()}/${c.date.getMonth() + 1}</div>` : '';
-        html += `<th data-month-key="${c.monthKey}" class="bg-amber-50 border-r px-0.5 py-1 text-[11px] cursor-pointer hover:bg-amber-100" style="min-width:${c.width}px;width:${c.width}px" title="クリックで月表示に戻す">${monthLabel}${c.label}</th>`;
+        // 日セル群（同じmonthKeyが連続する範囲）
+        let j = i;
+        while (j < cells.length && cells[j].type === 'day' && cells[j].monthKey === c.monthKey) j++;
+        const span = j - i;
+        const totalW = cells.slice(i, j).reduce((s, x) => s + x.width, 0);
+        row1 += `<th colspan="${span}" data-month-key="${c.monthKey}" class="bg-amber-100 border-r border-l px-1 py-2 text-xs font-bold cursor-pointer hover:bg-amber-200 text-amber-900" style="min-width:${totalW}px;width:${totalW}px" title="クリックで月表示に戻す">${c.monthLabel}</th>`;
+        for (let k = i; k < j; k++) {
+          row2 += `<th class="bg-amber-50 border-r text-[10px] text-amber-800 px-0 py-0.5" style="min-width:${cells[k].width}px;width:${cells[k].width}px">${cells[k].label}</th>`;
+        }
+        i = j;
       }
-    });
-    html += '</tr></thead>';
-    return html;
+    }
+    row1 += '</tr>';
+    row2 += '</tr>';
+    return '<thead>' + row1 + row2 + '</thead>';
   },
 
-  // 背景の縦罫線（バー領域）
+  // 背景の縦罫線
   gridDivs(cells) {
     let html = '';
     let px = 0;
@@ -260,7 +266,6 @@ const GanttView = {
     if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
     const totalW = this.cellsTotalWidth(cells);
 
-    // 事務所別グループ
     const empByDept = {};
     employees.forEach(e => {
       if (!empByDept[e.department]) empByDept[e.department] = [];
@@ -282,7 +287,7 @@ const GanttView = {
         `<td style="height:36px; padding:0; background:#1e293b; width:${totalW}px"></td>` +
       '</tr>';
 
-      // 個人別行
+      // 個人別行（rank削除）
       emps.forEach(e => {
         const myAsgs = assignments.filter(a => a.emp_id === e.id);
         const totalAlloc = myAsgs.reduce((s, a) => s + a.allocation, 0);
@@ -290,8 +295,8 @@ const GanttView = {
 
         html += '<tr class="border-t">' +
           `<td class="p-2 sticky left-0 bg-white border-r z-10 pl-6" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
-            `<div class="text-sm">${this.esc(e.name)} <span class="text-xs text-slate-500">${this.esc(e.rank || '')}</span></div>` +
-            `<div class="text-xs text-slate-500">配置率 ${Math.round(totalAlloc * 100)}% ${PoolView.categoryBadge(e.category)}</div>` +
+            `<div class="text-sm font-medium">${this.esc(e.name)}</div>` +
+            `<div class="text-xs text-slate-500 mt-1">配置率 ${Math.round(totalAlloc * 100)}% ${PoolView.categoryBadge(e.category)}</div>` +
           '</td>' +
           `<td style="position:relative; height:${rowH}px; padding:0; width:${totalW}px">` +
             this.gridDivs(cells);
@@ -314,67 +319,114 @@ const GanttView = {
     return html;
   },
 
-  // ===== 4. 資格軸 =====
+  // ===== 4. 資格軸（時系列ガント・各監督職の保有資格を有効期間バー表示） =====
 
-  renderQualificationAxis() {
+  renderQualificationGantt() {
+    const employees = Sync.cache.employees || [];
     const quals = Sync.cache.qualifications || [];
     const eqs = Sync.cache.employee_qualifications || [];
-    const employees = Sync.cache.employees || [];
-    if (quals.length === 0) {
-      return `<div class="p-8 text-center text-slate-500">
-        <p class="font-medium mb-2">資格データが未登録です</p>
-        <p class="text-sm">仕様書 §3.5/§3.6 の qualifications / employee_qualifications シートを Google Sheets に投入してください。</p>
-      </div>`;
+
+    if (quals.length === 0 || eqs.length === 0) {
+      return '<p class="p-4 text-slate-500">資格データがありません</p>';
     }
 
+    const qualMap = {};
+    quals.forEach(q => qualMap[q.id] = q);
     const empMap = {};
     employees.forEach(e => empMap[e.id] = e);
+
+    // 期限切れ＋取得日も表示範囲に含める
+    const extraDates = eqs.flatMap(eq => [eq.acquired, eq.expiry]).filter(Boolean);
+    const cells = this.buildCells(extraDates);
+    if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
+    const totalW = this.cellsTotalWidth(cells);
+    const rangeStart = cells[0].date;
+    const rangeEnd = (() => {
+      const last = cells[cells.length - 1];
+      return last.type === 'month'
+        ? new Date(last.date.getFullYear(), last.date.getMonth() + 1, 0)
+        : last.date;
+    })();
+
+    // 保有資格者リスト（対象外を除外し、保有資格1つ以上のみ）
+    const holderIds = [...new Set(eqs.map(eq => eq.emp_id))];
+    const holders = holderIds
+      .map(id => empMap[id])
+      .filter(e => e && e.category !== '対象外')
+      .sort((a, b) => (a.department || '').localeCompare(b.department || ''));
+
     const now = new Date();
     const in90Days = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
 
-    let html = '<table class="border-collapse w-full">' +
-      '<thead><tr class="bg-slate-100">' +
-        '<th class="p-3 text-left">資格</th>' +
-        '<th class="p-3 text-center">区分</th>' +
-        '<th class="p-3 text-center">保有者数</th>' +
-        '<th class="p-3 text-center">90日以内に期限切れ</th>' +
-        '<th class="p-3 text-left">保有者</th>' +
-      '</tr></thead><tbody>';
+    // 資格種別ごとの色
+    const typeColor = {
+      '国家資格': '#1e40af',
+      '作業主任者': '#ea580c',
+      '技能講習': '#059669',
+      '特別教育': '#7c3aed',
+      '安全衛生': '#0891b2',
+    };
 
-    quals.forEach(q => {
-      const holders = eqs.filter(eq => eq.qual_id === q.id);
-      const expiringSoon = holders.filter(eq => {
-        if (!eq.expiry) return false;
-        const exp = new Date(eq.expiry);
-        return exp >= now && exp <= in90Days;
+    let html = `<table class="border-collapse" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
+    holders.forEach(e => {
+      const myQuals = eqs.filter(eq => eq.emp_id === e.id);
+      const rowH = Math.max(this.ROW_HEIGHT, 16 + myQuals.length * 24);
+
+      html += '<tr class="border-t">' +
+        `<td class="p-2 sticky left-0 bg-white border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+          `<div class="font-medium text-sm">${this.esc(e.name)}</div>` +
+          `<div class="text-xs text-slate-500">${this.esc(e.department || '')} (保有資格 ${myQuals.length}件)</div>` +
+        '</td>' +
+        `<td style="position:relative; height:${rowH}px; padding:0; width:${totalW}px">` +
+          this.gridDivs(cells);
+
+      myQuals.forEach((eq, idx) => {
+        const q = qualMap[eq.qual_id];
+        if (!q) return;
+        const acquired = this.parseDate(eq.acquired);
+        const expiry = eq.expiry ? this.parseDate(eq.expiry) : rangeEnd;
+
+        // 表示範囲にクリップ
+        const startD = acquired < rangeStart ? rangeStart : acquired;
+        const endD = expiry > rangeEnd ? rangeEnd : expiry;
+        if (endD < rangeStart || startD > rangeEnd) return;
+
+        const barLeft = this.dateToPx(startD, cells);
+        const barRight = this.dateToPx(endD, cells);
+        const barWidth = Math.max(20, barRight - barLeft - 2);
+
+        let color = typeColor[q.type] || '#64748b';
+        let extraStyle = '';
+        let icon = '';
+        if (eq.expiry) {
+          if (expiry < now) {
+            color = '#dc2626';
+            extraStyle = 'border:2px solid #991b1b;';
+            icon = '⚠ ';
+          } else if (expiry <= in90Days) {
+            color = '#f59e0b';
+            extraStyle = 'border:2px solid #b45309;';
+            icon = '! ';
+          }
+        }
+        const top = 6 + idx * 24;
+        const label = icon + q.name + (eq.expiry ? ` (〜${eq.expiry})` : '');
+        html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:20px;${extraStyle}" title="${this.esc(label)}">${this.esc(q.name.length > 16 ? q.name.substring(0, 15) + '…' : q.name)}</div>`;
       });
-      const expired = holders.filter(eq => eq.expiry && new Date(eq.expiry) < now);
-
-      const holderNames = holders.map(eq => {
-        const emp = empMap[eq.emp_id];
-        if (!emp) return '';
-        const isExpiring = eq.expiry && new Date(eq.expiry) >= now && new Date(eq.expiry) <= in90Days;
-        const isExpired = eq.expiry && new Date(eq.expiry) < now;
-        const cls = isExpired ? 'text-red-600 font-bold' : isExpiring ? 'text-amber-600 font-medium' : '';
-        const suffix = isExpired ? `(期限切れ ${eq.expiry})` : isExpiring ? `(〜${eq.expiry})` : '';
-        return `<span class="${cls}">${this.esc(emp.name)}${suffix}</span>`;
-      }).filter(Boolean).join(' / ');
-
-      const alertCount = expiringSoon.length + expired.length;
-      const alertHtml = alertCount > 0
-        ? `<span class="bg-amber-100 text-amber-800 px-2 py-1 rounded font-bold">⚠ ${alertCount}名</span>`
-        : `<span class="text-slate-400">-</span>`;
-
-      html += '<tr class="border-t hover:bg-slate-50">' +
-        `<td class="p-3 font-medium">${this.esc(q.name)}</td>` +
-        `<td class="p-3 text-center text-xs text-slate-600">${this.esc(q.type)}</td>` +
-        `<td class="p-3 text-center font-bold text-lg">${holders.length}</td>` +
-        `<td class="p-3 text-center">${alertHtml}</td>` +
-        `<td class="p-3 text-xs">${holderNames || '<span class="text-slate-400">なし</span>'}</td>` +
-        '</tr>';
+      html += '</td></tr>';
     });
-    html += '</tbody></table>' +
-      '<p class="text-xs text-slate-500 p-3 border-t">※ Phase 2b で時系列ガント表示を本格実装予定（取得日〜期限を時間軸でバー表示）</p>';
+    html += '</tbody></table>';
+
+    // 凡例
+    html += '<div class="p-3 border-t bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
+      '<span class="font-semibold text-slate-700">凡例:</span>';
+    Object.entries(typeColor).forEach(([k, v]) => {
+      html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${k}</span>`;
+    });
+    html += '<span class="inline-flex items-center gap-1 ml-4"><span style="display:inline-block;width:14px;height:14px;background:#f59e0b;border:2px solid #b45309;border-radius:3px"></span>期限間近(90日)</span>';
+    html += '<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:#dc2626;border:2px solid #991b1b;border-radius:3px"></span>期限切れ</span>';
+    html += '</div>';
+
     return html;
   },
 };

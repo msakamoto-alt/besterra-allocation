@@ -14,6 +14,7 @@ const App = {
     PoolView.init();
     GanttView.init();
     DashboardView.init();
+    QualificationView.init();
 
     if (Auth.getSession()) {
       this.showMain();
@@ -55,8 +56,8 @@ const App = {
     document.querySelectorAll('.tab-panel').forEach(p => {
       p.classList.toggle('hidden', p.id !== 'tab-' + name);
     });
-    // ガントタブを最初に開いた時はデフォルト軸を有効化
     if (name === 'gantt') GanttView.refresh();
+    if (name === 'qual') QualificationView.refresh();
   },
 
   setupLogout() {
@@ -79,6 +80,7 @@ const App = {
       PoolView.refresh();
       GanttView.refresh();
       DashboardView.refresh();
+      QualificationView.refresh();
     } catch (err) {
       console.error('データ取得失敗:', err);
       alert('データ取得に失敗しました: ' + err.message);

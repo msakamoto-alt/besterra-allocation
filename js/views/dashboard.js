@@ -93,7 +93,7 @@ const DashboardView = {
         '<div class="bg-white rounded-lg shadow p-4">' +
           '<div class="text-sm text-slate-600">監督名</div>' +
           `<div class="text-xl font-bold mt-1">${this.esc(emp.name)}</div>` +
-          `<div class="text-xs text-slate-500 mt-1">${this.esc(emp.department || '-')} / ${this.esc(emp.rank || '-')} / ${this.esc(emp.role || '一般')}</div>` +
+          `<div class="text-xs text-slate-500 mt-1">${this.esc(emp.department || '-')} / ${this.esc(emp.role || '一般')}</div>` +
           `<div class="mt-2">${PoolView.categoryBadge(emp.category)}</div>` +
         '</div>' +
         '<div class="bg-white rounded-lg shadow p-4">' +

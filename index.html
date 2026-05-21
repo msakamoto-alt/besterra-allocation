@@ -49,8 +49,9 @@
     <nav class="bg-slate-100 border-b border-slate-300 px-6">
       <div class="flex space-x-1">
         <button class="tab-btn px-5 py-3 font-medium" data-tab="pool">1. 人材プール（3階層）</button>
-        <button class="tab-btn px-5 py-3 font-medium" data-tab="gantt">2. ガント</button>
+        <button class="tab-btn px-5 py-3 font-medium" data-tab="gantt">2. 現場人員配置</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="dash">3. 監督ダッシュボード</button>
+        <button class="tab-btn px-5 py-3 font-medium" data-tab="qual">4. 資格管理</button>
       </div>
     </nav>
 
@@ -112,10 +113,10 @@
         </div>
       </section>
 
-      <!-- ========== タブ2：ガント（4軸ボタン切替） ========== -->
+      <!-- ========== タブ2：現場人員配置（4軸ガント） ========== -->
       <section id="tab-gantt" class="tab-panel hidden">
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-xl font-bold">ガントビュー</h2>
+          <h2 class="text-xl font-bold">現場人員配置</h2>
           <div class="flex items-center gap-2">
             <span class="text-sm text-slate-600 mr-2">縦軸:</span>
             <button class="gantt-axis-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-axis="project">現場</button>
@@ -124,7 +125,7 @@
             <button class="gantt-axis-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-axis="qualification">資格</button>
           </div>
         </div>
-        <p class="text-sm text-slate-600 mb-4" id="gantt-description">各現場の工期と配置されている監督職を時系列で可視化。バー上の名前は配置監督。</p>
+        <p class="text-sm text-slate-600 mb-4" id="gantt-description">各現場の工期と配置されている監督職を時系列で可視化。月ヘッダをクリックすると該当月を日単位にドリルダウン。</p>
         <div class="bg-white rounded-lg shadow overflow-auto">
           <div id="gantt-container" class="min-w-max"></div>
         </div>
@@ -138,6 +139,13 @@
           <select id="dash-select" class="border rounded px-3 py-2 text-sm min-w-[300px]"></select>
         </div>
         <div id="dash-content"></div>
+      </section>
+
+      <!-- ========== タブ4：資格管理 ========== -->
+      <section id="tab-qual" class="tab-panel hidden">
+        <h2 class="text-xl font-bold mb-4">資格管理</h2>
+        <div id="qual-summary" class="mb-4"></div>
+        <div id="qual-content"></div>
       </section>
 
     </main>
@@ -155,6 +163,7 @@
   <script src="js/views/pool.js"></script>
   <script src="js/views/gantt.js"></script>
   <script src="js/views/dashboard.js"></script>
+  <script src="js/views/qualification.js"></script>
   <script src="js/config.js" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
   <script src="js/app.js"></script>
 </body>
