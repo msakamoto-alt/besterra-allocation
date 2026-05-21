@@ -16,6 +16,9 @@ const GanttView = {
   displayStart: null,
   displayEnd: null,
 
+  // 完成工事の表示トグル（デフォルト：非表示）
+  showCompleted: false,
+
   MONTH_WIDTH: 70,
   DAY_WIDTH: 26,
   LABEL_WIDTH: 300,
@@ -93,6 +96,16 @@ const GanttView = {
       endInput.value = this.formatMonth(this.displayEnd);
       this.refresh();
     });
+
+    // 完成工事トグル
+    const showCompletedCb = document.getElementById('gantt-show-completed');
+    if (showCompletedCb) {
+      showCompletedCb.checked = this.showCompleted;
+      showCompletedCb.addEventListener('change', () => {
+        this.showCompleted = showCompletedCb.checked;
+        this.refresh();
+      });
+    }
 
     // 今日ラベル
     const today = new Date();
@@ -286,8 +299,9 @@ const GanttView = {
     const colCount = cells.length;
     const todayMarkerHtml = this.todayMarker(cells);
 
-    // 表示範囲に1日でも重なる現場のみ
+    // 表示範囲に1日でも重なる現場のみ・完成は showCompleted で制御
     const visibleProjects = projects.filter(p => {
+      if (p.completed && !this.showCompleted) return false;
       const s = this.parseDate(p.start);
       const e = this.parseDate(p.end);
       return this.clipRange(s, e, cells);
@@ -354,7 +368,7 @@ const GanttView = {
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     sorted.forEach(e => {
-      const myAsgs = assignments.filter(a => a.emp_id === e.id);
+      const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed));
       const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
       html += '<tr class="border-t">' +
@@ -405,7 +419,7 @@ const GanttView = {
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     depts.forEach(dept => {
       const emps = empByDept[dept];
-      const assignedInDept = emps.filter(e => assignments.some(a => a.emp_id === e.id)).length;
+      const assignedInDept = emps.filter(e => assignments.some(a => a.emp_id === e.id && (this.showCompleted || !a.completed))).length;
 
       html += '<tr class="bg-slate-800 text-white">' +
         `<td class="p-2 sticky left-0 bg-slate-800 border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
@@ -416,7 +430,7 @@ const GanttView = {
       '</tr>';
 
       emps.forEach(e => {
-        const myAsgs = assignments.filter(a => a.emp_id === e.id);
+        const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed));
         const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
         html += '<tr class="border-t">' +
@@ -483,7 +497,7 @@ const GanttView = {
       '</tr>';
 
       holders.forEach(({ emp, eq }) => {
-        const myAsgs = assignments.filter(a => a.emp_id === emp.id);
+        const myAsgs = assignments.filter(a => a.emp_id === emp.id && (this.showCompleted || !a.completed));
         const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
         let expWarn = '';

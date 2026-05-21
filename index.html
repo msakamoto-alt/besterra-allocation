@@ -132,6 +132,10 @@
           <input type="month" id="gantt-end" class="border rounded px-2 py-1 text-sm">
           <button id="gantt-today" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm font-medium">今日へ</button>
           <button id="gantt-reset" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded text-sm">期間リセット</button>
+          <label class="ml-3 inline-flex items-center gap-1 text-sm text-slate-700 cursor-pointer">
+            <input type="checkbox" id="gantt-show-completed" class="rounded border-slate-400">
+            完成工事も表示
+          </label>
           <span class="text-xs text-slate-500 ml-auto" id="gantt-today-label"></span>
         </div>
         <p class="text-sm text-slate-600 mb-2" id="gantt-description">各現場の工期と配置されている監督職を時系列で可視化。月ヘッダ「⌄」クリックで該当月を日単位にドリルダウン。</p>

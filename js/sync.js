@@ -139,7 +139,8 @@ const Sync = {
   },
 
   // Salesforceデータから projects と assignments を派生
-  // 完成工事（status: 完成/完工/完了/終了）は除外
+  // 完成工事は projects.completed=true でフラグ付与（表示制御はビュー側）
+  // 工事番号が空の行はスキップ（parseSalesforceCsv 段階で既に対応）
   deriveFromSalesforce(sfRows, employees) {
     const projectsMap = {};
     const assignments = [];
@@ -153,8 +154,7 @@ const Sync = {
 
     let asgIdSeq = 1;
     sfRows.forEach(r => {
-      // 完成工事は除外
-      if (this.isCompletedProject(r.status)) return;
+      const completed = this.isCompletedProject(r.status);
 
       if (!projectsMap[r.project_id]) {
         const deptParts = String(r.department || '').split('/');
@@ -169,6 +169,7 @@ const Sync = {
           kind: '工事',
           dept: deptShort,
           status: r.status,
+          completed,
         };
       }
 
@@ -187,6 +188,7 @@ const Sync = {
         role: this.mapRole(r.role),
         role_sf: r.role,
         confirmed: String(r.status || '').includes('確定'),
+        completed,
         source: 'salesforce',
       });
     });
