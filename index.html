@@ -4,62 +4,158 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
-  <title>ベステラ 配置管理</title>
+  <title>ベステラ 配置管理キャパシティ分析ツール</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="css/styles.css">
 </head>
-<body>
-  <div id="auth-screen" class="screen active">
-    <div class="auth-card">
-      <h1>ベステラ 配置管理</h1>
-      <p class="muted">本サイトの内容は暗号化されています。<br>パスワードを入力してください。</p>
-      <form id="auth-form">
-        <input type="password" id="password" placeholder="パスワード" autofocus required>
-        <button type="submit">ログイン</button>
+<body class="bg-slate-50">
+
+  <!-- ========== 認証画面 ========== -->
+  <div id="auth-screen" class="min-h-screen flex items-center justify-center">
+    <div class="bg-white rounded-xl shadow-lg p-8 max-w-md w-full mx-4">
+      <h1 class="text-xl font-bold text-center mb-2">ベステラ 配置管理</h1>
+      <p class="text-sm text-slate-500 text-center mb-6">本サイトの内容は暗号化されています。<br>パスワードを入力してください。</p>
+      <form id="auth-form" class="space-y-3">
+        <input type="password" id="password" placeholder="パスワード" autofocus required
+          class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <button type="submit"
+          class="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg">
+          ログイン
+        </button>
       </form>
-      <p id="auth-error" class="error hidden">パスワードが正しくありません。</p>
+      <p id="auth-error" class="hidden mt-3 text-red-600 text-sm text-center">パスワードが正しくありません。</p>
     </div>
   </div>
 
-  <div id="main-screen" class="screen hidden">
-    <header>
-      <h1>ベステラ 配置管理</h1>
-      <div class="header-controls">
-        <button id="sync-button">同期</button>
-        <span class="muted">最終同期 <span id="last-sync">未同期</span></span>
-        <button id="logout-button" class="link">ログアウト</button>
+  <!-- ========== メイン画面 ========== -->
+  <div id="main-screen" class="hidden">
+
+    <!-- ヘッダー -->
+    <header class="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold">配置管理キャパシティ分析ツール
+          <span class="text-amber-400 text-base ml-2">画面モック v0.2</span>
+        </h1>
+        <p class="text-sm text-slate-300 mt-1">仕様書 v4.0 / Google Sheets連携対応・ガント4軸切替</p>
+      </div>
+      <div class="flex items-center gap-3 text-sm">
+        <button id="sync-button" class="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded">同期</button>
+        <span class="text-slate-300">最終同期 <span id="last-sync">未同期</span></span>
+        <button id="logout-button" class="text-slate-300 hover:text-white underline">ログアウト</button>
       </div>
     </header>
 
-    <nav class="view-tabs">
-      <button class="view-tab active" data-view="cards">カードビュー</button>
-      <button class="view-tab" data-view="gantt-person" disabled>ガント（人）</button>
-      <button class="view-tab" data-view="gantt-project" disabled>ガント（現場）</button>
-      <button class="view-tab" data-view="gantt-department" disabled>ガント（事務所）</button>
-      <button class="view-tab" data-view="gantt-qualification" disabled>ガント（資格）</button>
+    <!-- タブナビ -->
+    <nav class="bg-slate-100 border-b border-slate-300 px-6">
+      <div class="flex space-x-1">
+        <button class="tab-btn px-5 py-3 font-medium" data-tab="pool">1. 人材プール（3階層）</button>
+        <button class="tab-btn px-5 py-3 font-medium" data-tab="gantt">2. ガント</button>
+        <button class="tab-btn px-5 py-3 font-medium" data-tab="dash">3. 監督ダッシュボード</button>
+      </div>
     </nav>
 
-    <nav class="category-tabs">
-      <button class="category-tab active" data-category="all">全て <span class="badge">-</span></button>
-      <button class="category-tab" data-category="監督職">監督職 <span class="badge">-</span></button>
-      <button class="category-tab" data-category="準監督職">準監督職 <span class="badge">-</span></button>
-      <button class="category-tab" data-category="広義監督職">広義監督職 <span class="badge">-</span></button>
-    </nav>
+    <main class="p-6 max-w-7xl mx-auto">
 
-    <div class="filter-bar">
-      <select id="filter-department"><option value="">全事務所</option></select>
-      <select id="filter-role"><option value="">全役職</option></select>
-      <input type="search" id="filter-name" placeholder="氏名検索">
-    </div>
+      <!-- ========== タブ1：人材プール ========== -->
+      <section id="tab-pool" class="tab-panel">
+        <h2 class="text-xl font-bold mb-4">人材プール（監督員数 3階層表示）</h2>
+        <div class="grid grid-cols-3 gap-4 mb-6">
+          <div class="bg-emerald-50 border border-emerald-300 rounded-lg p-4">
+            <div class="text-sm text-emerald-800 font-medium">階層1：監督職（狭義・常時人員）</div>
+            <div class="text-3xl font-bold text-emerald-700 mt-2"><span id="cnt-sup">-</span> <span class="text-base">名</span></div>
+            <div class="text-xs text-slate-600 mt-2">現場監督として常時配置可能</div>
+          </div>
+          <div class="bg-amber-50 border border-amber-300 rounded-lg p-4">
+            <div class="text-sm text-amber-800 font-medium">階層2：+ 準監督職（最大稼働キャパ）</div>
+            <div class="text-3xl font-bold text-amber-700 mt-2"><span id="cnt-sup2">-</span> <span class="text-base">名</span></div>
+            <div class="text-xs text-slate-600 mt-2">飽和時応援を含む配置プール総数</div>
+          </div>
+          <div class="bg-orange-50 border border-orange-300 rounded-lg p-4">
+            <div class="text-sm text-orange-800 font-medium">階層3：+ 広義監督職（開示数値）</div>
+            <div class="text-3xl font-bold text-orange-700 mt-2"><span id="cnt-sup3">-</span> <span class="text-base">名</span></div>
+            <div class="text-xs text-slate-600 mt-2">中計開示上の監督者数（工事組織全体）</div>
+          </div>
+        </div>
 
-    <main id="view-container">
-      <p class="loading">読み込み中...</p>
+        <div class="bg-white rounded-lg shadow p-4 mb-4">
+          <div class="flex items-center gap-4 mb-3 flex-wrap">
+            <label class="text-sm font-medium">区分:</label>
+            <select id="filter-cat" class="border rounded px-2 py-1 text-sm">
+              <option value="">すべて</option>
+              <option value="監督職">監督職</option>
+              <option value="準監督職">準監督職</option>
+              <option value="広義監督職">広義監督職</option>
+              <option value="対象外">対象外</option>
+            </select>
+            <label class="text-sm font-medium ml-4">所属:</label>
+            <select id="filter-dept" class="border rounded px-2 py-1 text-sm">
+              <option value="">すべて</option>
+            </select>
+            <input type="search" id="filter-name" placeholder="氏名検索" class="border rounded px-2 py-1 text-sm">
+            <span class="text-sm text-slate-600 ml-auto"><span id="visible-count">0</span> 件表示</span>
+          </div>
+          <div class="overflow-auto max-h-[520px] border rounded">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-100 sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-left">社員№</th>
+                  <th class="px-3 py-2 text-left">氏名</th>
+                  <th class="px-3 py-2 text-left">所属</th>
+                  <th class="px-3 py-2 text-left">等級</th>
+                  <th class="px-3 py-2 text-left">役職</th>
+                  <th class="px-3 py-2 text-left">区分</th>
+                  <th class="px-3 py-2 text-left">現在の配置</th>
+                </tr>
+              </thead>
+              <tbody id="emp-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== タブ2：ガント（4軸ボタン切替） ========== -->
+      <section id="tab-gantt" class="tab-panel hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-bold">ガントビュー</h2>
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-slate-600 mr-2">縦軸:</span>
+            <button class="gantt-axis-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-axis="project">現場</button>
+            <button class="gantt-axis-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-axis="person">人</button>
+            <button class="gantt-axis-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-axis="department">事務所</button>
+            <button class="gantt-axis-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-axis="qualification">資格</button>
+          </div>
+        </div>
+        <p class="text-sm text-slate-600 mb-4" id="gantt-description">各現場の工期と配置されている監督職を時系列で可視化。バー上の名前は配置監督。</p>
+        <div class="bg-white rounded-lg shadow overflow-auto">
+          <div id="gantt-container" class="min-w-max"></div>
+        </div>
+      </section>
+
+      <!-- ========== タブ3：監督ダッシュボード ========== -->
+      <section id="tab-dash" class="tab-panel hidden">
+        <h2 class="text-xl font-bold mb-4">監督ダッシュボード（個人ビュー）</h2>
+        <div class="flex items-center gap-3 mb-4">
+          <label class="text-sm font-medium">監督を選択:</label>
+          <select id="dash-select" class="border rounded px-3 py-2 text-sm min-w-[300px]"></select>
+        </div>
+        <div id="dash-content"></div>
+      </section>
+
     </main>
+
+    <footer class="text-center text-xs text-slate-500 py-6 border-t">
+      配置管理キャパシティ分析統合システム 仕様書 v4.0 / 画面モック v0.2
+      / Phase 1雛形：モックデータで動作中（Sheets連携は config.js で SHEET_ID 設定後に有効）
+    </footer>
+
   </div>
 
   <script src="js/crypto.js"></script>
+  <script src="js/mock_data.js"></script>
   <script src="js/sync.js"></script>
-  <script src="js/views/cards.js"></script>
+  <script src="js/views/pool.js"></script>
   <script src="js/views/gantt.js"></script>
+  <script src="js/views/dashboard.js"></script>
   <script src="js/config.js" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
   <script src="js/app.js"></script>
 </body>

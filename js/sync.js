@@ -1,15 +1,11 @@
 /**
  * sync.js - Google Sheets CSV同期
  *
- * Sheets を「リンクを知っている全員 閲覧可」に設定し、
- * 各シートを CSV export URL で取得する。
+ * config.js で SHEET_ID が設定されていれば Sheets から取得、
+ * 未設定なら MOCK_DATA（mock_data.js）を返す。
  */
 
 const Sync = {
-  /**
-   * Google Sheets ID（config で設定）
-   * Sheets作成後に config.js で上書き
-   */
   SHEET_ID: null,
 
   SHEET_NAMES: {
@@ -25,17 +21,14 @@ const Sync = {
   lastSync: null,
 
   csvUrl(sheetName) {
-    if (!this.SHEET_ID) {
-      throw new Error('SHEET_ID が未設定です。js/config.js を作成してください。');
-    }
+    if (!this.SHEET_ID) throw new Error('SHEET_ID 未設定');
     return `https://docs.google.com/spreadsheets/d/${this.SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
   },
 
   async fetchSheet(sheetName) {
     const response = await fetch(this.csvUrl(sheetName));
     if (!response.ok) throw new Error(`Sheet取得失敗: ${sheetName}`);
-    const text = await response.text();
-    return this.parseCSV(text);
+    return this.parseCSV(await response.text());
   },
 
   parseCSV(text) {
@@ -65,44 +58,30 @@ const Sync = {
   },
 
   async syncAll() {
-    const sheets = Object.values(this.SHEET_NAMES);
-    const results = await Promise.allSettled(
-      sheets.map(name => this.fetchSheet(name))
-    );
-    results.forEach((r, i) => {
-      const name = sheets[i];
-      if (r.status === 'fulfilled') {
-        this.cache[name] = r.value;
-      } else {
-        console.warn(`${name} 取得失敗:`, r.reason);
-        this.cache[name] = this.cache[name] || [];
-      }
-    });
+    if (this.SHEET_ID) {
+      const sheets = Object.values(this.SHEET_NAMES);
+      const results = await Promise.allSettled(sheets.map(name => this.fetchSheet(name)));
+      results.forEach((r, i) => {
+        const name = sheets[i];
+        if (r.status === 'fulfilled') this.cache[name] = r.value;
+        else console.warn(`${name} 取得失敗:`, r.reason);
+      });
+    } else {
+      this.loadMockData();
+      console.info('SHEET_ID未設定のためモックデータで動作中');
+    }
     this.lastSync = new Date();
     return this.cache;
   },
 
-  /**
-   * モックデータ（SHEET_ID未設定時のフォールバック）
-   * 初回動作確認用
-   */
   loadMockData() {
     this.cache = {
-      employees: [
-        { employee_id: '2001', name: 'サンプル太郎', department_id: 'D001', role_title: '監督', category: '監督職', status: 'active', hired_at: '2010-04-01' },
-        { employee_id: '2002', name: 'サンプル花子', department_id: 'D002', role_title: '主任', category: '監督職', status: 'active', hired_at: '2015-04-01' },
-        { employee_id: '2003', name: 'サンプル次郎', department_id: 'D001', role_title: '副主任', category: '準監督職', status: 'active', hired_at: '2018-04-01' },
-      ],
-      departments: [
-        { department_id: 'D001', department_name: '千葉事務所' },
-        { department_id: 'D002', department_name: '京浜事務所' },
-      ],
-      projects: [],
-      assignments: [],
-      qualifications: [],
-      employee_qualifications: [],
+      employees: MOCK_DATA.employees,
+      projects: MOCK_DATA.projects,
+      assignments: MOCK_DATA.assignments,
+      qualifications: MOCK_DATA.qualifications,
+      employee_qualifications: MOCK_DATA.employee_qualifications,
+      departments: [],
     };
-    this.lastSync = new Date();
-    return this.cache;
   },
 };
