@@ -139,6 +139,53 @@ const Sync = {
     return /完成|完工|完了|終了/.test(s);
   },
 
+  // 氏名先頭の絵文字から資格を判定（🔴=専任技術者 / 🔵=主任技術者）
+  detectQualMarker(rawName) {
+    if (!rawName) return null;
+    if (rawName.includes('🔴')) return 'Q-DED';   // 専任技術者
+    if (rawName.includes('🔵')) return 'Q-MAIN';  // 主任技術者
+    return null;
+  },
+
+  // Salesforce の工事部員絵文字から employee_qualifications を派生
+  // 既存の employee_qualifications にマージ（同一 emp_id × qual_id は重複なし）
+  deriveQualificationsFromSalesforce(sfRows, employees, existingEqs) {
+    const empByName = {};
+    (employees || []).forEach(e => {
+      const key = (e.name || '').replace(/\s+/g, '');
+      if (key) empByName[key] = e;
+    });
+
+    // 各人の所有資格を集約
+    const empQualSet = {};
+    sfRows.forEach(r => {
+      const qualId = this.detectQualMarker(r.emp_name_raw);
+      if (!qualId) return;
+      const empKey = (r.emp_name || '').replace(/\s+/g, '');
+      const emp = empByName[empKey];
+      if (!emp) return;
+      const k = emp.id + '|' + qualId;
+      empQualSet[k] = { emp_id: emp.id, qual_id: qualId };
+    });
+
+    // 既存に無い分だけ追加
+    const existing = new Set((existingEqs || []).map(eq => eq.emp_id + '|' + eq.qual_id));
+    const merged = [...(existingEqs || [])];
+    Object.values(empQualSet).forEach(rec => {
+      const key = rec.emp_id + '|' + rec.qual_id;
+      if (!existing.has(key)) {
+        merged.push({
+          emp_id: rec.emp_id,
+          qual_id: rec.qual_id,
+          acquired: null,
+          expiry: null,
+          source: 'salesforce_marker',
+        });
+      }
+    });
+    return merged;
+  },
+
   // 見込み案件（prospects）から projects と assignments を派生
   // 1行 = 1配置候補（人×現場×期間）。同じ prospect_id の複数行は projects は1件、assignments は複数
   deriveFromProspects(prospectRows, employees) {
@@ -327,6 +374,12 @@ const Sync = {
         const d = this.deriveFromSalesforce(this.cache.salesforce_imports, this.cache.employees);
         allProjects = allProjects.concat(d.projects);
         allAssignments = allAssignments.concat(d.assignments);
+        // 絵文字（🔴🔵）から資格を派生してマージ
+        this.cache.employee_qualifications = this.deriveQualificationsFromSalesforce(
+          this.cache.salesforce_imports,
+          this.cache.employees,
+          this.cache.employee_qualifications
+        );
       }
       if (this.cache.prospects && this.cache.prospects.length > 0) {
         const d = this.deriveFromProspects(this.cache.prospects, this.cache.employees);
