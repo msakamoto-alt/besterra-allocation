@@ -74,6 +74,16 @@ const Sync = {
   parseSalesforceCsv(text) {
     const lines = text.trim().split(/\r?\n/);
     if (lines.length < 2) return [];
+
+    // ヘッダ検証：Salesforce形式かどうか
+    const firstLine = lines[0] || '';
+    const isSalesforce = firstLine.includes('工事部員') || firstLine.includes('工事番号')
+      || firstLine.includes('人事配置一覧') || firstLine.includes('現場管理表');
+    if (!isSalesforce) {
+      console.warn('salesforce_imports シートが Salesforce形式ではありません。スキップします。', firstLine.substring(0, 100));
+      return [];
+    }
+
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
       const c = this.parseRow(lines[i]);
