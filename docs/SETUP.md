@@ -80,7 +80,7 @@ git push -u origin main
 
 1. ブラウザで `https://msakamoto-alt.github.io/besterra-allocation/` を開く
 2. パスワード入力画面が表示される
-3. パスワード：**`besterra2026`** を入力
+3. パスワードを入力（**閲覧権限者には別途共有**・本ドキュメントには記載しない）
 4. ログイン成功後、サンプル社員カード3枚が表示されればOK
 
 ---
@@ -103,7 +103,7 @@ Sync.SHEET_ID = 'ここにSHEET_IDを貼り付け';
 
 ## 6. パスワード変更手順
 
-暫定パスワード `besterra2026` を変えるとき：
+暫定パスワードを変えるとき：
 
 1. PowerShell で新パスワードのSHA-256ハッシュを生成：
 
