@@ -120,6 +120,59 @@ const Sync = {
     return parseInt(num, 10) || 0;
   },
 
+  // employees シートを両形式（仕様書テンプレ / Phase0ベース）に対応して正規化
+  normalizeEmployees(raw) {
+    if (!Array.isArray(raw) || raw.length === 0) return [];
+    const first = raw[0];
+
+    // 仕様書テンプレート形式（employee_id, name, department_id, category 等）
+    if (Object.prototype.hasOwnProperty.call(first, 'employee_id')) {
+      return raw.map(r => ({
+        id: parseInt(r.employee_id, 10) || r.employee_id,
+        name: String(r.name || '').trim(),
+        department: r.department || r.department_id || '',
+        role: r.role_title || '',
+        role_title: r.role_title || '',
+        category: r.category || '対象外',
+        status: r.status || 'active',
+        rank: r.rank_code || '',
+      })).filter(e => e.id && e.name);
+    }
+
+    // Phase 0 ベース形式（No, 社員番号, 名前, 部門, 役職, 区分, 中計, 所属（最終判定））
+    if (Object.prototype.hasOwnProperty.call(first, '社員番号') || Object.prototype.hasOwnProperty.call(first, '名前')) {
+      return raw.map(r => {
+        const kubun = String(r['区分'] || '').trim();
+        const chukei = String(r['中計'] || '').trim();
+        const inChukei = chukei.includes('〇') || chukei.includes('○') || chukei === '◯';
+        let category;
+        if (inChukei) {
+          if (kubun.includes('準') || kubun.includes('準監督')) category = '準監督職';
+          else if (kubun === '監督職') category = '監督職';
+          else category = '広義監督職';
+        } else {
+          // 中計外でも区分から判定（フェイルセーフ）
+          if (kubun.includes('準')) category = '準監督職';
+          else if (kubun === '監督職') category = '監督職';
+          else category = '対象外';
+        }
+        return {
+          id: parseInt(r['社員番号'], 10) || r['社員番号'],
+          name: String(r['名前'] || '').trim(),
+          department: String(r['所属（最終判定）'] || r['部門'] || '').trim(),
+          role: String(r['役職'] || '').trim(),
+          role_title: String(r['役職'] || '').trim(),
+          category,
+          status: 'active',
+          rank: '',
+        };
+      }).filter(e => e.id && e.name);
+    }
+
+    // どちらでもなければ生データのまま返す
+    return raw;
+  },
+
   // ロールマッピング：Salesforceロール → 役割色（主任技術者/副監督/支援/視察）
   mapRole(sfRole) {
     if (!sfRole) return '支援';
@@ -356,6 +409,15 @@ const Sync = {
         }
       });
 
+      // employees の正規化（仕様書テンプレ / Phase0ベース 両形式対応）
+      if (this.cache.employees && this.cache.employees.length > 0) {
+        try {
+          this.cache.employees = this.normalizeEmployees(this.cache.employees);
+        } catch (e) {
+          console.warn('employees 正規化失敗・モックにフォールバック:', e);
+          this.cache.employees = MOCK_DATA.employees;
+        }
+      }
       // employees が Sheets に無い場合はモックを使用
       if (!this.cache.employees || this.cache.employees.length === 0) {
         this.cache.employees = MOCK_DATA.employees;
