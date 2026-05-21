@@ -50,11 +50,6 @@ const PoolView = {
     );
     document.getElementById('visible-count').textContent = rows.length;
 
-    const qualMap = {};
-    (Sync.cache.qualifications || []).forEach(q => qualMap[q.id] = q);
-    const now = new Date();
-    const in90Days = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
-
     const tbody = document.getElementById('emp-table-body');
     tbody.innerHTML = rows.map(e => {
       // 現在進行形の配置のみ（完成・未開始は除外）
@@ -67,29 +62,11 @@ const PoolView = {
           + (asgs.length > MAX_SHOW ? `<span class="text-slate-400 text-xs ml-1">…他${asgs.length - MAX_SHOW}件</span>` : '')
         : '<span class="text-slate-400">なし</span>';
 
-      const myQuals = (Sync.cache.employee_qualifications || []).filter(eq => eq.emp_id === e.id);
-      const qualStr = myQuals.length
-        ? myQuals.map(eq => {
-            const q = qualMap[eq.qual_id];
-            if (!q) return '';
-            let cls = 'bg-emerald-100 text-emerald-800';
-            let suffix = '';
-            if (eq.expiry) {
-              const exp = new Date(eq.expiry);
-              if (exp < now) { cls = 'bg-red-100 text-red-800 font-bold'; suffix = '⚠'; }
-              else if (exp <= in90Days) { cls = 'bg-amber-100 text-amber-800'; suffix = '!'; }
-            }
-            return `<span class="${cls} px-1.5 py-0.5 rounded text-xs mr-1 inline-block" title="${this.escape(q.name)}${eq.expiry ? ' / 期限 ' + eq.expiry : ''}">${this.escape(this.shortName(q.name))}${suffix}</span>`;
-          }).filter(Boolean).join('')
-        : '<span class="text-slate-400 text-xs">-</span>';
-
       return '<tr class="border-t hover:bg-slate-50">' +
         '<td class="px-3 py-2 font-mono text-xs">' + e.id + '</td>' +
         '<td class="px-3 py-2 font-medium">' + this.escape(e.name) + '</td>' +
         '<td class="px-3 py-2">' + this.escape(e.department || '') + '</td>' +
-        '<td class="px-3 py-2">' + this.escape(e.role || '') + '</td>' +
         '<td class="px-3 py-2">' + this.categoryBadge(e.category) + '</td>' +
-        '<td class="px-3 py-2">' + qualStr + '</td>' +
         '<td class="px-3 py-2 text-xs">' + asgStr + '</td>' +
         '</tr>';
     }).join('');
