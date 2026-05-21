@@ -119,21 +119,32 @@ const Sync = {
     return parseInt(num, 10) || 0;
   },
 
-  // ロールマッピング：Salesforceロール → 既存役割色（主任監督/副監督/支援/視察）
+  // ロールマッピング：Salesforceロール → 役割色（主任技術者/副監督/支援/視察）
   mapRole(sfRole) {
     if (!sfRole) return '支援';
-    if (sfRole.includes('責任者')) return '主任監督';
+    if (sfRole.includes('責任者')) return '主任技術者';
     if (sfRole.includes('メンバー')) return '副監督';
     if (sfRole.includes('応援')) return '支援';
+    if (sfRole.includes('視察')) return '視察';
     return '支援';
   },
 
+  // 役割表示順（バー描画・ソート用）
+  ROLE_ORDER: { '主任技術者': 0, '副監督': 1, '支援': 2, '視察': 3 },
+
+  // 完成工事の判定
+  isCompletedProject(status) {
+    const s = String(status || '');
+    return /完成|完工|完了|終了/.test(s);
+  },
+
   // Salesforceデータから projects と assignments を派生
+  // 完成工事（status: 完成/完工/完了/終了）は除外
   deriveFromSalesforce(sfRows, employees) {
     const projectsMap = {};
     const assignments = [];
 
-    // 氏名インデックス（空白除去・絵文字除去でマッチ）
+    // 氏名インデックス
     const empByName = {};
     (employees || []).forEach(e => {
       const key = (e.name || '').replace(/\s+/g, '');
@@ -142,9 +153,10 @@ const Sync = {
 
     let asgIdSeq = 1;
     sfRows.forEach(r => {
-      // projects（工事番号でユニーク化）
+      // 完成工事は除外
+      if (this.isCompletedProject(r.status)) return;
+
       if (!projectsMap[r.project_id]) {
-        // 所属を末端のみ取り出し（'プラント事業本部/工事部/千葉事務所' → '千葉事務所'）
         const deptParts = String(r.department || '').split('/');
         const deptShort = deptParts[deptParts.length - 1] || r.department;
         projectsMap[r.project_id] = {
@@ -160,7 +172,6 @@ const Sync = {
         };
       }
 
-      // assignments
       const empKey = r.emp_name.replace(/\s+/g, '');
       const emp = empByName[empKey];
       assignments.push({
@@ -169,7 +180,7 @@ const Sync = {
         emp_name: r.emp_name,
         project_id: r.project_id,
         project_name: r.project_name,
-        allocation: 1,  // Salesforceデータには配置率なし・暫定1（表示には使わない）
+        allocation: 1,
         join: r.start,
         leave: null,
         planned_end: r.end,
@@ -178,6 +189,14 @@ const Sync = {
         confirmed: String(r.status || '').includes('確定'),
         source: 'salesforce',
       });
+    });
+
+    // 役割順→氏名でソート（主任技術者を一番上に）
+    assignments.sort((a, b) => {
+      const ra = this.ROLE_ORDER[a.role] ?? 99;
+      const rb = this.ROLE_ORDER[b.role] ?? 99;
+      if (ra !== rb) return ra - rb;
+      return (a.emp_name || '').localeCompare(b.emp_name || '');
     });
 
     return {
