@@ -1,24 +1,45 @@
 /**
  * gantt.js - 現場人員配置（4軸ガント＋月→日ドリルダウン）
  *
- * 縦軸：project（現場）/ person（人）/ department（事務所）/ qualification（資格）
- * 横軸：時間（2行ヘッダ：月行＋日行）
+ * 縦軸ごとの仕様:
+ * - project（現場）: 縦=現場、各現場の配置監督ごとに個別バー（横=join〜leave）、色=役割
+ * - person（人）:    縦=監督職員、各人の配置現場ごとに個別バー（横=join〜leave）、色=現場ID
+ * - department（事務所）: 縦=事務所配下の個人、各人の配置現場ごとに個別バー、色=現場ID
+ * - qualification（資格）: 縦=資格別の保有者、各人の配置現場ごとに個別バー、色=現場ID
+ *
+ * 横軸: 2行ヘッダ（月行＋日行）。月ヘッダクリックで該当月を日次展開（⌄→⌃）。
  */
 
 const GanttView = {
   currentAxis: 'project',
-  expandedMonths: new Set(),  // 'YYYY-M' のキーで展開状態を保持
+  expandedMonths: new Set(),
 
   MONTH_WIDTH: 70,
   DAY_WIDTH: 26,
   LABEL_WIDTH: 300,
-  ROW_HEIGHT: 48,
+  BAR_HEIGHT: 22,
+  BAR_GAP: 4,
+
+  // 役割→色（現場軸用）
+  ROLE_COLOR: {
+    '主任監督': '#1e40af',
+    '副監督': '#0891b2',
+    '支援': '#64748b',
+    '視察': '#a16207',
+  },
+
+  // 現場識別用パレット（人・事務所・資格軸で各現場に固有色）
+  PROJECT_PALETTE: [
+    '#1e40af', '#0891b2', '#059669', '#ea580c', '#7c3aed',
+    '#db2777', '#a16207', '#0e7490', '#9f1239', '#475569',
+    '#15803d', '#b45309', '#1d4ed8',
+  ],
 
   AXIS_DESC: {
-    project: '縦軸＝現場、横軸＝工期（start〜end）。バー内テキストは配置監督名。月ヘッダ「⊞」で日単位にドリルダウン／「⊟」で月表示に戻す。横スクロールで先月以降も確認可。',
-    person: '縦軸＝監督職員、横軸＝配置現場の期間。濃青＝主任監督／シアン＝副監督。1人複数現場の配置はバーを縦積み表示。',
-    department: '縦軸＝事務所配下の個人、横軸＝配置現場の期間。濃青＝主任監督／シアン＝副監督。事務所別キャパが個人別に分かる。',
-    qualification: '縦軸＝資格別の保有者、横軸＝配置現場の期間。濃青＝主任監督／シアン＝副監督。同一人が複数資格を持つ場合は各資格グループに繰り返し表示。',
+    project: '縦軸＝現場、各現場の配置監督ごとに個別バー（横軸＝配置期間 join〜leave）。色は役割。同じ現場でも人によって配置期間が異なる場合は別バーで表示。',
+    person: '縦軸＝監督職員、横軸＝配置現場の期間。色は現場ごとに固有（色＝現場識別）。1人複数現場の配置はバーを縦積み。',
+    department: '縦軸＝事務所配下の個人、横軸＝配置現場の期間。色は現場ごとに固有。事務所別キャパが個人別に分かる。',
+    qualification: '縦軸＝資格別の保有者、横軸＝配置現場の期間。色は現場ごとに固有。同一人が複数資格を持つ場合は各資格グループに繰り返し表示。',
   },
 
   init() {
@@ -62,7 +83,6 @@ const GanttView = {
 
   monthKey(date) { return date.getFullYear() + '-' + (date.getMonth() + 1); },
 
-  // 表示範囲：projects と employee_qualifications を考慮
   buildCells(extraDates = []) {
     const projects = Sync.cache.projects || [];
     let dates = projects.flatMap(p => [p.start, p.end]).filter(Boolean).map(s => this.parseDate(s));
@@ -102,7 +122,6 @@ const GanttView = {
     return cells.reduce((s, c) => s + c.width, 0);
   },
 
-  // 日付をpx座標に変換
   dateToPx(date, cells) {
     let px = 0;
     for (const cell of cells) {
@@ -124,28 +143,26 @@ const GanttView = {
     return px;
   },
 
-  // 2行ヘッダ：月行＋日行（行高さ明示・展開アイコン付き）
+  // 2行ヘッダ
   headerHtml(cells) {
-    let row1 = `<tr style="height:36px"><th rowspan="2" class="p-2 bg-slate-200 sticky left-0 border-r text-left z-20 align-middle" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px;height:60px">縦軸 / 配置</th>`;
-    let row2 = '<tr style="height:24px">';
+    let row1 = `<tr><th rowspan="2" class="p-2 bg-slate-200 sticky left-0 border-r text-left z-20 align-middle" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px;height:60px">縦軸 / 配置</th>`;
+    let row2 = '<tr>';
 
     let i = 0;
     while (i < cells.length) {
       const c = cells[i];
       if (c.type === 'month') {
-        // 月単位表示（クリックで日展開）
-        row1 += `<th data-month-key="${c.monthKey}" class="bg-slate-100 border-r px-1 py-1 text-xs cursor-pointer hover:bg-slate-200 align-middle whitespace-nowrap" style="min-width:${c.width}px;width:${c.width}px" title="クリックで日次展開">${c.label} <span class="text-slate-400">⊞</span></th>`;
+        row1 += `<th data-month-key="${c.monthKey}" class="bg-slate-100 border-r px-1 py-1 text-xs cursor-pointer hover:bg-slate-200 align-middle whitespace-nowrap" style="min-width:${c.width}px;width:${c.width}px;height:36px" title="クリックで日次展開">${c.label} <span class="text-slate-400">⌄</span></th>`;
         row2 += `<th class="bg-slate-50 border-r" style="min-width:${c.width}px;width:${c.width}px;height:24px;border-bottom:2px solid #cbd5e1"></th>`;
         i++;
       } else {
-        // 日セル群（同じmonthKeyが連続する範囲）
         let j = i;
         while (j < cells.length && cells[j].type === 'day' && cells[j].monthKey === c.monthKey) j++;
         const span = j - i;
         const totalW = cells.slice(i, j).reduce((s, x) => s + x.width, 0);
-        row1 += `<th colspan="${span}" data-month-key="${c.monthKey}" class="bg-amber-200 border-r border-l px-1 py-1 text-xs font-bold cursor-pointer hover:bg-amber-300 text-amber-900 whitespace-nowrap" style="min-width:${totalW}px;width:${totalW}px" title="クリックで月表示に戻す">${c.monthLabel} <span class="text-amber-700">⊟</span></th>`;
+        row1 += `<th colspan="${span}" data-month-key="${c.monthKey}" class="bg-amber-200 border-r border-l px-1 py-1 text-xs font-bold cursor-pointer hover:bg-amber-300 text-amber-900 whitespace-nowrap" style="min-width:${totalW}px;width:${totalW}px;height:36px" title="クリックで月表示に戻す">${c.monthLabel} <span class="text-amber-700">⌃</span></th>`;
         for (let k = i; k < j; k++) {
-          row2 += `<th class="bg-amber-50 border-r text-[11px] text-amber-900 font-semibold" style="min-width:${cells[k].width}px;width:${cells[k].width}px;height:24px;padding:2px 0">${cells[k].label}</th>`;
+          row2 += `<th class="bg-amber-50 border-r text-[11px] text-amber-900 font-semibold whitespace-nowrap" style="min-width:${cells[k].width}px;width:${cells[k].width}px;height:24px;padding:2px 0">${cells[k].label}</th>`;
         }
         i = j;
       }
@@ -167,12 +184,29 @@ const GanttView = {
     return html;
   },
 
+  // バー描画ヘルパ
+  renderBar(start, end, cells, color, label, top, title) {
+    const left = this.dateToPx(start, cells);
+    const right = this.dateToPx(end, cells);
+    const width = Math.max(16, right - left - 2);
+    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${color};height:${this.BAR_HEIGHT}px" title="${this.esc(title || '')}">${this.esc(label || '')}</div>`;
+  },
+
   esc(text) {
     if (text == null) return '';
     return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   },
 
-  // ===== 1. 現場軸 =====
+  // 現場ID→色（パレットからハッシュで決定）
+  projectColor(projectId) {
+    let hash = 0;
+    for (let i = 0; i < String(projectId).length; i++) {
+      hash = ((hash << 5) - hash) + String(projectId).charCodeAt(i);
+    }
+    return this.PROJECT_PALETTE[Math.abs(hash) % this.PROJECT_PALETTE.length];
+  },
+
+  // ===== 1. 現場軸（各現場の配置監督ごとに個別バー） =====
 
   renderProjectAxis() {
     const projects = Sync.cache.projects || [];
@@ -180,31 +214,47 @@ const GanttView = {
     const cells = this.buildCells();
     if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
     const totalW = this.cellsTotalWidth(cells);
+    const colCount = cells.length;
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     projects.forEach(p => {
-      const start = this.parseDate(p.start);
-      const end = this.parseDate(p.end);
-      const barLeft = this.dateToPx(start, cells);
-      const barRight = this.dateToPx(end, cells);
-      const barWidth = Math.max(20, barRight - barLeft - 2);
-      const empNames = assignments.filter(a => a.project_id === p.project_id)
-        .map(a => `${a.emp_name}(${Math.round(a.allocation * 100)}%)`).join(' / ');
-      // バー色は単色（工期＝start〜end・売上情報は左ラベルに数字表示）
-      const color = '#1e40af';
+      const projAsgs = assignments.filter(a => a.project_id === p.project_id);
+      const rowH = Math.max(64, 16 + Math.max(1, projAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
+
+      // ラベル列：現場情報＋配置者名＋配置率
+      const labelMembers = projAsgs.map(a =>
+        `<span class="inline-block mr-2"><span class="font-medium">${this.esc(a.emp_name)}</span><span class="text-slate-500">(${Math.round(a.allocation * 100)}%)</span></span>`
+      ).join('');
 
       html += '<tr class="border-t">' +
-        `<td class="p-2 sticky left-0 bg-white border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+        `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
           `<div class="font-medium text-sm">${this.esc(p.name)}</div>` +
-          `<div class="text-xs text-slate-500">${p.project_id} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
-          `<div class="text-xs text-slate-700 mt-1">${empNames || '<span class="text-slate-400">配置未登録</span>'}</div>` +
+          `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
+          `<div class="text-xs mt-1">${labelMembers || '<span class="text-slate-400">配置未登録</span>'}</div>` +
         '</td>' +
-        `<td style="position:relative; height:64px; padding:0; width:${totalW}px">` +
-          this.gridDivs(cells) +
-          `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:20px;background:${color}" title="${this.esc(p.name)} (${p.start}〜${p.end})">${this.esc(empNames || p.name)}</div>` +
-        '</td></tr>';
+        `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
+          this.gridDivs(cells);
+
+      // 各配置監督ごとに個別バー
+      if (projAsgs.length === 0) {
+        // 配置なしの場合は工期全体を薄いグレーで表示
+        const start = this.parseDate(p.start);
+        const end = this.parseDate(p.end);
+        html += this.renderBar(start, end, cells, '#cbd5e1', '配置未登録', 8, `${p.name}（${p.start}〜${p.end}）配置未登録`);
+      } else {
+        projAsgs.forEach((a, idx) => {
+          const start = this.parseDate(a.join);
+          const end = this.parseDate(a.planned_end || p.end);
+          const color = this.ROLE_COLOR[a.role] || '#64748b';
+          const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
+          html += this.renderBar(start, end, cells, color, a.emp_name, top, `${a.emp_name}（${a.role}） ${a.join}〜${a.planned_end || p.end}`);
+        });
+      }
+      html += '</td></tr>';
     });
     html += '</tbody></table>';
+
+    html += this.legendRole();
     return html;
   },
 
@@ -216,7 +266,7 @@ const GanttView = {
     const projects = Sync.cache.projects || [];
     const cells = this.buildCells();
     if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
-    const totalW = this.cellsTotalWidth(cells);
+    const colCount = cells.length;
 
     const assignedIds = new Set(assignments.map(a => a.emp_id));
     const sorted = [...employees].sort((a, b) => {
@@ -230,35 +280,35 @@ const GanttView = {
     sorted.forEach(e => {
       const myAsgs = assignments.filter(a => a.emp_id === e.id);
       const totalAlloc = myAsgs.reduce((s, a) => s + a.allocation, 0);
-      const rowH = Math.max(this.ROW_HEIGHT, 16 + myAsgs.length * 26);
+      const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
       html += '<tr class="border-t">' +
-        `<td class="p-2 sticky left-0 bg-white border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+        `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
           `<div class="font-medium text-sm">${this.esc(e.name)}</div>` +
           `<div class="text-xs text-slate-500">${this.esc(e.department || '')} / 配置率 ${Math.round(totalAlloc * 100)}%</div>` +
           `<div class="mt-1">${PoolView.categoryBadge(e.category)}</div>` +
         '</td>' +
-        `<td style="position:relative; height:${rowH}px; padding:0; width:${totalW}px">` +
+        `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
           this.gridDivs(cells);
+
       myAsgs.forEach((a, idx) => {
         const proj = projects.find(p => p.project_id === a.project_id);
         if (!proj) return;
         const start = this.parseDate(a.join);
         const end = this.parseDate(a.planned_end || proj.end);
-        const barLeft = this.dateToPx(start, cells);
-        const barRight = this.dateToPx(end, cells);
-        const barWidth = Math.max(20, barRight - barLeft - 2);
-        const color = a.role === '主任監督' ? '#1e40af' : '#0891b2';
-        const top = 6 + idx * 26;
-        html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:22px">${this.esc(a.project_name)} (${Math.round(a.allocation * 100)}%)</div>`;
+        const color = this.projectColor(a.project_id);
+        const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
+        html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}`);
       });
       html += '</td></tr>';
     });
     html += '</tbody></table>';
+
+    html += this.legendProjects();
     return html;
   },
 
-  // ===== 3. 事務所軸（事務所グループ＋配下に個人別棒表示） =====
+  // ===== 3. 事務所軸 =====
 
   renderDepartmentAxis() {
     const employees = (Sync.cache.employees || []).filter(e => e.category === '監督職' || e.category === '準監督職');
@@ -267,6 +317,7 @@ const GanttView = {
     const cells = this.buildCells();
     if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
     const totalW = this.cellsTotalWidth(cells);
+    const colCount = cells.length;
 
     const empByDept = {};
     employees.forEach(e => {
@@ -280,48 +331,45 @@ const GanttView = {
       const emps = empByDept[dept];
       const assignedInDept = emps.filter(e => assignments.some(a => a.emp_id === e.id)).length;
 
-      // 事務所見出し行
       html += '<tr class="bg-slate-800 text-white">' +
         `<td class="p-2 sticky left-0 bg-slate-800 border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
           `<div class="font-bold text-sm">${this.esc(dept)}</div>` +
           `<div class="text-xs text-slate-300">在籍 ${emps.length}名 / 配置中 ${assignedInDept}名</div>` +
         '</td>' +
-        `<td style="height:36px; padding:0; background:#1e293b; width:${totalW}px"></td>` +
+        `<td colspan="${colCount}" style="height:36px; padding:0; background:#1e293b"></td>` +
       '</tr>';
 
-      // 個人別行（rank削除）
       emps.forEach(e => {
         const myAsgs = assignments.filter(a => a.emp_id === e.id);
         const totalAlloc = myAsgs.reduce((s, a) => s + a.allocation, 0);
-        const rowH = Math.max(this.ROW_HEIGHT, 16 + myAsgs.length * 26);
+        const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
         html += '<tr class="border-t">' +
-          `<td class="p-2 sticky left-0 bg-white border-r z-10 pl-6" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+          `<td class="p-2 sticky left-0 bg-white border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
             `<div class="text-sm font-medium">${this.esc(e.name)}</div>` +
             `<div class="text-xs text-slate-500 mt-1">配置率 ${Math.round(totalAlloc * 100)}% ${PoolView.categoryBadge(e.category)}</div>` +
           '</td>' +
-          `<td style="position:relative; height:${rowH}px; padding:0; width:${totalW}px">` +
+          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
             this.gridDivs(cells);
         myAsgs.forEach((a, idx) => {
           const proj = projects.find(p => p.project_id === a.project_id);
           if (!proj) return;
           const start = this.parseDate(a.join);
           const end = this.parseDate(a.planned_end || proj.end);
-          const barLeft = this.dateToPx(start, cells);
-          const barRight = this.dateToPx(end, cells);
-          const barWidth = Math.max(20, barRight - barLeft - 2);
-          const color = a.role === '主任監督' ? '#1e40af' : '#0891b2';
-          const top = 6 + idx * 26;
-          html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:22px">${this.esc(a.project_name)} (${Math.round(a.allocation * 100)}%)</div>`;
+          const color = this.projectColor(a.project_id);
+          const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
+          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}`);
         });
         html += '</td></tr>';
       });
     });
     html += '</tbody></table>';
+
+    html += this.legendProjects();
     return html;
   },
 
-  // ===== 4. 資格軸（縦=資格グループ＋配下の保有者、横=配置現場バー） =====
+  // ===== 4. 資格軸 =====
 
   renderQualificationGantt() {
     const employees = (Sync.cache.employees || []).filter(e => e.category !== '対象外');
@@ -338,33 +386,29 @@ const GanttView = {
     employees.forEach(e => empMap[e.id] = e);
     const cells = this.buildCells();
     if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
-    const totalW = this.cellsTotalWidth(cells);
+    const colCount = cells.length;
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
 
     quals.forEach(q => {
-      // この資格の保有者（対象外を除く）
       const holders = eqs
         .filter(eq => eq.qual_id === q.id)
         .map(eq => ({ emp: empMap[eq.emp_id], eq }))
         .filter(x => x.emp);
       if (holders.length === 0) return;
 
-      // 資格見出し行
       html += '<tr class="bg-blue-900 text-white">' +
         `<td class="p-2 sticky left-0 bg-blue-900 border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
           `<div class="font-bold text-sm">${this.esc(q.name)}</div>` +
           `<div class="text-xs text-blue-200">${this.esc(q.type)} / 保有者 ${holders.length}名</div>` +
         '</td>' +
-        `<td style="height:36px; padding:0; background:#1e3a8a; width:${totalW}px"></td>` +
+        `<td colspan="${colCount}" style="height:36px; padding:0; background:#1e3a8a"></td>` +
       '</tr>';
 
-      // 保有者の個人行（配置現場バー）
       holders.forEach(({ emp, eq }) => {
         const myAsgs = assignments.filter(a => a.emp_id === emp.id);
-        const rowH = Math.max(this.ROW_HEIGHT, 16 + Math.max(1, myAsgs.length) * 26);
+        const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
-        // 期限警告マーク
         let expWarn = '';
         if (eq.expiry) {
           const now = new Date();
@@ -375,11 +419,11 @@ const GanttView = {
         }
 
         html += '<tr class="border-t">' +
-          `<td class="p-2 sticky left-0 bg-white border-r z-10 pl-6" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+          `<td class="p-2 sticky left-0 bg-white border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
             `<div class="text-sm font-medium">${this.esc(emp.name)}${expWarn}</div>` +
             `<div class="text-xs text-slate-500 mt-1">${this.esc(emp.department || '')} ${PoolView.categoryBadge(emp.category)}</div>` +
           '</td>' +
-          `<td style="position:relative; height:${rowH}px; padding:0; width:${totalW}px">` +
+          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
             this.gridDivs(cells);
 
         myAsgs.forEach((a, idx) => {
@@ -387,12 +431,9 @@ const GanttView = {
           if (!proj) return;
           const start = this.parseDate(a.join);
           const end = this.parseDate(a.planned_end || proj.end);
-          const barLeft = this.dateToPx(start, cells);
-          const barRight = this.dateToPx(end, cells);
-          const barWidth = Math.max(20, barRight - barLeft - 2);
-          const color = a.role === '主任監督' ? '#1e40af' : '#0891b2';
-          const top = 6 + idx * 26;
-          html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:22px">${this.esc(a.project_name)} (${Math.round(a.allocation * 100)}%)</div>`;
+          const color = this.projectColor(a.project_id);
+          const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
+          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}`);
         });
         if (myAsgs.length === 0) {
           html += '<div style="position:absolute;left:8px;top:14px;color:#94a3b8;font-size:11px">配置なし</div>';
@@ -402,7 +443,33 @@ const GanttView = {
     });
     html += '</tbody></table>';
 
+    html += this.legendProjects();
     html += '<p class="text-xs text-slate-500 p-3 border-t">※ 縦軸は資格別グループ。同一人が複数資格を保有する場合、各資格グループに重複表示されます。期限・有効期間の詳細は「4.資格管理」タブを参照。</p>';
+    return html;
+  },
+
+  // 凡例（役割）
+  legendRole() {
+    let html = '<div class="p-3 border-t bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
+      '<span class="font-semibold text-slate-700">色＝役割:</span>';
+    Object.entries(this.ROLE_COLOR).forEach(([k, v]) => {
+      html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${this.esc(k)}</span>`;
+    });
+    html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;background:#cbd5e1;border-radius:3px"></span>配置未登録</span>';
+    html += '</div>';
+    return html;
+  },
+
+  // 凡例（現場ID色）
+  legendProjects() {
+    const projects = Sync.cache.projects || [];
+    let html = '<div class="p-3 border-t bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
+      '<span class="font-semibold text-slate-700">色＝現場:</span>';
+    projects.forEach(p => {
+      const color = this.projectColor(p.project_id);
+      html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${color};border-radius:3px"></span>${this.esc(p.name.length > 18 ? p.name.substring(0, 17) + '…' : p.name)}</span>`;
+    });
+    html += '</div>';
     return html;
   },
 };
