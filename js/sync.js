@@ -11,15 +11,24 @@
 const Sync = {
   SHEET_ID: null,
 
-  SHEET_NAMES: {
-    employees: 'employees',
-    departments: 'departments',
-    projects: 'projects',
-    assignments: 'assignments',
-    qualifications: 'qualifications',
-    employee_qualifications: 'employee_qualifications',
-    salesforce_imports: 'salesforce_imports',
-    prospects: 'prospects',
+  // シート名の候補。テンプレ命名 と Box CSV ファイル名（数字接頭辞）の両方を試す
+  SHEET_CANDIDATES: {
+    employees: ['employees', '01_employees'],
+    departments: ['departments', '02_departments'],
+    qualifications: ['qualifications', '05_qualifications'],
+    employee_qualifications: ['employee_qualifications', '06_employee_qualifications'],
+    salesforce_imports: ['salesforce_imports', '09_salesforce_imports'],
+    prospects: ['prospects', '11_prospects'],
+  },
+
+  // 各シートの形式バリデータ（先頭行で判定）
+  SHEET_VALIDATORS: {
+    employees: txt => /employee_id|社員番号|名前/i.test((txt || '').split('\n')[0] || ''),
+    departments: txt => /department_id|department_name|事務所|部署/i.test((txt || '').split('\n')[0] || ''),
+    qualifications: txt => /qualification_id|qualification_name|資格/i.test((txt || '').split('\n')[0] || ''),
+    employee_qualifications: txt => /record_id|qualification_id|emp_id|社員|資格/i.test((txt || '').split('\n')[0] || ''),
+    salesforce_imports: txt => /工事部員|工事番号|人事配置一覧|現場管理表/i.test((txt || '').split('\n')[0] || ''),
+    prospects: txt => /prospect_id|project_name|customer|見込み/i.test((txt || '').split('\n')[0] || ''),
   },
 
   cache: {},
@@ -34,6 +43,27 @@ const Sync = {
     const response = await fetch(this.csvUrl(sheetName));
     if (!response.ok) throw new Error(`Sheet取得失敗: ${sheetName} (${response.status})`);
     return await response.text();
+  },
+
+  // 候補リストから「正しい形式」のシートを順次試す
+  async fetchSheetWithValidation(key) {
+    const candidates = this.SHEET_CANDIDATES[key] || [key];
+    const validator = this.SHEET_VALIDATORS[key];
+    for (const sheet of candidates) {
+      try {
+        const text = await this.fetchSheetRaw(sheet);
+        if (!validator || validator(text)) {
+          console.info(`シート ${key}: '${sheet}' から取得`);
+          return text;
+        } else {
+          console.warn(`シート '${sheet}' は ${key} の形式ではないためスキップ`);
+        }
+      } catch (e) {
+        // 次の候補を試す
+      }
+    }
+    console.warn(`シート ${key} は全候補でフェッチ失敗`);
+    return null;
   },
 
   async fetchSheet(sheetName) {
@@ -391,31 +421,21 @@ const Sync = {
 
   async syncAll() {
     if (this.SHEET_ID) {
-      // 各シートの取得（並列・失敗してもキャッシュにフォールバック）
-      const tasks = [
-        { name: 'employees', sheet: this.SHEET_NAMES.employees, parser: 'normal' },
-        { name: 'departments', sheet: this.SHEET_NAMES.departments, parser: 'normal' },
-        { name: 'qualifications', sheet: this.SHEET_NAMES.qualifications, parser: 'normal' },
-        { name: 'employee_qualifications', sheet: this.SHEET_NAMES.employee_qualifications, parser: 'normal' },
-        { name: 'salesforce_imports', sheet: this.SHEET_NAMES.salesforce_imports, parser: 'salesforce' },
-        { name: 'prospects', sheet: this.SHEET_NAMES.prospects, parser: 'normal' },
-      ];
-      const results = await Promise.allSettled(tasks.map(t => this.fetchSheetRaw(t.sheet)));
+      // 各シートを候補名でフォールバック取得（バリデータでヘッダ確認）
+      const keys = ['employees', 'departments', 'qualifications', 'employee_qualifications', 'salesforce_imports', 'prospects'];
+      const texts = await Promise.allSettled(keys.map(k => this.fetchSheetWithValidation(k)));
 
-      results.forEach((r, i) => {
-        const task = tasks[i];
-        if (r.status === 'fulfilled') {
-          try {
-            if (task.parser === 'salesforce') {
-              this.cache.salesforce_imports = this.parseSalesforceCsv(r.value);
-            } else {
-              this.cache[task.name] = this.parseCSV(r.value);
-            }
-          } catch (e) {
-            console.warn(`${task.name} パース失敗:`, e);
+      keys.forEach((key, i) => {
+        const r = texts[i];
+        if (r.status !== 'fulfilled' || !r.value) return;
+        try {
+          if (key === 'salesforce_imports') {
+            this.cache.salesforce_imports = this.parseSalesforceCsv(r.value);
+          } else {
+            this.cache[key] = this.parseCSV(r.value);
           }
-        } else {
-          console.warn(`${task.name} 取得失敗:`, r.reason);
+        } catch (e) {
+          console.warn(`${key} パース失敗:`, e);
         }
       });
 
