@@ -15,10 +15,10 @@ const GanttView = {
   ROW_HEIGHT: 48,
 
   AXIS_DESC: {
-    project: '縦軸＝現場、横軸＝配置監督。月ヘッダ「⊞」クリックで該当月を日単位にドリルダウン、「⊟」クリックで月表示に戻す。',
-    person: '縦軸＝監督職員、横軸＝配置現場。1人複数現場の配置も把握可能。月ヘッダ「⊞」で日次展開。',
-    department: '縦軸＝事務所配下の個人、横軸＝配置現場。事務所別の配置状況が個人別に分かる。',
-    qualification: '縦軸＝資格別の保有者、横軸＝配置現場。同一人が複数資格を持つ場合は各資格グループに繰り返し表示される。',
+    project: '縦軸＝現場、横軸＝工期（start〜end）。バー内テキストは配置監督名。月ヘッダ「⊞」で日単位にドリルダウン／「⊟」で月表示に戻す。横スクロールで先月以降も確認可。',
+    person: '縦軸＝監督職員、横軸＝配置現場の期間。濃青＝主任監督／シアン＝副監督。1人複数現場の配置はバーを縦積み表示。',
+    department: '縦軸＝事務所配下の個人、横軸＝配置現場の期間。濃青＝主任監督／シアン＝副監督。事務所別キャパが個人別に分かる。',
+    qualification: '縦軸＝資格別の保有者、横軸＝配置現場の期間。濃青＝主任監督／シアン＝副監督。同一人が複数資格を持つ場合は各資格グループに繰り返し表示。',
   },
 
   init() {
@@ -152,7 +152,7 @@ const GanttView = {
     }
     row1 += '</tr>';
     row2 += '</tr>';
-    return '<thead class="sticky top-0 z-10">' + row1 + row2 + '</thead>';
+    return '<thead>' + row1 + row2 + '</thead>';
   },
 
   // 背景の縦罫線
@@ -181,7 +181,7 @@ const GanttView = {
     if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
     const totalW = this.cellsTotalWidth(cells);
 
-    let html = `<table class="border-collapse" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
+    let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     projects.forEach(p => {
       const start = this.parseDate(p.start);
       const end = this.parseDate(p.end);
@@ -190,7 +190,8 @@ const GanttView = {
       const barWidth = Math.max(20, barRight - barLeft - 2);
       const empNames = assignments.filter(a => a.project_id === p.project_id)
         .map(a => `${a.emp_name}(${Math.round(a.allocation * 100)}%)`).join(' / ');
-      const color = p.amount >= 1e8 ? '#dc2626' : p.amount >= 3e7 ? '#ea580c' : '#0891b2';
+      // バー色は単色（工期＝start〜end・売上情報は左ラベルに数字表示）
+      const color = '#1e40af';
 
       html += '<tr class="border-t">' +
         `<td class="p-2 sticky left-0 bg-white border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
@@ -200,7 +201,7 @@ const GanttView = {
         '</td>' +
         `<td style="position:relative; height:64px; padding:0; width:${totalW}px">` +
           this.gridDivs(cells) +
-          `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:20px;background:${color}">${this.esc(p.name.substring(0, 30))}</div>` +
+          `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:20px;background:${color}" title="${this.esc(p.name)} (${p.start}〜${p.end})">${this.esc(empNames || p.name)}</div>` +
         '</td></tr>';
     });
     html += '</tbody></table>';
@@ -225,7 +226,7 @@ const GanttView = {
       return (a.department || '').localeCompare(b.department || '');
     });
 
-    let html = `<table class="border-collapse" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
+    let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     sorted.forEach(e => {
       const myAsgs = assignments.filter(a => a.emp_id === e.id);
       const totalAlloc = myAsgs.reduce((s, a) => s + a.allocation, 0);
@@ -249,7 +250,7 @@ const GanttView = {
         const barWidth = Math.max(20, barRight - barLeft - 2);
         const color = a.role === '主任監督' ? '#1e40af' : '#0891b2';
         const top = 6 + idx * 26;
-        html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:22px">${this.esc(a.project_name.substring(0, 24))} (${Math.round(a.allocation * 100)}%)</div>`;
+        html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:22px">${this.esc(a.project_name)} (${Math.round(a.allocation * 100)}%)</div>`;
       });
       html += '</td></tr>';
     });
@@ -274,7 +275,7 @@ const GanttView = {
     });
     const depts = Object.keys(empByDept).sort();
 
-    let html = `<table class="border-collapse" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
+    let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     depts.forEach(dept => {
       const emps = empByDept[dept];
       const assignedInDept = emps.filter(e => assignments.some(a => a.emp_id === e.id)).length;
@@ -311,7 +312,7 @@ const GanttView = {
           const barWidth = Math.max(20, barRight - barLeft - 2);
           const color = a.role === '主任監督' ? '#1e40af' : '#0891b2';
           const top = 6 + idx * 26;
-          html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:22px">${this.esc(a.project_name.substring(0, 24))} (${Math.round(a.allocation * 100)}%)</div>`;
+          html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:22px">${this.esc(a.project_name)} (${Math.round(a.allocation * 100)}%)</div>`;
         });
         html += '</td></tr>';
       });
@@ -339,7 +340,7 @@ const GanttView = {
     if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
     const totalW = this.cellsTotalWidth(cells);
 
-    let html = `<table class="border-collapse" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
+    let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
 
     quals.forEach(q => {
       // この資格の保有者（対象外を除く）
@@ -391,7 +392,7 @@ const GanttView = {
           const barWidth = Math.max(20, barRight - barLeft - 2);
           const color = a.role === '主任監督' ? '#1e40af' : '#0891b2';
           const top = 6 + idx * 26;
-          html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:22px">${this.esc(a.project_name.substring(0, 24))} (${Math.round(a.allocation * 100)}%)</div>`;
+          html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:22px">${this.esc(a.project_name)} (${Math.round(a.allocation * 100)}%)</div>`;
         });
         if (myAsgs.length === 0) {
           html += '<div style="position:absolute;left:8px;top:14px;color:#94a3b8;font-size:11px">配置なし</div>';

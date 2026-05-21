@@ -31,7 +31,14 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
   font-size: 11px; color: white;
   white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis;
+  z-index: 1;
+  box-sizing: border-box;
 }
+.gantt-bar:hover { z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+
+/* ガントヘッダ thead を前面に固定（長いバーがヘッダを隠さないように） */
+.gantt-table thead { position: sticky; top: 0; z-index: 30; }
+.gantt-table thead th { background-clip: padding-box; }
 
 /* 区分バッジ */
 .badge-sup    { background: #10b981; color: white; }
