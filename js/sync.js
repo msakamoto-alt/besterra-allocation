@@ -1,8 +1,11 @@
 /**
  * sync.js - Google Sheets CSV同期
  *
+ * salesforce_imports シート（Salesforceレポート形式）から
+ * projects（工事マスタ）と assignments（配置）を派生生成する。
+ *
  * config.js で SHEET_ID が設定されていれば Sheets から取得、
- * 未設定なら MOCK_DATA（mock_data.js）を返す。
+ * 未設定なら MOCK_DATA を返す。
  */
 
 const Sync = {
@@ -15,6 +18,7 @@ const Sync = {
     assignments: 'assignments',
     qualifications: 'qualifications',
     employee_qualifications: 'employee_qualifications',
+    salesforce_imports: 'salesforce_imports',
   },
 
   cache: {},
@@ -25,10 +29,15 @@ const Sync = {
     return `https://docs.google.com/spreadsheets/d/${this.SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
   },
 
-  async fetchSheet(sheetName) {
+  async fetchSheetRaw(sheetName) {
     const response = await fetch(this.csvUrl(sheetName));
-    if (!response.ok) throw new Error(`Sheet取得失敗: ${sheetName}`);
-    return this.parseCSV(await response.text());
+    if (!response.ok) throw new Error(`Sheet取得失敗: ${sheetName} (${response.status})`);
+    return await response.text();
+  },
+
+  async fetchSheet(sheetName) {
+    const text = await this.fetchSheetRaw(sheetName);
+    return this.parseCSV(text);
   },
 
   parseCSV(text) {
@@ -57,15 +66,176 @@ const Sync = {
     return result;
   },
 
+  // === Salesforce レポート専用パーサ ===
+  // 構造：1行目=タイトル兼ヘッダ、2行目〜=データ、末尾=「合計」行
+  // 列：A=空, B=所属, C=空, D=工事部員, E=ロール, F=ロール詳細,
+  //     G=工事番号, H=工事名, I=着工, J=完工, K=総売上, L=受注金額, M=状態, N=空
+  parseSalesforceCsv(text) {
+    const lines = text.trim().split(/\r?\n/);
+    if (lines.length < 2) return [];
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const c = this.parseRow(lines[i]);
+      if ((c[1] || '').includes('合計')) continue;
+      const emp_name = this.normalizeName(c[3] || '');
+      const project_id = (c[6] || '').trim();
+      if (!emp_name || !project_id) continue;
+      rows.push({
+        department: c[1] || '',
+        emp_name,
+        emp_name_raw: c[3] || '',
+        role: c[4] || '',
+        role_detail: c[5] || '',
+        project_id,
+        project_name: c[7] || '',
+        start: this.normalizeDate(c[8]),
+        end: this.normalizeDate(c[9]),
+        total_revenue: c[10] || '',
+        order_amount: c[11] || '',
+        status: c[12] || '',
+      });
+    }
+    return rows;
+  },
+
+  // 氏名から絵文字（🔴🔵🟢🟡⚪等）と前後空白を除去
+  normalizeName(name) {
+    return String(name || '')
+      .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')  // サロゲートペア（絵文字含む）
+      .replace(/[☀-➿⬀-⯿]/g, '')    // その他記号
+      .trim();
+  },
+
+  // 日付正規化：YYYY/MM/DD → そのまま、空文字は null
+  normalizeDate(s) {
+    if (!s) return null;
+    return String(s).trim();
+  },
+
+  // 金額正規化：'JPY3,682,680,400' → 3682680400
+  parseAmount(s) {
+    if (!s) return 0;
+    const num = String(s).replace(/[^\d]/g, '');
+    return parseInt(num, 10) || 0;
+  },
+
+  // ロールマッピング：Salesforceロール → 既存役割色（主任監督/副監督/支援/視察）
+  mapRole(sfRole) {
+    if (!sfRole) return '支援';
+    if (sfRole.includes('責任者')) return '主任監督';
+    if (sfRole.includes('メンバー')) return '副監督';
+    if (sfRole.includes('応援')) return '支援';
+    return '支援';
+  },
+
+  // Salesforceデータから projects と assignments を派生
+  deriveFromSalesforce(sfRows, employees) {
+    const projectsMap = {};
+    const assignments = [];
+
+    // 氏名インデックス（空白除去・絵文字除去でマッチ）
+    const empByName = {};
+    (employees || []).forEach(e => {
+      const key = (e.name || '').replace(/\s+/g, '');
+      if (key) empByName[key] = e;
+    });
+
+    let asgIdSeq = 1;
+    sfRows.forEach(r => {
+      // projects（工事番号でユニーク化）
+      if (!projectsMap[r.project_id]) {
+        // 所属を末端のみ取り出し（'プラント事業本部/工事部/千葉事務所' → '千葉事務所'）
+        const deptParts = String(r.department || '').split('/');
+        const deptShort = deptParts[deptParts.length - 1] || r.department;
+        projectsMap[r.project_id] = {
+          project_id: r.project_id,
+          name: r.project_name,
+          customer: '',
+          start: r.start,
+          end: r.end,
+          amount: this.parseAmount(r.total_revenue || r.order_amount),
+          kind: '工事',
+          dept: deptShort,
+          status: r.status,
+        };
+      }
+
+      // assignments
+      const empKey = r.emp_name.replace(/\s+/g, '');
+      const emp = empByName[empKey];
+      assignments.push({
+        assignment_id: asgIdSeq++,
+        emp_id: emp ? emp.id : null,
+        emp_name: r.emp_name,
+        project_id: r.project_id,
+        project_name: r.project_name,
+        allocation: 1,  // Salesforceデータには配置率なし・暫定1（表示には使わない）
+        join: r.start,
+        leave: null,
+        planned_end: r.end,
+        role: this.mapRole(r.role),
+        role_sf: r.role,
+        confirmed: String(r.status || '').includes('確定'),
+        source: 'salesforce',
+      });
+    });
+
+    return {
+      projects: Object.values(projectsMap),
+      assignments,
+    };
+  },
+
   async syncAll() {
     if (this.SHEET_ID) {
-      const sheets = Object.values(this.SHEET_NAMES);
-      const results = await Promise.allSettled(sheets.map(name => this.fetchSheet(name)));
+      // 各シートの取得（並列・失敗してもキャッシュにフォールバック）
+      const tasks = [
+        { name: 'employees', sheet: this.SHEET_NAMES.employees, parser: 'normal' },
+        { name: 'departments', sheet: this.SHEET_NAMES.departments, parser: 'normal' },
+        { name: 'qualifications', sheet: this.SHEET_NAMES.qualifications, parser: 'normal' },
+        { name: 'employee_qualifications', sheet: this.SHEET_NAMES.employee_qualifications, parser: 'normal' },
+        { name: 'salesforce_imports', sheet: this.SHEET_NAMES.salesforce_imports, parser: 'salesforce' },
+      ];
+      const results = await Promise.allSettled(tasks.map(t => this.fetchSheetRaw(t.sheet)));
+
       results.forEach((r, i) => {
-        const name = sheets[i];
-        if (r.status === 'fulfilled') this.cache[name] = r.value;
-        else console.warn(`${name} 取得失敗:`, r.reason);
+        const task = tasks[i];
+        if (r.status === 'fulfilled') {
+          try {
+            if (task.parser === 'salesforce') {
+              this.cache.salesforce_imports = this.parseSalesforceCsv(r.value);
+            } else {
+              this.cache[task.name] = this.parseCSV(r.value);
+            }
+          } catch (e) {
+            console.warn(`${task.name} パース失敗:`, e);
+          }
+        } else {
+          console.warn(`${task.name} 取得失敗:`, r.reason);
+        }
       });
+
+      // employees が Sheets に無い場合はモックを使用
+      if (!this.cache.employees || this.cache.employees.length === 0) {
+        this.cache.employees = MOCK_DATA.employees;
+      }
+      if (!this.cache.qualifications || this.cache.qualifications.length === 0) {
+        this.cache.qualifications = MOCK_DATA.qualifications;
+      }
+      if (!this.cache.employee_qualifications || this.cache.employee_qualifications.length === 0) {
+        this.cache.employee_qualifications = MOCK_DATA.employee_qualifications;
+      }
+
+      // Salesforce レポートから projects と assignments を派生
+      if (this.cache.salesforce_imports && this.cache.salesforce_imports.length > 0) {
+        const derived = this.deriveFromSalesforce(this.cache.salesforce_imports, this.cache.employees);
+        this.cache.projects = derived.projects;
+        this.cache.assignments = derived.assignments;
+      } else {
+        // Salesforceデータが無ければモック
+        this.cache.projects = MOCK_DATA.projects;
+        this.cache.assignments = MOCK_DATA.assignments;
+      }
     } else {
       this.loadMockData();
       console.info('SHEET_ID未設定のためモックデータで動作中');
@@ -82,6 +252,7 @@ const Sync = {
       qualifications: MOCK_DATA.qualifications,
       employee_qualifications: MOCK_DATA.employee_qualifications,
       departments: [],
+      salesforce_imports: [],
     };
   },
 };

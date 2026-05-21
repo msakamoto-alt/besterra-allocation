@@ -32,7 +32,6 @@ package-lock.json
 secrets.json
 .env
 .env.local
-js/config.js
 config.local.js
 
 # Phase 0 ローカル成果物（別ディレクトリにあるが念のため）
