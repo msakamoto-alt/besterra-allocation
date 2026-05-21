@@ -15,10 +15,10 @@ const GanttView = {
   ROW_HEIGHT: 48,
 
   AXIS_DESC: {
-    project: '各現場の工期と配置されている監督職を時系列で可視化。月ヘッダクリックで該当月を日単位にドリルダウン。',
-    person: '各監督職の配置状況を時系列で可視化。1人複数現場の配置も把握可能。月ヘッダクリックで日単位展開。',
-    department: '事務所ごとに、所属する監督職を個人別に縦に並べて配置を表示。事務所別キャパが視覚で分かる。',
-    qualification: '各監督職の保有資格を時系列バーで表示。期限切れは赤、期限間近(90日)はアンバー、有効は資格種別の色。',
+    project: '縦軸＝現場、横軸＝配置監督。月ヘッダ「⊞」クリックで該当月を日単位にドリルダウン、「⊟」クリックで月表示に戻す。',
+    person: '縦軸＝監督職員、横軸＝配置現場。1人複数現場の配置も把握可能。月ヘッダ「⊞」で日次展開。',
+    department: '縦軸＝事務所配下の個人、横軸＝配置現場。事務所別の配置状況が個人別に分かる。',
+    qualification: '縦軸＝資格別の保有者、横軸＝配置現場。同一人が複数資格を持つ場合は各資格グループに繰り返し表示される。',
   },
 
   init() {
@@ -124,17 +124,18 @@ const GanttView = {
     return px;
   },
 
-  // 2行ヘッダ：月行＋日行
+  // 2行ヘッダ：月行＋日行（行高さ明示・展開アイコン付き）
   headerHtml(cells) {
-    let row1 = `<tr><th rowspan="2" class="p-2 bg-slate-100 sticky left-0 border-r text-left z-20 align-middle" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">縦軸 / 配置</th>`;
-    let row2 = '<tr>';
+    let row1 = `<tr style="height:36px"><th rowspan="2" class="p-2 bg-slate-200 sticky left-0 border-r text-left z-20 align-middle" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px;height:60px">縦軸 / 配置</th>`;
+    let row2 = '<tr style="height:24px">';
 
     let i = 0;
     while (i < cells.length) {
       const c = cells[i];
       if (c.type === 'month') {
-        row1 += `<th data-month-key="${c.monthKey}" class="bg-slate-100 border-r px-1 py-2 text-xs cursor-pointer hover:bg-slate-200 align-middle" style="min-width:${c.width}px;width:${c.width}px" title="クリックで日次展開">${c.label}</th>`;
-        row2 += `<th class="bg-slate-50 border-r" style="min-width:${c.width}px;width:${c.width}px;height:24px"></th>`;
+        // 月単位表示（クリックで日展開）
+        row1 += `<th data-month-key="${c.monthKey}" class="bg-slate-100 border-r px-1 py-1 text-xs cursor-pointer hover:bg-slate-200 align-middle whitespace-nowrap" style="min-width:${c.width}px;width:${c.width}px" title="クリックで日次展開">${c.label} <span class="text-slate-400">⊞</span></th>`;
+        row2 += `<th class="bg-slate-50 border-r" style="min-width:${c.width}px;width:${c.width}px;height:24px;border-bottom:2px solid #cbd5e1"></th>`;
         i++;
       } else {
         // 日セル群（同じmonthKeyが連続する範囲）
@@ -142,16 +143,16 @@ const GanttView = {
         while (j < cells.length && cells[j].type === 'day' && cells[j].monthKey === c.monthKey) j++;
         const span = j - i;
         const totalW = cells.slice(i, j).reduce((s, x) => s + x.width, 0);
-        row1 += `<th colspan="${span}" data-month-key="${c.monthKey}" class="bg-amber-100 border-r border-l px-1 py-2 text-xs font-bold cursor-pointer hover:bg-amber-200 text-amber-900" style="min-width:${totalW}px;width:${totalW}px" title="クリックで月表示に戻す">${c.monthLabel}</th>`;
+        row1 += `<th colspan="${span}" data-month-key="${c.monthKey}" class="bg-amber-200 border-r border-l px-1 py-1 text-xs font-bold cursor-pointer hover:bg-amber-300 text-amber-900 whitespace-nowrap" style="min-width:${totalW}px;width:${totalW}px" title="クリックで月表示に戻す">${c.monthLabel} <span class="text-amber-700">⊟</span></th>`;
         for (let k = i; k < j; k++) {
-          row2 += `<th class="bg-amber-50 border-r text-[10px] text-amber-800 px-0 py-0.5" style="min-width:${cells[k].width}px;width:${cells[k].width}px">${cells[k].label}</th>`;
+          row2 += `<th class="bg-amber-50 border-r text-[11px] text-amber-900 font-semibold" style="min-width:${cells[k].width}px;width:${cells[k].width}px;height:24px;padding:2px 0">${cells[k].label}</th>`;
         }
         i = j;
       }
     }
     row1 += '</tr>';
     row2 += '</tr>';
-    return '<thead>' + row1 + row2 + '</thead>';
+    return '<thead class="sticky top-0 z-10">' + row1 + row2 + '</thead>';
   },
 
   // 背景の縦罫線
@@ -319,10 +320,12 @@ const GanttView = {
     return html;
   },
 
-  // ===== 4. 資格軸（時系列ガント・各監督職の保有資格を有効期間バー表示） =====
+  // ===== 4. 資格軸（縦=資格グループ＋配下の保有者、横=配置現場バー） =====
 
   renderQualificationGantt() {
-    const employees = Sync.cache.employees || [];
+    const employees = (Sync.cache.employees || []).filter(e => e.category !== '対象外');
+    const assignments = Sync.cache.assignments || [];
+    const projects = Sync.cache.projects || [];
     const quals = Sync.cache.qualifications || [];
     const eqs = Sync.cache.employee_qualifications || [];
 
@@ -330,103 +333,75 @@ const GanttView = {
       return '<p class="p-4 text-slate-500">資格データがありません</p>';
     }
 
-    const qualMap = {};
-    quals.forEach(q => qualMap[q.id] = q);
     const empMap = {};
     employees.forEach(e => empMap[e.id] = e);
-
-    // 期限切れ＋取得日も表示範囲に含める
-    const extraDates = eqs.flatMap(eq => [eq.acquired, eq.expiry]).filter(Boolean);
-    const cells = this.buildCells(extraDates);
+    const cells = this.buildCells();
     if (cells.length === 0) return '<p class="p-4 text-slate-500">データなし</p>';
     const totalW = this.cellsTotalWidth(cells);
-    const rangeStart = cells[0].date;
-    const rangeEnd = (() => {
-      const last = cells[cells.length - 1];
-      return last.type === 'month'
-        ? new Date(last.date.getFullYear(), last.date.getMonth() + 1, 0)
-        : last.date;
-    })();
-
-    // 保有資格者リスト（対象外を除外し、保有資格1つ以上のみ）
-    const holderIds = [...new Set(eqs.map(eq => eq.emp_id))];
-    const holders = holderIds
-      .map(id => empMap[id])
-      .filter(e => e && e.category !== '対象外')
-      .sort((a, b) => (a.department || '').localeCompare(b.department || ''));
-
-    const now = new Date();
-    const in90Days = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
-
-    // 資格種別ごとの色
-    const typeColor = {
-      '国家資格': '#1e40af',
-      '作業主任者': '#ea580c',
-      '技能講習': '#059669',
-      '特別教育': '#7c3aed',
-      '安全衛生': '#0891b2',
-    };
 
     let html = `<table class="border-collapse" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
-    holders.forEach(e => {
-      const myQuals = eqs.filter(eq => eq.emp_id === e.id);
-      const rowH = Math.max(this.ROW_HEIGHT, 16 + myQuals.length * 24);
 
-      html += '<tr class="border-t">' +
-        `<td class="p-2 sticky left-0 bg-white border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
-          `<div class="font-medium text-sm">${this.esc(e.name)}</div>` +
-          `<div class="text-xs text-slate-500">${this.esc(e.department || '')} (保有資格 ${myQuals.length}件)</div>` +
+    quals.forEach(q => {
+      // この資格の保有者（対象外を除く）
+      const holders = eqs
+        .filter(eq => eq.qual_id === q.id)
+        .map(eq => ({ emp: empMap[eq.emp_id], eq }))
+        .filter(x => x.emp);
+      if (holders.length === 0) return;
+
+      // 資格見出し行
+      html += '<tr class="bg-blue-900 text-white">' +
+        `<td class="p-2 sticky left-0 bg-blue-900 border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+          `<div class="font-bold text-sm">${this.esc(q.name)}</div>` +
+          `<div class="text-xs text-blue-200">${this.esc(q.type)} / 保有者 ${holders.length}名</div>` +
         '</td>' +
-        `<td style="position:relative; height:${rowH}px; padding:0; width:${totalW}px">` +
-          this.gridDivs(cells);
+        `<td style="height:36px; padding:0; background:#1e3a8a; width:${totalW}px"></td>` +
+      '</tr>';
 
-      myQuals.forEach((eq, idx) => {
-        const q = qualMap[eq.qual_id];
-        if (!q) return;
-        const acquired = this.parseDate(eq.acquired);
-        const expiry = eq.expiry ? this.parseDate(eq.expiry) : rangeEnd;
+      // 保有者の個人行（配置現場バー）
+      holders.forEach(({ emp, eq }) => {
+        const myAsgs = assignments.filter(a => a.emp_id === emp.id);
+        const rowH = Math.max(this.ROW_HEIGHT, 16 + Math.max(1, myAsgs.length) * 26);
 
-        // 表示範囲にクリップ
-        const startD = acquired < rangeStart ? rangeStart : acquired;
-        const endD = expiry > rangeEnd ? rangeEnd : expiry;
-        if (endD < rangeStart || startD > rangeEnd) return;
-
-        const barLeft = this.dateToPx(startD, cells);
-        const barRight = this.dateToPx(endD, cells);
-        const barWidth = Math.max(20, barRight - barLeft - 2);
-
-        let color = typeColor[q.type] || '#64748b';
-        let extraStyle = '';
-        let icon = '';
+        // 期限警告マーク
+        let expWarn = '';
         if (eq.expiry) {
-          if (expiry < now) {
-            color = '#dc2626';
-            extraStyle = 'border:2px solid #991b1b;';
-            icon = '⚠ ';
-          } else if (expiry <= in90Days) {
-            color = '#f59e0b';
-            extraStyle = 'border:2px solid #b45309;';
-            icon = '! ';
-          }
+          const now = new Date();
+          const in90 = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+          const exp = new Date(eq.expiry);
+          if (exp < now) expWarn = `<span class="bg-red-100 text-red-700 px-1 py-0.5 rounded text-[10px] ml-1">⚠ 期限切れ ${eq.expiry}</span>`;
+          else if (exp <= in90) expWarn = `<span class="bg-amber-100 text-amber-700 px-1 py-0.5 rounded text-[10px] ml-1">! 〜${eq.expiry}</span>`;
         }
-        const top = 6 + idx * 24;
-        const label = icon + q.name + (eq.expiry ? ` (〜${eq.expiry})` : '');
-        html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:20px;${extraStyle}" title="${this.esc(label)}">${this.esc(q.name.length > 16 ? q.name.substring(0, 15) + '…' : q.name)}</div>`;
+
+        html += '<tr class="border-t">' +
+          `<td class="p-2 sticky left-0 bg-white border-r z-10 pl-6" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+            `<div class="text-sm font-medium">${this.esc(emp.name)}${expWarn}</div>` +
+            `<div class="text-xs text-slate-500 mt-1">${this.esc(emp.department || '')} ${PoolView.categoryBadge(emp.category)}</div>` +
+          '</td>' +
+          `<td style="position:relative; height:${rowH}px; padding:0; width:${totalW}px">` +
+            this.gridDivs(cells);
+
+        myAsgs.forEach((a, idx) => {
+          const proj = projects.find(p => p.project_id === a.project_id);
+          if (!proj) return;
+          const start = this.parseDate(a.join);
+          const end = this.parseDate(a.planned_end || proj.end);
+          const barLeft = this.dateToPx(start, cells);
+          const barRight = this.dateToPx(end, cells);
+          const barWidth = Math.max(20, barRight - barLeft - 2);
+          const color = a.role === '主任監督' ? '#1e40af' : '#0891b2';
+          const top = 6 + idx * 26;
+          html += `<div class="gantt-bar" style="left:${barLeft + 1}px;width:${barWidth}px;top:${top}px;background:${color};height:22px">${this.esc(a.project_name.substring(0, 24))} (${Math.round(a.allocation * 100)}%)</div>`;
+        });
+        if (myAsgs.length === 0) {
+          html += '<div style="position:absolute;left:8px;top:14px;color:#94a3b8;font-size:11px">配置なし</div>';
+        }
+        html += '</td></tr>';
       });
-      html += '</td></tr>';
     });
     html += '</tbody></table>';
 
-    // 凡例
-    html += '<div class="p-3 border-t bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
-      '<span class="font-semibold text-slate-700">凡例:</span>';
-    Object.entries(typeColor).forEach(([k, v]) => {
-      html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${k}</span>`;
-    });
-    html += '<span class="inline-flex items-center gap-1 ml-4"><span style="display:inline-block;width:14px;height:14px;background:#f59e0b;border:2px solid #b45309;border-radius:3px"></span>期限間近(90日)</span>';
-    html += '<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:#dc2626;border:2px solid #991b1b;border-radius:3px"></span>期限切れ</span>';
-    html += '</div>';
-
+    html += '<p class="text-xs text-slate-500 p-3 border-t">※ 縦軸は資格別グループ。同一人が複数資格を保有する場合、各資格グループに重複表示されます。期限・有効期間の詳細は「4.資格管理」タブを参照。</p>';
     return html;
   },
 };
