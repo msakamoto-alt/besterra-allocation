@@ -1,0 +1,47 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Node (将来用)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# 機密データ（絶対にコミット禁止）
+*.csv
+*.xlsx
+secrets.json
+.env
+.env.local
+js/config.js
+config.local.js
+
+# Phase 0 ローカル成果物（別ディレクトリにあるが念のため）
+out/
+data/
+
+# ビルド出力
+dist/
+build/
+
+# ログ
+*.log

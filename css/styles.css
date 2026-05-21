@@ -1,0 +1,160 @@
+/* === Reset & Base === */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic UI", sans-serif;
+  background: #f5f7fa;
+  color: #1a202c;
+  line-height: 1.6;
+}
+.screen { display: none; }
+.screen.active { display: block; }
+.hidden { display: none !important; }
+.muted { color: #718096; font-size: 0.9em; }
+.error { color: #e53e3e; font-weight: 600; }
+
+/* === Auth Screen === */
+#auth-screen.active {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+.auth-card {
+  background: white;
+  padding: 2.5rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  max-width: 400px;
+  width: 100%;
+}
+.auth-card h1 {
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+.auth-card p { margin-bottom: 1.5rem; text-align: center; }
+.auth-card form { display: flex; flex-direction: column; gap: 0.75rem; }
+.auth-card input,
+.auth-card button {
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  border-radius: 8px;
+  border: 1px solid #cbd5e0;
+}
+.auth-card button {
+  background: #2b6cb0;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+.auth-card button:hover { background: #2c5282; }
+
+/* === Main Screen === */
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  background: white;
+  border-bottom: 1px solid #e2e8f0;
+}
+header h1 { font-size: 1.25rem; }
+.header-controls { display: flex; align-items: center; gap: 1rem; }
+.header-controls button {
+  padding: 0.5rem 1rem;
+  background: #2b6cb0;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.header-controls button.link {
+  background: transparent;
+  color: #4a5568;
+}
+
+/* === Tab Navigations === */
+.view-tabs, .category-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 2rem;
+  background: white;
+  border-bottom: 1px solid #e2e8f0;
+}
+.view-tab, .category-tab {
+  padding: 0.75rem 1.25rem;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #4a5568;
+}
+.view-tab.active, .category-tab.active {
+  color: #2b6cb0;
+  border-bottom-color: #2b6cb0;
+  font-weight: 600;
+}
+.view-tab:disabled { color: #cbd5e0; cursor: not-allowed; }
+.badge {
+  display: inline-block;
+  background: #edf2f7;
+  color: #4a5568;
+  padding: 0.1em 0.5em;
+  border-radius: 10px;
+  font-size: 0.75em;
+  margin-left: 0.25em;
+}
+.category-tab.active .badge { background: #bee3f8; color: #2b6cb0; }
+
+/* === Filter Bar === */
+.filter-bar {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem 2rem;
+  background: white;
+  border-bottom: 1px solid #e2e8f0;
+  flex-wrap: wrap;
+}
+.filter-bar select,
+.filter-bar input {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+/* === View Container === */
+#view-container { padding: 2rem; }
+.loading { text-align: center; color: #718096; padding: 4rem; }
+
+/* === Card Grid === */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+.employee-card {
+  background: white;
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  border-left: 4px solid #cbd5e0;
+}
+.employee-card.category-監督職 { border-left-color: #38a169; }
+.employee-card.category-準監督職 { border-left-color: #d69e2e; }
+.employee-card.category-広義監督職 { border-left-color: #3182ce; }
+.employee-card.category-対象外 { border-left-color: #a0aec0; }
+.employee-card h3 { font-size: 1.1rem; margin-bottom: 0.25rem; }
+.employee-card .dept { color: #4a5568; font-size: 0.9rem; }
+.employee-card .meta { color: #718096; font-size: 0.8rem; margin-top: 0.5rem; }
+
+/* === Responsive === */
+@media (max-width: 768px) {
+  header { padding: 0.75rem 1rem; flex-direction: column; gap: 0.5rem; }
+  .view-tabs, .category-tabs, .filter-bar { padding: 0.5rem 1rem; overflow-x: auto; }
+  #view-container { padding: 1rem; }
+  .card-grid { grid-template-columns: 1fr; }
+}
