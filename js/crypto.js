@@ -8,10 +8,10 @@
 const Auth = {
   /**
    * 期待されるパスワードハッシュ（SHA-256）
-   * 暫定パスワード: "besterra2026" のSHA-256
-   * 本番デプロイ前に必ず変更すること
+   * 暫定パスワード（Phase 2a で長谷部氏方式に置換予定）
+   * パスワード本体は別管理（パスワードマネージャー等）
    */
-  EXPECTED_HASH: 'ff5ed1c7e4705445b48a229826269802a3bc3ea2ecdad14298055fa30e8ddc83',
+  EXPECTED_HASH: 'c2b353a9361c3746544fac62cdf5e161d2744c3766c68684c7d4ed026d30def0',
 
   async hashPassword(password) {
     const encoder = new TextEncoder();
