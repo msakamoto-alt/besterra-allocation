@@ -4,10 +4,37 @@
  */
 
 const PoolView = {
+  // 階層フィルタ：null=フィルタなし、1=現場監督のみ、2=現場監督+準現場監督、3=全員
+  currentTier: null,
+
+  // 階層 → 表示対象カテゴリ
+  TIER_CATEGORIES: {
+    1: ['現場監督'],
+    2: ['現場監督', '準現場監督'],
+    3: ['現場監督', '準現場監督', '監督サポート'],
+  },
+
   init() {
     document.getElementById('filter-cat').addEventListener('change', () => this.render());
     document.getElementById('filter-dept').addEventListener('change', () => this.render());
     document.getElementById('filter-name').addEventListener('input', () => this.render());
+
+    // 階層カードクリックでフィルタ切替（同じ階層を再クリックで解除）
+    document.querySelectorAll('.pool-tier-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const tier = Number(card.dataset.tier);
+        this.currentTier = (this.currentTier === tier) ? null : tier;
+        this.updateTierActiveUI();
+        this.render();
+      });
+    });
+  },
+
+  // アクティブな階層カードに .active クラスを付与
+  updateTierActiveUI() {
+    document.querySelectorAll('.pool-tier-card').forEach(card => {
+      card.classList.toggle('active', Number(card.dataset.tier) === this.currentTier);
+    });
   },
 
   // 対象外を除いた表示対象社員
@@ -42,8 +69,10 @@ const PoolView = {
     const fCat = document.getElementById('filter-cat').value;
     const fDept = document.getElementById('filter-dept').value;
     const fName = (document.getElementById('filter-name').value || '').toLowerCase();
+    const tierCats = this.currentTier ? this.TIER_CATEGORIES[this.currentTier] : null;
 
     const rows = employees.filter(e =>
+      (!tierCats || tierCats.includes(e.category)) &&
       (!fCat || e.category === fCat) &&
       (!fDept || e.department === fDept) &&
       (!fName || (e.name || '').toLowerCase().includes(fName))

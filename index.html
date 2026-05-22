@@ -88,17 +88,17 @@
       <section id="tab-pool" class="tab-panel">
         <h2 class="text-xl font-bold mb-4">監督リスト（監督員数 3階層表示）</h2>
         <div class="grid grid-cols-3 gap-4 mb-6">
-          <div class="bg-emerald-50 border border-emerald-300 rounded-lg p-4">
-            <div class="text-sm text-emerald-800 font-medium">階層1：現場監督（狭義・常時人員）</div>
-            <div class="text-3xl font-bold text-emerald-700 mt-2"><span id="cnt-sup">-</span> <span class="text-base">名</span></div>
+          <div class="pool-tier-card bg-teal-50 border border-teal-300 rounded-lg p-4 cursor-pointer hover:shadow-md transition" data-tier="1" title="クリックで現場監督のみ表示・もう一度で解除">
+            <div class="text-sm text-teal-800 font-medium">階層1：現場監督（狭義・常時人員）</div>
+            <div class="text-3xl font-bold text-teal-700 mt-2"><span id="cnt-sup">-</span> <span class="text-base">名</span></div>
             <div class="text-xs text-slate-600 mt-2">現場監督として常時配置可能</div>
           </div>
-          <div class="bg-amber-50 border border-amber-300 rounded-lg p-4">
+          <div class="pool-tier-card bg-amber-50 border border-amber-300 rounded-lg p-4 cursor-pointer hover:shadow-md transition" data-tier="2" title="クリックで現場監督＋準現場監督を表示・もう一度で解除">
             <div class="text-sm text-amber-800 font-medium">階層2：+ 準現場監督（最大稼動・応援要員）</div>
             <div class="text-3xl font-bold text-amber-700 mt-2"><span id="cnt-sup2">-</span> <span class="text-base">名</span></div>
             <div class="text-xs text-slate-600 mt-2">飽和時の応援を含む配置プール総数</div>
           </div>
-          <div class="bg-orange-50 border border-orange-300 rounded-lg p-4">
+          <div class="pool-tier-card bg-orange-50 border border-orange-300 rounded-lg p-4 cursor-pointer hover:shadow-md transition" data-tier="3" title="クリックで全員（監督サポート含む）を表示・もう一度で解除">
             <div class="text-sm text-orange-800 font-medium">階層3：+ 監督サポート（ＩＲ数値）</div>
             <div class="text-3xl font-bold text-orange-700 mt-2"><span id="cnt-sup3">-</span> <span class="text-base">名</span></div>
             <div class="text-xs text-slate-600 mt-2">ＩＲ開示上の監督者数（工事組織全体）</div>

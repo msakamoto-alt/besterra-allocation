@@ -41,10 +41,15 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
 .gantt-table thead th { background-clip: padding-box; }
 
 /* 区分バッジ */
-.badge-sup    { background: #10b981; color: white; }
+.badge-sup    { background: #0d9488; color: white; }
 .badge-quasi  { background: #f59e0b; color: white; }
 .badge-broad  { background: #fb923c; color: white; }
 .badge-out    { background: #9ca3af; color: white; }
+
+/* 監督リスト 階層カード アクティブ表示（クリックでフィルタ中） */
+.pool-tier-card.active[data-tier="1"] { box-shadow: 0 0 0 3px #0d9488, 0 4px 12px rgba(13,148,136,.25); }
+.pool-tier-card.active[data-tier="2"] { box-shadow: 0 0 0 3px #f59e0b, 0 4px 12px rgba(245,158,11,.25); }
+.pool-tier-card.active[data-tier="3"] { box-shadow: 0 0 0 3px #fb923c, 0 4px 12px rgba(251,146,60,.25); }
 
 /* 共通 */
 .hidden { display: none !important; }
