@@ -21,6 +21,7 @@ const Sync = {
     prospects: ['prospects', '11_prospects'],
     assignment_overrides: ['assignment_overrides', '12_assignment_overrides'],
     g_work_logs: ['g_work_logs', '07_G_work_logs', '07_g_work_logs'],
+    project_status_overrides: ['project_status_overrides', '13_project_status_overrides'],
   },
 
   // 各シートの形式バリデータ（先頭行で判定）
@@ -41,6 +42,11 @@ const Sync = {
     prospects: txt => /prospect_id|project_name|customer|見込み/i.test((txt || '').split('\n')[0] || ''),
     assignment_overrides: txt => /override_key|emp_name|project_id/i.test((txt || '').split('\n')[0] || ''),
     g_work_logs: txt => /社員コード|プロジェクトコード|作業時間|emp_id|hours/i.test((txt || '').split('\n')[0] || ''),
+    project_status_overrides: txt => {
+      const head = (txt || '').split('\n')[0] || '';
+      // project_id ＋ completed の組み合わせを必須（他のシート誤認防止）
+      return /project_id/i.test(head) && /completed/i.test(head);
+    },
   },
 
   cache: {},
@@ -676,6 +682,31 @@ const Sync = {
 
   // override 行を assignments にマージ（v4: op 別処理）
   // op=update: 既存配置の期間/役割を上書き（旧挙動）
+  // プロジェクト状態 override を projects にマージ
+  // 自動判定（status文言 + planned_end < 今日）より override を優先する
+  // completed が 'TRUE'/'true' → true、'FALSE'/'false' → false
+  mergeProjectStatusOverrides(projects, overrideRows) {
+    if (!Array.isArray(overrideRows) || overrideRows.length === 0) return projects;
+    const map = new Map();
+    overrideRows.forEach(r => {
+      const pid = String(r.project_id || '').trim();
+      if (!pid) return;
+      const raw = String(r.completed || '').trim().toLowerCase();
+      if (raw === 'true') map.set(pid, true);
+      else if (raw === 'false') map.set(pid, false);
+      // それ以外は無視（明示値のみ反映）
+    });
+    if (map.size === 0) return projects;
+    return projects.map(p => {
+      if (!map.has(p.project_id)) return p;
+      // override 値で completed を上書き（_status_overridden フラグも立てる）
+      return Object.assign({}, p, {
+        completed: map.get(p.project_id),
+        _status_overridden: true,
+      });
+    });
+  },
+
   // op=add: 新規配置を追加（見込み案件への監督紐付け / 既存案件への追加メンバー）
   // op=remove: 既存配置を除外（マージ後の assignments から消す）
   // 後方互換: op 列なし or 空欄は update とみなす
@@ -803,7 +834,7 @@ const Sync = {
   async syncAll() {
     if (this.SHEET_ID) {
       // 各シートを候補名でフォールバック取得（バリデータでヘッダ確認）
-      const keys = ['employees', 'departments', 'qualifications', 'employee_qualifications', 'salesforce_imports', 'prospects', 'assignment_overrides', 'g_work_logs'];
+      const keys = ['employees', 'departments', 'qualifications', 'employee_qualifications', 'salesforce_imports', 'prospects', 'assignment_overrides', 'g_work_logs', 'project_status_overrides'];
       const texts = await Promise.allSettled(keys.map(k => this.fetchSheetWithValidation(k)));
 
       keys.forEach((key, i) => {
@@ -892,6 +923,19 @@ const Sync = {
           );
         } catch (e) {
           console.error('overrides マージ失敗:', e);
+        }
+      }
+
+      // project_status_overrides を projects にマージ（v5: completed フラグの手動上書き）
+      // 自動判定（planned_end < 今日）の誤判定を手動で修正できる
+      if (this.cache.project_status_overrides && this.cache.project_status_overrides.length > 0) {
+        try {
+          this.cache.projects = this.mergeProjectStatusOverrides(
+            this.cache.projects,
+            this.cache.project_status_overrides
+          );
+        } catch (e) {
+          console.error('project_status_overrides マージ失敗:', e);
         }
       }
     } else {

@@ -204,6 +204,13 @@ const GanttView = {
         this.showAssignmentModal(bar.dataset.asgId);
         return;
       }
+      // 「状態を変更」ボタン
+      const statusBtn = e.target.closest('.gantt-status-edit');
+      if (statusBtn) {
+        const pid = statusBtn.dataset.projectId;
+        this.openProjectStatusModal(pid);
+        return;
+      }
       // 「+ メンバー追加」ボタン
       const addBtn = e.target.closest('.gantt-add-member');
       if (addBtn) {
@@ -321,6 +328,16 @@ const GanttView = {
         this.updateProjectSortToolbar();
         this.refresh();
       });
+    }
+
+    // プロジェクト状態モーダル
+    const statusModal = document.getElementById('project-status-modal');
+    if (statusModal) {
+      const closeStatusModal = () => statusModal.classList.add('hidden');
+      document.getElementById('project-status-modal-close').addEventListener('click', closeStatusModal);
+      document.getElementById('project-status-cancel').addEventListener('click', closeStatusModal);
+      statusModal.addEventListener('click', (ev) => { if (ev.target === statusModal) closeStatusModal(); });
+      document.getElementById('project-status-save').addEventListener('click', () => this.saveProjectStatus());
     }
 
     // 今日ラベル
@@ -880,6 +897,82 @@ const GanttView = {
     return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   },
 
+  // ===== プロジェクト状態 override（completed フラグの手動上書き）=====
+
+  // 状態変更モーダルを開く
+  openProjectStatusModal(projectId) {
+    const proj = (Sync.cache.projects || []).find(p => p.project_id === projectId);
+    if (!proj) return;
+    const modal = document.getElementById('project-status-modal');
+    if (!modal) return;
+    this._editingStatusProjectId = projectId;
+
+    document.getElementById('project-status-name').textContent = proj.name + (proj.contract_type ? `（${proj.contract_type}）` : '');
+    document.getElementById('project-status-meta').textContent =
+      `${proj.project_id} / 工期 ${proj.start || '-'}〜${proj.end || '-'} / ${proj.dept || '-'}`;
+    const currentLabel = proj.completed ? '完成' : '進行中';
+    const overrideNote = proj._status_overridden ? '（手動で上書き中）' : '（自動判定）';
+    document.getElementById('project-status-current').textContent = `${currentLabel} ${overrideNote}`;
+
+    // ラジオの初期選択：現在の状態（override がなければ自動判定そのもの）
+    const radios = document.getElementsByName('project-status-radio');
+    radios.forEach(r => {
+      if (proj._status_overridden) {
+        r.checked = (r.value === (proj.completed ? 'completed' : 'in_progress'));
+      } else {
+        // 未 override 時は「自動判定に戻す」を選択肢として明示しないため未選択
+        r.checked = false;
+      }
+    });
+
+    const errEl = document.getElementById('project-status-error');
+    if (errEl) { errEl.classList.add('hidden'); errEl.textContent = ''; }
+    modal.classList.remove('hidden');
+  },
+
+  // 状態変更モーダルの保存
+  async saveProjectStatus() {
+    const pid = this._editingStatusProjectId;
+    if (!pid) return;
+    const radios = document.getElementsByName('project-status-radio');
+    let value = null;
+    radios.forEach(r => { if (r.checked) value = r.value; });
+    const errEl = document.getElementById('project-status-error');
+    const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.classList.remove('hidden'); } };
+
+    if (!value) { showErr('変更後の状態を選択してください'); return; }
+
+    const saveBtn = document.getElementById('project-status-save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = '保存中...';
+    try {
+      if (value === 'auto') {
+        await Sync.postOverride({ action: 'project_status_delete', project_id: pid });
+      } else {
+        const completed = (value === 'completed');
+        await Sync.postOverride({
+          action: 'project_status_upsert',
+          project_id: pid,
+          completed: completed ? 'true' : 'false',
+          updated_by: 'web',
+        });
+      }
+      // GAS書込み後に全体再同期（projects は salesforce_imports から再派生 → override 再適用）
+      await Sync.syncAll();
+      document.getElementById('project-status-modal').classList.add('hidden');
+      this.refresh();
+      // 監督ダッシュボードが定義されていれば再描画（同じ状態 override を反映）
+      if (typeof DashboardView !== 'undefined' && typeof DashboardView.render === 'function') {
+        try { DashboardView.render(); } catch (e) { console.warn('Dashboard 再描画失敗:', e); }
+      }
+    } catch (e) {
+      showErr('保存失敗: ' + (e.message || e));
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = '保存';
+    }
+  },
+
   // ===== 1. 現場軸 =====
 
   renderProjectAxis() {
@@ -925,12 +1018,22 @@ const GanttView = {
       const addBtn = canEdit
         ? `<button class="text-xs text-emerald-700 hover:underline mt-1 gantt-add-member" data-project-id="${this.esc(p.project_id)}">+ メンバー追加</button>`
         : '';
+      // 状態変更ボタン（completed フラグの手動上書き）
+      // override 適用中なら「★」マーク付き
+      const statusBtn = canEdit
+        ? `<button class="text-xs text-slate-600 hover:text-slate-900 hover:underline ml-2 mt-1 gantt-status-edit" data-project-id="${this.esc(p.project_id)}">${p._status_overridden ? '★ 状態を変更' : '状態を変更'}</button>`
+        : '';
+      // 状態バッジ（完成 or 進行中）：オーバーライド適用中は色付け
+      const isCompleted = !!p.completed;
+      const statusBadge = p._status_overridden
+        ? `<span class="inline-block ${isCompleted ? 'bg-slate-200 text-slate-700' : 'bg-blue-100 text-blue-700'} px-1.5 py-0 rounded text-[10px] font-medium ml-1" title="手動で状態を上書き中">${isCompleted ? '完成' : '進行中'}</span>`
+        : (isCompleted ? '<span class="inline-block bg-slate-100 text-slate-500 px-1.5 py-0 rounded text-[10px] ml-1">完成</span>' : '');
       html += '<tr class="border-t">' +
         `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
-          `<div class="font-medium text-sm">${this.esc(p.name)}${this.contractBadge(p.contract_type)}</div>` +
+          `<div class="font-medium text-sm">${this.esc(p.name)}${this.contractBadge(p.contract_type)}${statusBadge}</div>` +
           `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
           `<div class="text-xs mt-1">${(labelMembers || dispatchNote || placeholderNote) ? (labelMembers + dispatchNote + placeholderNote) : '<span class="text-slate-400">配置未定・不足</span>'}</div>` +
-          addBtn +
+          addBtn + statusBtn +
         '</td>' +
         `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
           this.gridDivs(cells) +

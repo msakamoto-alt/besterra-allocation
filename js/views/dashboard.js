@@ -14,6 +14,16 @@ const DashboardView = {
 
     // 「現在の配置」行クリックでガント詳細モーダルを開く（編集UI共通化）
     document.getElementById('dash-content').addEventListener('click', (e) => {
+      // 状態変更ボタン（行クリックより優先）
+      const statusBtn = e.target.closest('.dash-status-edit');
+      if (statusBtn) {
+        e.stopPropagation();
+        const pid = statusBtn.dataset.projectId;
+        if (typeof GanttView !== 'undefined' && typeof GanttView.openProjectStatusModal === 'function') {
+          GanttView.openProjectStatusModal(pid);
+        }
+        return;
+      }
       const tr = e.target.closest('tr[data-asg-id]');
       if (!tr) return;
       const asgId = tr.dataset.asgId;
@@ -108,6 +118,9 @@ const DashboardView = {
     const in90Days = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
 
     const canEdit = !!(Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN);
+    // projects マップ（現在配置・過去配置の両方で参照）
+    const projectsMap0 = {};
+    (Sync.cache.projects || []).forEach(p => { projectsMap0[p.project_id] = p; });
     let asgTbl = '';
     if (asgs.length === 0) {
       asgTbl = '<p class="text-slate-400 text-sm">配置なし</p>';
@@ -120,6 +133,14 @@ const DashboardView = {
         const overrideMark = a.overridden
           ? '<span class="ml-2 bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px]">✎ 変更済み</span>'
           : '';
+        // プロジェクト状態バッジ（completed / 状態 override 中）
+        const proj = projectsMap0[a.project_id] || {};
+        const statusBadge = proj._status_overridden
+          ? `<span class="ml-2 ${proj.completed ? 'bg-slate-200 text-slate-700' : 'bg-blue-100 text-blue-700'} px-1.5 py-0.5 rounded text-[10px]" title="手動で状態を上書き中">${proj.completed ? '完成' : '進行中'}</span>`
+          : (proj.completed ? '<span class="ml-2 bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded text-[10px]">完成</span>' : '');
+        const statusEditLink = canEdit
+          ? `<button class="dash-status-edit ml-2 text-slate-500 hover:text-slate-900 text-[11px] underline" data-project-id="${this.esc(a.project_id)}" title="現場の状態（完成/進行中）を変更">状態</button>`
+          : '';
         const editLink = canEdit
           ? '<td class="p-2 text-center"><span class="text-blue-600 text-xs underline">期間を変更</span></td>'
           : '';
@@ -129,7 +150,7 @@ const DashboardView = {
         const titleAttr = canEdit ? ' title="クリックして配属期間を変更"' : '';
         const dispRole = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
         asgTbl += `<tr class="${rowClass}" data-asg-id="${this.esc(a.assignment_id)}"${titleAttr}>` +
-          `<td class="p-2">${this.esc(a.project_name)}${overrideMark}</td>` +
+          `<td class="p-2">${this.esc(a.project_name)}${overrideMark}${statusBadge}${statusEditLink}</td>` +
           `<td class="p-2 text-center">${this.esc(dispRole)}</td>` +
           `<td class="p-2 text-center text-xs">${this.fmtDate(a.join)}</td>` +
           `<td class="p-2 text-center text-xs">${this.fmtDate(a.planned_end)}</td>` +
@@ -199,13 +220,20 @@ const DashboardView = {
         const overrideMark = a.overridden
           ? '<span class="ml-1 bg-purple-100 text-purple-700 px-1 py-0 rounded text-[10px]">✎</span>'
           : '';
+        // プロジェクト状態バッジ（過去配置でも override 状況は表示）
+        const statusBadge = proj._status_overridden
+          ? `<span class="ml-1 ${proj.completed ? 'bg-slate-200 text-slate-700' : 'bg-blue-100 text-blue-700'} px-1 py-0 rounded text-[10px]" title="手動で状態を上書き中">${proj.completed ? '完成' : '進行中'}</span>`
+          : '';
+        const statusEditLink = canEdit
+          ? `<button class="dash-status-edit ml-1 text-slate-500 hover:text-slate-900 text-[10px] underline" data-project-id="${this.esc(a.project_id)}" title="現場の状態（完成/進行中）を変更">状態</button>`
+          : '';
         const rowClass = canEdit
           ? 'border-t hover:bg-blue-50 cursor-pointer'
           : 'border-t';
         const titleAttr = canEdit ? ' title="クリックして配属期間を変更"' : '';
         pastTbl += `<tr class="${rowClass}" data-asg-id="${this.esc(a.assignment_id)}"${titleAttr}>` +
           `<td class="px-3 py-2 font-mono text-xs text-slate-500">${this.esc(a.project_id)}</td>` +
-          `<td class="px-3 py-2">${this.esc(a.project_name)}${overrideMark}</td>` +
+          `<td class="px-3 py-2">${this.esc(a.project_name)}${overrideMark}${statusBadge}${statusEditLink}</td>` +
           `<td class="px-3 py-2 text-center">${this.esc(roleOf(a))}</td>` +
           `<td class="px-3 py-2 text-center text-xs">${this.esc(periodTxt)}</td>` +
           `<td class="px-3 py-2 text-right text-xs">${this.esc(amountTxt)}</td>` +
