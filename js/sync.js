@@ -20,6 +20,7 @@ const Sync = {
     salesforce_imports: ['salesforce_imports', '09_salesforce_imports'],
     prospects: ['prospects', '11_prospects'],
     assignment_overrides: ['assignment_overrides', '12_assignment_overrides'],
+    g_work_logs: ['g_work_logs', '07_G_work_logs', '07_g_work_logs'],
   },
 
   // 各シートの形式バリデータ（先頭行で判定）
@@ -31,6 +32,7 @@ const Sync = {
     salesforce_imports: txt => /工事部員|工事番号|人事配置一覧|現場管理表/i.test((txt || '').split('\n')[0] || ''),
     prospects: txt => /prospect_id|project_name|customer|見込み/i.test((txt || '').split('\n')[0] || ''),
     assignment_overrides: txt => /override_key|emp_name|project_id/i.test((txt || '').split('\n')[0] || ''),
+    g_work_logs: txt => /社員コード|プロジェクトコード|作業時間|emp_id|hours/i.test((txt || '').split('\n')[0] || ''),
   },
 
   cache: {},
@@ -456,6 +458,89 @@ const Sync = {
     };
   },
 
+  // ===== G工番ログ ユーティリティ =====
+
+  // '8:00' / '8:30' / 8 / '8.5' を時間（小数）に変換
+  parseHours(s) {
+    if (s == null) return 0;
+    const str = String(s).trim();
+    const colon = str.match(/^(\d+):(\d+)$/);
+    if (colon) return Number(colon[1]) + Number(colon[2]) / 60;
+    const num = Number(str);
+    return isNaN(num) ? 0 : num;
+  },
+
+  // 備考からG工番カテゴリを推定（検証B2のカテゴリに準拠）
+  classifyGCategory(note) {
+    const s = String(note || '').trim();
+    if (!s || /G工番を使用の際/.test(s)) return '空欄・未記載';
+    if (/教育|研修|採用|新人|OJT/i.test(s)) return '教育・採用';
+    if (/安全|KY|衛生|健康/i.test(s)) return '安全衛生';
+    if (/資料|事務|報告|提案|見積|積算/i.test(s)) return '資料作成・事務';
+    if (/会議|打合|ミーティング|MTG|打ち合わせ/i.test(s)) return '会議・打合せ';
+    if (/視察|調査|見学|現調|現地/i.test(s)) return '視察・調査';
+    if (/移動|出張/i.test(s)) return '移動・出張';
+    return 'その他';
+  },
+
+  // 日付から年月キー（YYYY-MM）を生成
+  yearMonthKey(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(String(dateStr).replace(/\//g, '-'));
+    if (isNaN(d)) return null;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  },
+
+  // 先月の年月キーを返す
+  previousYearMonthKey() {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  },
+
+  // G工番判定：プロジェクトコードが 'G' or 'G' で始まる短いコード
+  isGWorkCode(code) {
+    const s = String(code || '').trim();
+    if (!s) return false;
+    // 'G' 単独、または 'G-XXX' のようなパターン（'GLE...' のような工番除外）
+    if (s === 'G') return true;
+    if (/^G[-_]/.test(s)) return true;
+    return false;
+  },
+
+  // 指定社員の指定年月のG工番サマリを集計
+  // 戻り値: { totalHours, gHours, gRatio, categories: {cat: hours, ...} }
+  computeGSummaryForEmployee(empId, yearMonth) {
+    const logs = this.cache.g_work_logs || [];
+    if (logs.length === 0 || !yearMonth) {
+      return { totalHours: 0, gHours: 0, gRatio: 0, categories: {}, logCount: 0 };
+    }
+
+    let totalHours = 0;
+    let gHours = 0;
+    const categories = {};
+    let logCount = 0;
+
+    logs.forEach(r => {
+      const rEmpId = String(r['社員コード'] || r.emp_id || '').trim();
+      if (rEmpId !== String(empId)) return;
+      const ym = this.yearMonthKey(r['日付'] || r.date);
+      if (ym !== yearMonth) return;
+
+      const h = this.parseHours(r['作業時間'] || r.hours);
+      totalHours += h;
+      logCount++;
+      if (this.isGWorkCode(r['プロジェクトコード'] || r.project_code)) {
+        gHours += h;
+        const cat = this.classifyGCategory(r['備考'] || r.note);
+        categories[cat] = (categories[cat] || 0) + h;
+      }
+    });
+
+    const gRatio = totalHours > 0 ? gHours / totalHours : 0;
+    return { totalHours, gHours, gRatio, categories, logCount };
+  },
+
   // override_key の正規化（GAS側 upsert と一致させる）
   buildOverrideKey(empName, projectId) {
     return `${(empName || '').replace(/\s+/g, '')}__${(projectId || '').trim()}`;
@@ -515,7 +600,7 @@ const Sync = {
   async syncAll() {
     if (this.SHEET_ID) {
       // 各シートを候補名でフォールバック取得（バリデータでヘッダ確認）
-      const keys = ['employees', 'departments', 'qualifications', 'employee_qualifications', 'salesforce_imports', 'prospects', 'assignment_overrides'];
+      const keys = ['employees', 'departments', 'qualifications', 'employee_qualifications', 'salesforce_imports', 'prospects', 'assignment_overrides', 'g_work_logs'];
       const texts = await Promise.allSettled(keys.map(k => this.fetchSheetWithValidation(k)));
 
       keys.forEach((key, i) => {

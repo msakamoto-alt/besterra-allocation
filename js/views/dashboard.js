@@ -77,9 +77,11 @@ const DashboardView = {
       a.emp_id === empId && !a.completed && Sync.isActiveAssignment(a)
     );
 
-    // G工番モック（仕様書 §3.7 g_work_logs 投入前のデモ）
-    const gMockCats = { '資料作成・事務': 18, '安全衛生・KY': 6, '視察・調査': 4, '会議・打合せ': 2, '教育・研修': 3 };
-    const gTotal = Object.values(gMockCats).reduce((s, v) => s + v, 0);
+    // G工番：先月の実データ集計（g_work_logs シートから）
+    const prevYm = Sync.previousYearMonthKey();
+    const gSummary = Sync.computeGSummaryForEmployee(empId, prevYm);
+    const [prevY, prevM] = prevYm.split('-');
+    const prevMonthLabel = `${Number(prevY)}年${Number(prevM)}月`;
 
     // 保有資格
     const myQuals = (Sync.cache.employee_qualifications || []).filter(eq => eq.emp_id === empId);
@@ -119,14 +121,24 @@ const DashboardView = {
       asgTbl += '</tbody></table>';
     }
 
+    // G工番カテゴリ内訳：時間が多い順にソート
+    const gMaxHours = Math.max(...Object.values(gSummary.categories), 0);
+    const sortedCats = Object.entries(gSummary.categories).sort((a, b) => b[1] - a[1]);
     let gHtml = '';
-    Object.entries(gMockCats).forEach(([k, v]) => {
-      gHtml += '<div class="border rounded p-2 text-center">' +
-        `<div class="text-xs text-slate-600">${this.esc(k)}</div>` +
-        `<div class="text-lg font-bold">${v}h</div>` +
-        `<div class="h-2 bg-slate-200 rounded mt-1"><div class="h-2 bg-blue-500 rounded" style="width:${(v / gTotal * 100)}%"></div></div>` +
-        '</div>';
-    });
+    if (sortedCats.length === 0) {
+      gHtml = '<div class="col-span-5 text-center text-sm text-slate-400 py-4">この月のG工番ログはありません</div>';
+    } else {
+      sortedCats.forEach(([k, v]) => {
+        const widthPct = gMaxHours > 0 ? (v / gMaxHours * 100) : 0;
+        const pctOfG = gSummary.gHours > 0 ? (v / gSummary.gHours * 100) : 0;
+        gHtml += '<div class="border rounded p-2">' +
+          `<div class="text-xs text-slate-600">${this.esc(k)}</div>` +
+          `<div class="text-lg font-bold mt-1">${v.toFixed(1)}<span class="text-xs font-normal text-slate-500">h</span></div>` +
+          `<div class="text-[10px] text-slate-500">G工番内 ${pctOfG.toFixed(0)}%</div>` +
+          `<div class="h-2 bg-slate-200 rounded mt-1"><div class="h-2 bg-blue-500 rounded" style="width:${widthPct}%"></div></div>` +
+          '</div>';
+      });
+    }
 
     let qualHtml = '';
     if (myQuals.length === 0) {
@@ -169,9 +181,18 @@ const DashboardView = {
         '<h3 class="font-bold mb-3">保有資格</h3>' + qualHtml +
       '</div>' +
       '<div class="bg-white rounded-lg shadow p-4">' +
-        '<h3 class="font-bold mb-3">今月のG工番カテゴリ内訳（モック・参考可視化）</h3>' +
+        `<div class="flex items-baseline justify-between mb-3 flex-wrap gap-2">` +
+          `<h3 class="font-bold">${this.esc(prevMonthLabel)} G工番カテゴリ内訳</h3>` +
+          (gSummary.totalHours > 0
+            ? `<div class="text-sm text-slate-600">` +
+                `総勤務 <span class="font-bold text-slate-900">${gSummary.totalHours.toFixed(1)}h</span>` +
+                ` / G工番 <span class="font-bold text-blue-700">${gSummary.gHours.toFixed(1)}h</span>` +
+                ` = <span class="font-bold text-lg ${gSummary.gRatio >= 0.4 ? 'text-red-600' : gSummary.gRatio >= 0.25 ? 'text-amber-600' : 'text-emerald-700'}">${(gSummary.gRatio * 100).toFixed(1)}%</span>` +
+              '</div>'
+            : '<div class="text-sm text-slate-400">勤務データなし</div>') +
+        '</div>' +
         `<div class="grid grid-cols-5 gap-2">${gHtml}</div>` +
-        '<p class="text-xs text-slate-500 mt-3">※ 配置自動化のロジックには使用しません（仕様書v4.0方針）。可視化のみ。</p>' +
+        '<p class="text-xs text-slate-500 mt-3">※ G工番＝直接工事以外の時間（教育/会議/事務等）。配置自動化のロジックには使用しません（仕様書v4.0方針）。可視化のみ。</p>' +
       '</div>';
   },
 
