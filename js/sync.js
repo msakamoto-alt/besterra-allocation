@@ -182,19 +182,11 @@ const Sync = {
       // 必須：工事部員のみ。工事番号は無い場合もフォールバック許容
       if (!emp_name) continue;
 
-      // 工事番号がある場合のバリデーション
-      let pid = project_id;
-      let isProspect = false;
-      if (project_id) {
-        if (/^(-|nan|null|na|n\/a|undefined)$/i.test(project_id)) continue;
-        if (!/[A-Za-z]/.test(project_id) || !/\d/.test(project_id)) continue;
-      } else {
-        // 工事番号なし＝受注前の見込み案件として扱う
-        const pname = (c[cols.project_name] || '').trim();
-        if (!pname) continue;
-        pid = 'SF-PROSPECT-' + pname.substring(0, 30).replace(/\s+/g, '');
-        isProspect = true;
-      }
+      // 工番なし行は完全スキップ（受注前のSF案件は取り込まない方針）
+      // 見込み案件は 11_prospects シートで管理する
+      if (!project_id) continue;
+      if (/^(-|nan|null|na|n\/a|undefined)$/i.test(project_id)) continue;
+      if (!/[A-Za-z]/.test(project_id) || !/\d/.test(project_id)) continue;
 
       rows.push({
         department: c[cols.dept] || '',
@@ -203,14 +195,13 @@ const Sync = {
         role: c[cols.role] || '',
         role_detail: c[cols.role_detail] || '',
         contract_type: c[cols.contract_type] || '',
-        project_id: pid,
+        project_id,
         project_name: c[cols.project_name] || '',
         start: this.normalizeDate(c[cols.start]),
         end: this.normalizeDate(c[cols.end]),
         total_revenue: c[cols.total_revenue] || '',
         order_amount: c[cols.order_amount] || '',
         status: c[cols.status] || '',
-        prospect: isProspect,
       });
     }
     return rows;
@@ -501,12 +492,11 @@ const Sync = {
           start: r.start,
           end: r.end,
           amount: this.parseAmount(r.total_revenue || r.order_amount),
-          kind: r.prospect ? '見込み（SF）' : '工事',
+          kind: '工事',
           dept: deptShort,
           contract_type: r.contract_type || '',
           status: r.status,
           completed,
-          prospect: !!r.prospect,  // 工番なし＝見込み扱い（点線表示）
         };
       }
 
