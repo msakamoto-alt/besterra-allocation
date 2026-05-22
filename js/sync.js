@@ -101,10 +101,9 @@ const Sync = {
     return result;
   },
 
-  // === Salesforce レポート専用パーサ ===
-  // 構造：1行目=タイトル兼ヘッダ、2行目〜=データ、末尾=「合計」行
-  // 列：A=空, B=所属, C=空, D=工事部員, E=ロール, F=ロール詳細,
-  //     G=工事番号, H=工事名, I=着工, J=完工, K=総売上, L=受注金額, M=状態, N=空
+  // === Salesforce レポート専用パーサ（ヘッダベース・列順序非依存） ===
+  // ヘッダ行を見て各列のインデックスを動的に特定。
+  // 受け入れ列名（部分一致）：所属/工事部員/ロール/ロール詳細/受注形態/工事番号/工事名/着工/完工/総売上/受注金額/状態
   parseSalesforceCsv(text) {
     const lines = text.trim().split(/\r?\n/);
     if (lines.length < 2) return [];
@@ -112,36 +111,90 @@ const Sync = {
     // ヘッダ検証：Salesforce形式かどうか
     const firstLine = lines[0] || '';
     const isSalesforce = firstLine.includes('工事部員') || firstLine.includes('工事番号')
-      || firstLine.includes('人事配置一覧') || firstLine.includes('現場管理表');
+      || firstLine.includes('人事配置一覧') || firstLine.includes('現場管理表')
+      || firstLine.includes('受注形態');
     if (!isSalesforce) {
       console.warn('salesforce_imports シートが Salesforce形式ではありません。スキップします。', firstLine.substring(0, 100));
       return [];
     }
 
+    // ヘッダから列インデックスを特定（部分一致）
+    const headers = this.parseRow(firstLine);
+    const findCol = (...patterns) => {
+      for (let i = 0; i < headers.length; i++) {
+        const h = String(headers[i] || '');
+        for (const p of patterns) {
+          if (h.includes(p)) return i;
+        }
+      }
+      return -1;
+    };
+    const cols = {
+      dept: findCol('所属', '部門'),
+      emp: findCol('工事部員', '担当者'),
+      role: findCol('ロール詳細') >= 0 && findCol('ロール詳細') !== findCol('ロール')
+        ? findCol('ロール') : -1,  // 「ロール」と「ロール詳細」両方ある時の優先
+      role_simple: findCol('ロール'),  // ロール詳細がなければこれを使う
+      role_detail: findCol('ロール詳細'),
+      contract_type: findCol('受注形態'),
+      project_id: findCol('工事番号'),
+      project_name: findCol('工事名', '通称'),
+      start: findCol('着工'),
+      end: findCol('完工'),
+      total_revenue: findCol('総売上'),
+      order_amount: findCol('受注金額'),
+      status: findCol('状態'),
+    };
+    // 'ロール' 単独列の特定：ロール詳細と被らない方
+    if (cols.role < 0) cols.role = cols.role_simple;
+    // 'ロール' と 'ロール詳細' が同じ列を指す場合（findColの部分一致仕様）の補正
+    if (cols.role === cols.role_detail && cols.role_detail >= 0) {
+      // 「ロール詳細」の方が長いので findCol が先にヒット。逆順で探し直す
+      for (let i = 0; i < headers.length; i++) {
+        const h = String(headers[i] || '').trim();
+        if (h === 'ロール') { cols.role = i; break; }
+      }
+    }
+    console.info('SF列マッピング:', cols);
+
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
       const c = this.parseRow(lines[i]);
-      if ((c[1] || '').includes('合計')) continue;
-      const emp_name = this.normalizeName(c[3] || '');
-      const project_id = (c[6] || '').trim();
-      // 工事番号必須・空/合計/プレースホルダー/英数字-形式外をスキップ
-      if (!emp_name || !project_id) continue;
-      if (/^(-|nan|null|na|n\/a|undefined)$/i.test(project_id)) continue;
-      // 工事番号は通常 K\d+-\d+ 形式。最低限「英字 + 数字」が含まれていること
-      if (!/[A-Za-z]/.test(project_id) || !/\d/.test(project_id)) continue;
+      // 合計行スキップ
+      if (cols.dept >= 0 && (c[cols.dept] || '').includes('合計')) continue;
+
+      const emp_name = this.normalizeName(c[cols.emp] || '');
+      const project_id = cols.project_id >= 0 ? (c[cols.project_id] || '').trim() : '';
+
+      // 必須：工事部員のみ。工事番号は無い場合もフォールバック許容
+      if (!emp_name) continue;
+
+      // 工事番号がある場合のバリデーション
+      let pid = project_id;
+      if (project_id) {
+        if (/^(-|nan|null|na|n\/a|undefined)$/i.test(project_id)) continue;
+        if (!/[A-Za-z]/.test(project_id) || !/\d/.test(project_id)) continue;
+      } else {
+        // 工事番号列が無い場合は工事名をフォールバックIDに（暫定）
+        const pname = (c[cols.project_name] || '').trim();
+        if (!pname) continue;
+        pid = 'NOID-' + pname.substring(0, 20);
+      }
+
       rows.push({
-        department: c[1] || '',
+        department: c[cols.dept] || '',
         emp_name,
-        emp_name_raw: c[3] || '',
-        role: c[4] || '',
-        role_detail: c[5] || '',
-        project_id,
-        project_name: c[7] || '',
-        start: this.normalizeDate(c[8]),
-        end: this.normalizeDate(c[9]),
-        total_revenue: c[10] || '',
-        order_amount: c[11] || '',
-        status: c[12] || '',
+        emp_name_raw: c[cols.emp] || '',
+        role: c[cols.role] || '',
+        role_detail: c[cols.role_detail] || '',
+        contract_type: c[cols.contract_type] || '',
+        project_id: pid,
+        project_name: c[cols.project_name] || '',
+        start: this.normalizeDate(c[cols.start]),
+        end: this.normalizeDate(c[cols.end]),
+        total_revenue: c[cols.total_revenue] || '',
+        order_amount: c[cols.order_amount] || '',
+        status: c[cols.status] || '',
       });
     }
     return rows;
@@ -386,6 +439,7 @@ const Sync = {
           amount: this.parseAmount(r.total_revenue || r.order_amount),
           kind: '工事',
           dept: deptShort,
+          contract_type: r.contract_type || '',
           status: r.status,
           completed,
         };

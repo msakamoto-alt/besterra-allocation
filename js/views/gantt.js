@@ -30,9 +30,29 @@ const GanttView = {
   // 役割→色（全軸共通）
   ROLE_COLOR: {
     '主任技術者': '#1e40af',
+    '専任技術者': '#dc2626',  // 元請の主任技術者は赤（建設業法上の専任技術者）
     '副監督': '#0891b2',
     '支援': '#64748b',
     '視察': '#a16207',
+  },
+
+  // 元請の主任技術者を「専任技術者」として表示するための変換
+  // assignment と project の contract_type を見て表示用ロール名と色を返す
+  resolveRoleDisplay(assignment, project) {
+    const isPrime = String(project && project.contract_type || '').includes('元請');
+    const baseRole = assignment.role || '';
+    if (isPrime && baseRole === '主任技術者') {
+      return { role: '専任技術者', color: this.ROLE_COLOR['専任技術者'] };
+    }
+    return { role: baseRole, color: this.ROLE_COLOR[baseRole] || '#64748b' };
+  },
+
+  // 元請/下請 バッジHTML
+  contractBadge(contract_type) {
+    const ct = String(contract_type || '').trim();
+    if (ct.includes('元請')) return '<span class="inline-block bg-red-100 text-red-700 border border-red-300 px-1.5 py-0 rounded text-[10px] font-bold ml-1">元請</span>';
+    if (ct.includes('下請')) return '<span class="inline-block bg-slate-100 text-slate-600 border border-slate-300 px-1.5 py-0 rounded text-[10px] ml-1">下請</span>';
+    return '';
   },
 
   AXIS_DESC: {
@@ -374,16 +394,22 @@ const GanttView = {
       ? '<span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs ml-2">✎ 変更済み</span>'
       : '';
 
+    const disp = this.resolveRoleDisplay(a, proj);
+    const isPrime = String(proj.contract_type || '').includes('元請');
+    const roleDisplay = `<span style="color:${disp.color};font-weight:600">${this.esc(disp.role || '-')}</span>` +
+      (isPrime && a.role === '主任技術者' ? '<span class="ml-2 text-[10px] text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">建設業法上の専任技術者</span>' : '') +
+      (a.role_sf ? ` <span class="text-xs text-slate-400">（SF: ${this.esc(a.role_sf)}）</span>` : '');
+
     const body =
       `<div class="grid grid-cols-3 gap-x-4 gap-y-2 items-baseline">` +
       `<div class="text-slate-500">担当者</div>` +
       `<div class="col-span-2 font-bold text-base">${this.esc(a.emp_name || '-')}</div>` +
       `<div class="text-slate-500">役割</div>` +
-      `<div class="col-span-2">${this.esc(a.role || '-')}${a.role_sf ? ` <span class="text-xs text-slate-400">（${this.esc(a.role_sf)}）</span>` : ''}</div>` +
+      `<div class="col-span-2">${roleDisplay}</div>` +
       `<div class="text-slate-500">工事番号</div>` +
       `<div class="col-span-2 font-mono text-sm">${this.esc(a.project_id || '-')}</div>` +
       `<div class="text-slate-500">工事名</div>` +
-      `<div class="col-span-2">${this.esc(a.project_name || proj.name || '-')}</div>` +
+      `<div class="col-span-2">${this.esc(a.project_name || proj.name || '-')}${this.contractBadge(proj.contract_type)}</div>` +
       `<div class="text-slate-500">事務所</div>` +
       `<div class="col-span-2">${this.esc(proj.dept || '-')}</div>` +
       `<div class="text-slate-500">配属期間</div>` +
@@ -627,7 +653,7 @@ const GanttView = {
 
       html += '<tr class="border-t">' +
         `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
-          `<div class="font-medium text-sm">${this.esc(p.name)}</div>` +
+          `<div class="font-medium text-sm">${this.esc(p.name)}${this.contractBadge(p.contract_type)}</div>` +
           `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
           `<div class="text-xs mt-1">${labelMembers || '<span class="text-slate-400">配置未登録</span>'}</div>` +
         '</td>' +
@@ -645,9 +671,9 @@ const GanttView = {
         projAsgs.forEach((a, idx) => {
           const start = this.parseDate(a.join);
           const end = this.parseDate(a.planned_end || p.end);
-          const color = this.ROLE_COLOR[a.role] || '#64748b';
+          const disp = this.resolveRoleDisplay(a, p);
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          html += this.renderBar(start, end, cells, color, a.emp_name, top, `${a.emp_name}（${a.role}） ${a.join}〜${a.planned_end || p.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
+          html += this.renderBar(start, end, cells, disp.color, a.emp_name, top, `${a.emp_name}（${disp.role}） ${a.join}〜${a.planned_end || p.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
         });
       }
       html += '</td></tr>';
@@ -697,9 +723,10 @@ const GanttView = {
         if (!proj) return;
         const start = this.parseDate(a.join);
         const end = this.parseDate(a.planned_end || proj.end);
-        const color = this.ROLE_COLOR[a.role] || '#64748b';
+        const disp = this.resolveRoleDisplay(a, proj);
         const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-        html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
+        const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
+        html += this.renderBar(start, end, cells, disp.color, projLabel, top, `${a.project_name}（${disp.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
       });
       html += '</td></tr>';
     });
@@ -757,9 +784,10 @@ const GanttView = {
           if (!proj) return;
           const start = this.parseDate(a.join);
           const end = this.parseDate(a.planned_end || proj.end);
-          const color = this.ROLE_COLOR[a.role] || '#64748b';
+          const disp = this.resolveRoleDisplay(a, proj);
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
+          const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
+          html += this.renderBar(start, end, cells, disp.color, projLabel, top, `${a.project_name}（${disp.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
         });
         html += '</td></tr>';
       });
@@ -834,9 +862,10 @@ const GanttView = {
           if (!proj) return;
           const start = this.parseDate(a.join);
           const end = this.parseDate(a.planned_end || proj.end);
-          const color = this.ROLE_COLOR[a.role] || '#64748b';
+          const disp = this.resolveRoleDisplay(a, proj);
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
+          const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
+          html += this.renderBar(start, end, cells, disp.color, projLabel, top, `${a.project_name}（${disp.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
         });
         if (myAsgs.length === 0) {
           html += '<div style="position:absolute;left:8px;top:14px;color:#94a3b8;font-size:11px">配置なし</div>';
@@ -855,10 +884,12 @@ const GanttView = {
     let html = '<div class="p-3 border-t bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
       '<span class="font-semibold text-slate-700">色＝役割:</span>';
     Object.entries(this.ROLE_COLOR).forEach(([k, v]) => {
-      html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${this.esc(k)}</span>`;
+      const note = k === '専任技術者' ? '<span class="text-[10px] text-red-700 ml-0.5">(元請の主任)</span>' : '';
+      html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${this.esc(k)}${note}</span>`;
     });
     html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;background:#cbd5e1;border-radius:3px"></span>配置未登録</span>';
     html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:2px;height:14px;background:#ef4444"></span>今日</span>';
+    html += '<span class="inline-flex items-center gap-1 ml-3"><span class="bg-red-100 text-red-700 border border-red-300 px-1.5 py-0 rounded text-[10px] font-bold">元請</span>建設業法上の専任技術者配置義務あり</span>';
     html += '</div>';
     return html;
   },
