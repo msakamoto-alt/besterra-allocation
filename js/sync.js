@@ -100,10 +100,15 @@ const Sync = {
     let cur = '', inQuote = false;
     for (let i = 0; i < line.length; i++) {
       const c = line[i];
-      if (c === '"' && line[i+1] === '"') { cur += '"'; i++; }
-      else if (c === '"') inQuote = !inQuote;
-      else if (c === ',' && !inQuote) { result.push(cur); cur = ''; }
-      else cur += c;
+      if (inQuote) {
+        if (c === '"' && line[i+1] === '"') { cur += '"'; i++; }  // クォート内のエスケープ
+        else if (c === '"') inQuote = false;
+        else cur += c;
+      } else {
+        if (c === '"') inQuote = true;
+        else if (c === ',') { result.push(cur); cur = ''; }
+        else cur += c;
+      }
     }
     result.push(cur);
     return result;
