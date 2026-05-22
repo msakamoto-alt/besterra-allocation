@@ -259,7 +259,7 @@ const Sync = {
       })).filter(e => e.id && e.name);
     }
 
-    // Phase 0 ベース形式（No, 社員番号, 名前, 部門, 役職, 区分, 中計, 所属（最終判定））
+    // Phase 0 ベース形式（No, 社員番号, 名前, 部門, 役職, 資格, 区分, 中計, 所属（最終判定））
     if (Object.prototype.hasOwnProperty.call(first, '社員番号') || Object.prototype.hasOwnProperty.call(first, '名前')) {
       return raw.map(r => {
         const kubun = String(r['区分'] || '').trim();
@@ -282,6 +282,7 @@ const Sync = {
           department: String(r['所属（最終判定）'] || r['部門'] || '').trim(),
           role: String(r['役職'] || '').trim(),
           role_title: String(r['役職'] || '').trim(),
+          qualifications_raw: String(r['資格'] || '').trim(),  // F列（複数資格はカンマ・改行・スペースで区切り想定）
           category,
           status: 'active',
           rank: '',
@@ -344,6 +345,47 @@ const Sync = {
     if (rawName.includes('🔴')) return 'Q-DED';   // 監理技術者
     if (rawName.includes('🔵')) return 'Q-MAIN';  // 主任技術者
     return null;
+  },
+
+  // employees の F列「資格」フィールドから資格マスタと employee_qualifications を派生
+  // 複数資格はカンマ/読点/改行/スペース/スラッシュで区切り
+  // 既存マスタに無い資格名は自動的にマスタへ追加（社内認定種別として）
+  deriveQualificationsFromEmployees(employees, existingQuals, existingEqs) {
+    const quals = (existingQuals || []).slice();
+    const qualsByName = {};
+    quals.forEach(q => { qualsByName[String(q.name || '').trim()] = q; });
+
+    const eqs = (existingEqs || []).slice();
+    const existingKeys = new Set(eqs.map(eq => `${eq.emp_id}|${eq.qual_id}`));
+
+    (employees || []).forEach(e => {
+      const raw = String(e.qualifications_raw || '').trim();
+      if (!raw) return;
+      // 区切り文字：カンマ/読点/改行/スラッシュ/中黒・全角空白
+      const names = raw.split(/[,、，\n\r\/／・　]+/).map(s => s.trim()).filter(Boolean);
+      names.forEach(name => {
+        // マスタに無ければ追加（自動採番：QE-001, QE-002,...）
+        let q = qualsByName[name];
+        if (!q) {
+          const id = `QE-${String(quals.length + 1).padStart(3, '0')}`;
+          q = { id, name, type: '社内登録' };
+          quals.push(q);
+          qualsByName[name] = q;
+        }
+        const key = `${e.id}|${q.id}`;
+        if (!existingKeys.has(key)) {
+          eqs.push({
+            emp_id: e.id,
+            qual_id: q.id,
+            acquired: null,
+            expiry: null,
+            source: 'employees_F',
+          });
+          existingKeys.add(key);
+        }
+      });
+    });
+    return { qualifications: quals, employee_qualifications: eqs };
   },
 
   // Salesforce の工事部員絵文字から employee_qualifications を派生
@@ -670,6 +712,19 @@ const Sync = {
       }
       if (!this.cache.employee_qualifications || this.cache.employee_qualifications.length === 0) {
         this.cache.employee_qualifications = MOCK_DATA.employee_qualifications;
+      }
+
+      // employees の F列「資格」から派生（資格マスタも動的に拡張）
+      try {
+        const d = this.deriveQualificationsFromEmployees(
+          this.cache.employees,
+          this.cache.qualifications,
+          this.cache.employee_qualifications
+        );
+        this.cache.qualifications = d.qualifications;
+        this.cache.employee_qualifications = d.employee_qualifications;
+      } catch (e) {
+        console.error('deriveQualificationsFromEmployees 失敗:', e);
       }
 
       // Salesforce + prospects から projects と assignments を派生（個別に try-catch）
