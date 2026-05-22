@@ -6,6 +6,12 @@ const DashboardView = {
   init() {
     document.getElementById('dash-select').addEventListener('change', () => this.render());
 
+    // 検索ボックス：入力ごとに絞り込み
+    document.getElementById('dash-search').addEventListener('input', () => {
+      this.populateSelect();
+      this.render();
+    });
+
     // 「現在の配置」行クリックでガント詳細モーダルを開く（編集UI共通化）
     document.getElementById('dash-content').addEventListener('click', (e) => {
       const tr = e.target.closest('tr[data-asg-id]');
@@ -23,14 +29,38 @@ const DashboardView = {
   },
 
   refresh() {
-    const employees = (Sync.cache.employees || []).filter(e => e.category === '現場監督' || e.category === '準現場監督');
+    this.populateSelect();
+    this.render();
+  },
+
+  // セレクトボックスを社員番号順 + 検索フィルタで再構築
+  populateSelect() {
+    const all = (Sync.cache.employees || [])
+      .filter(e => e.category === '現場監督' || e.category === '準現場監督')
+      .slice()
+      .sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+
+    const search = (document.getElementById('dash-search').value || '').trim().toLowerCase();
+    const filtered = search
+      ? all.filter(e =>
+          String(e.id).toLowerCase().includes(search) ||
+          (e.name || '').toLowerCase().includes(search) ||
+          (e.name || '').replace(/\s+/g, '').toLowerCase().includes(search) ||
+          (e.department || '').toLowerCase().includes(search)
+        )
+      : all;
+
     const sel = document.getElementById('dash-select');
     const current = sel.value;
-    sel.innerHTML = employees.map(e =>
-      `<option value="${e.id}">${this.esc(e.name)} (${this.esc(e.department || '-')} / ${this.esc(e.category)})</option>`
+    sel.innerHTML = filtered.map(e =>
+      `<option value="${e.id}">${this.esc(e.id)}  ${this.esc(e.name)}  (${this.esc(e.department || '-')} / ${this.esc(e.category)})</option>`
     ).join('');
-    if (current && employees.some(e => String(e.id) === current)) sel.value = current;
-    this.render();
+
+    // 現在選択中の人が結果に残るなら維持
+    if (current && filtered.some(e => String(e.id) === current)) sel.value = current;
+
+    const cntEl = document.getElementById('dash-select-count');
+    if (cntEl) cntEl.textContent = `${filtered.length}名`;
   },
 
   render() {

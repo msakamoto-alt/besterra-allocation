@@ -148,9 +148,11 @@
       <!-- ========== タブ3：監督ダッシュボード ========== -->
       <section id="tab-dash" class="tab-panel hidden">
         <h2 class="text-xl font-bold mb-4">監督ダッシュボード（個人ビュー）</h2>
-        <div class="flex items-center gap-3 mb-4">
+        <div class="flex items-center gap-3 mb-4 flex-wrap">
           <label class="text-sm font-medium">監督を選択:</label>
-          <select id="dash-select" class="border rounded px-3 py-2 text-sm min-w-[300px]"></select>
+          <input type="search" id="dash-search" placeholder="氏名・社員番号で検索（部分可）" class="border rounded px-3 py-2 text-sm w-56">
+          <select id="dash-select" class="border rounded px-3 py-2 text-sm min-w-[340px]"></select>
+          <span class="text-sm text-slate-500" id="dash-select-count"></span>
         </div>
         <div id="dash-content"></div>
       </section>
