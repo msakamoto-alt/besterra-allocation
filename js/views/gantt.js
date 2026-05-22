@@ -56,6 +56,13 @@ const GanttView = {
     });
 
     document.getElementById('gantt-container').addEventListener('click', (e) => {
+      // バークリック → 詳細モーダル
+      const bar = e.target.closest('.gantt-bar[data-asg-id]');
+      if (bar) {
+        this.showAssignmentModal(bar.dataset.asgId);
+        return;
+      }
+      // 月ヘッダクリック → 月⇄日ドリルダウン
       const th = e.target.closest('[data-month-key]');
       if (!th) return;
       const key = th.dataset.monthKey;
@@ -63,6 +70,13 @@ const GanttView = {
       else this.expandedMonths.add(key);
       this.refresh();
     });
+
+    // モーダル閉じる
+    const modal = document.getElementById('gantt-modal');
+    const closeFn = () => modal.classList.add('hidden');
+    document.getElementById('gantt-modal-close').addEventListener('click', closeFn);
+    document.getElementById('gantt-modal-close-btn').addEventListener('click', closeFn);
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeFn(); });
 
     // 期間フィルタ
     const startInput = document.getElementById('gantt-start');
@@ -291,8 +305,8 @@ const GanttView = {
     return `<div class="gantt-today-line" style="position:absolute;left:${px}px;top:0;bottom:0;width:2px;background:#ef4444;z-index:2;pointer-events:none"><div style="position:absolute;top:-4px;left:-4px;width:10px;height:10px;background:#ef4444;border-radius:50%"></div></div>`;
   },
 
-  // バー描画（左切れ・右切れの矢印付き・prospect は点線枠で区別）
-  renderBar(start, end, cells, color, label, top, title, prospect = false) {
+  // バー描画（左切れ・右切れの矢印付き・prospect は点線枠で区別・assignment id 紐付け）
+  renderBar(start, end, cells, color, label, top, title, prospect = false, asgId = null) {
     const clip = this.clipRange(start, end, cells);
     if (!clip) return '';
     const left = this.dateToPx(clip.start, cells);
@@ -302,7 +316,56 @@ const GanttView = {
     const truncRight = clip.truncEnd ? 'border-right:2px dashed #fff;' : '';
     const prospectStyle = prospect ? 'opacity:0.6;border:2px dashed #fff;outline:1px solid ' + color + ';' : '';
     const prospectIcon = prospect ? '⊘ ' : '';
-    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${color};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}${prospectStyle}" title="${this.esc(title || '')}">${prospectIcon}${this.esc(label || '')}</div>`;
+    const dataAttr = asgId !== null && asgId !== undefined ? ` data-asg-id="${this.esc(asgId)}"` : '';
+    const cursorStyle = asgId !== null && asgId !== undefined ? 'cursor:pointer;' : '';
+    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${color};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}${prospectStyle}${cursorStyle}" title="${this.esc(title || '')}"${dataAttr}>${prospectIcon}${this.esc(label || '')}</div>`;
+  },
+
+  // モーダルで配属詳細を表示
+  showAssignmentModal(asgId) {
+    const assignments = Sync.cache.assignments || [];
+    const projects = Sync.cache.projects || [];
+    const a = assignments.find(x => String(x.assignment_id) === String(asgId));
+    if (!a) return;
+    const proj = projects.find(p => p.project_id === a.project_id) || {};
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const isActive = Sync.isActiveAssignment(a);
+    const stateBadge = a.prospect
+      ? '<span class="bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-xs font-medium">⊘ 見込み案件</span>'
+      : a.completed
+        ? '<span class="bg-slate-200 text-slate-600 px-2 py-0.5 rounded text-xs">完成</span>'
+        : isActive
+          ? '<span class="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs font-medium">● 配属中</span>'
+          : '<span class="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs">未開始 / 範囲外</span>';
+
+    const start = a.join ? this.parseDate(a.join) : null;
+    const end = a.planned_end ? this.parseDate(a.planned_end) : null;
+    const periodDays = (start && end && !isNaN(start) && !isNaN(end))
+      ? Math.max(1, Math.ceil((end - start) / (24 * 60 * 60 * 1000)) + 1)
+      : null;
+    const fmt = d => d && !isNaN(d) ? `${d.getFullYear()}/${(d.getMonth() + 1)}/${d.getDate()}` : '-';
+
+    const body =
+      `<div class="grid grid-cols-3 gap-x-4 gap-y-2 items-baseline">` +
+      `<div class="text-slate-500">担当者</div>` +
+      `<div class="col-span-2 font-bold text-base">${this.esc(a.emp_name || '-')}</div>` +
+      `<div class="text-slate-500">役割</div>` +
+      `<div class="col-span-2">${this.esc(a.role || '-')}${a.role_sf ? ` <span class="text-xs text-slate-400">（${this.esc(a.role_sf)}）</span>` : ''}</div>` +
+      `<div class="text-slate-500">工事番号</div>` +
+      `<div class="col-span-2 font-mono text-sm">${this.esc(a.project_id || '-')}</div>` +
+      `<div class="text-slate-500">工事名</div>` +
+      `<div class="col-span-2">${this.esc(a.project_name || proj.name || '-')}</div>` +
+      `<div class="text-slate-500">事務所</div>` +
+      `<div class="col-span-2">${this.esc(proj.dept || '-')}</div>` +
+      `<div class="text-slate-500">配属期間</div>` +
+      `<div class="col-span-2 font-bold">${fmt(start)} 〜 ${fmt(end)}${periodDays ? ` <span class="text-xs text-slate-500">（${periodDays}日）</span>` : ''}</div>` +
+      `<div class="text-slate-500">状態</div>` +
+      `<div class="col-span-2">${stateBadge}</div>` +
+      `</div>`;
+
+    document.getElementById('gantt-modal-body').innerHTML = body;
+    document.getElementById('gantt-modal').classList.remove('hidden');
   },
 
   esc(text) {
@@ -358,7 +421,7 @@ const GanttView = {
           const end = this.parseDate(a.planned_end || p.end);
           const color = this.ROLE_COLOR[a.role] || '#64748b';
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          html += this.renderBar(start, end, cells, color, a.emp_name, top, `${a.emp_name}（${a.role}） ${a.join}〜${a.planned_end || p.end}${a.prospect ? '【見込み】' : ''}`, a.prospect);
+          html += this.renderBar(start, end, cells, color, a.emp_name, top, `${a.emp_name}（${a.role}） ${a.join}〜${a.planned_end || p.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
         });
       }
       html += '</td></tr>';
@@ -410,7 +473,7 @@ const GanttView = {
         const end = this.parseDate(a.planned_end || proj.end);
         const color = this.ROLE_COLOR[a.role] || '#64748b';
         const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-        html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect);
+        html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
       });
       html += '</td></tr>';
     });
@@ -470,7 +533,7 @@ const GanttView = {
           const end = this.parseDate(a.planned_end || proj.end);
           const color = this.ROLE_COLOR[a.role] || '#64748b';
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect);
+          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
         });
         html += '</td></tr>';
       });
@@ -547,7 +610,7 @@ const GanttView = {
           const end = this.parseDate(a.planned_end || proj.end);
           const color = this.ROLE_COLOR[a.role] || '#64748b';
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect);
+          html += this.renderBar(start, end, cells, color, a.project_name, top, `${a.project_name}（${a.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
         });
         if (myAsgs.length === 0) {
           html += '<div style="position:absolute;left:8px;top:14px;color:#94a3b8;font-size:11px">配置なし</div>';
