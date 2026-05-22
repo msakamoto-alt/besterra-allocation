@@ -86,7 +86,66 @@ const Sync = {
   parseCSV(text) {
     const lines = text.trim().split(/\r?\n/);
     if (lines.length === 0) return [];
-    const headers = this.parseRow(lines[0]);
+
+    // Google Sheets の gviz/tq?tqx=out:csv は、全列が文字列のシートで
+    // 「ヘッダ自動検出に失敗」し、各セルが "ヘッダ名 値" のように
+    // 空白区切りで結合されて返される既知のバグがある。
+    // 既知のヘッダ語のいずれかで始まり、かつ空白で続く場合は分離する。
+    const firstRow = this.parseRow(lines[0]);
+    const KNOWN_HEADERS = [
+      'override_key', 'emp_name', 'project_id', 'prospect_id',
+      'qualification_id', 'qual_id', 'department_id', 'emp_id',
+      'social_security', '社員番号', '名前', 'employee_id', '部門'
+    ];
+    const allMerged = firstRow.length >= 2 && firstRow.every(cell => {
+      const s = String(cell || '');
+      // 既知ヘッダ＋空白で始まる、または 既知ヘッダ単体
+      return KNOWN_HEADERS.some(h => s === h || s.startsWith(h + ' ') || s.startsWith(h + '\n'));
+    });
+
+    if (allMerged) {
+      console.warn('[parseCSV] gviz/tq 結合バグを検出。ヘッダと最初のデータ行を分離します。');
+      const headers = [];
+      const firstDataValues = [];
+      firstRow.forEach(cell => {
+        const s = String(cell || '');
+        // 既知ヘッダで始まる場合：先頭からヘッダ部分を切り出す
+        let matched = false;
+        for (const h of KNOWN_HEADERS) {
+          if (s === h) {
+            headers.push(h);
+            firstDataValues.push('');
+            matched = true;
+            break;
+          }
+          if (s.startsWith(h + ' ') || s.startsWith(h + '\n')) {
+            headers.push(h);
+            firstDataValues.push(s.substring(h.length + 1));
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) {
+          headers.push(s);
+          firstDataValues.push('');
+        }
+      });
+      // 1行目を「ヘッダ＋分離した最初のデータ行」、2行目以降はそのまま
+      const firstObj = {};
+      headers.forEach((h, i) => firstObj[h] = firstDataValues[i] || '');
+      const restRows = lines.slice(1).map(line => {
+        const values = this.parseRow(line);
+        const row = {};
+        headers.forEach((h, i) => row[h] = values[i] || '');
+        return row;
+      });
+      // 最初のデータ行が空（ヘッダのみのシート）なら除外
+      const hasFirstData = firstDataValues.some(v => String(v || '').trim() !== '');
+      return hasFirstData ? [firstObj, ...restRows] : restRows;
+    }
+
+    // 通常のCSV
+    const headers = firstRow;
     return lines.slice(1).map(line => {
       const values = this.parseRow(line);
       const row = {};
