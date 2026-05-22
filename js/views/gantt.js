@@ -73,10 +73,16 @@ const GanttView = {
 
     // モーダル閉じる
     const modal = document.getElementById('gantt-modal');
-    const closeFn = () => modal.classList.add('hidden');
+    const closeFn = () => { modal.classList.add('hidden'); this.exitEditMode(); };
     document.getElementById('gantt-modal-close').addEventListener('click', closeFn);
     document.getElementById('gantt-modal-close-btn').addEventListener('click', closeFn);
     modal.addEventListener('click', (e) => { if (e.target === modal) closeFn(); });
+
+    // 編集モード切替
+    document.getElementById('gantt-modal-edit-btn').addEventListener('click', () => this.enterEditMode());
+    document.getElementById('gantt-modal-cancel-btn').addEventListener('click', () => this.exitEditMode());
+    document.getElementById('gantt-modal-save-btn').addEventListener('click', () => this.saveEdit());
+    document.getElementById('gantt-modal-reset-btn').addEventListener('click', () => this.resetOverride());
 
     // 期間フィルタ
     const startInput = document.getElementById('gantt-start');
@@ -321,12 +327,16 @@ const GanttView = {
     return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${color};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}${prospectStyle}${cursorStyle}" title="${this.esc(title || '')}"${dataAttr}>${prospectIcon}${this.esc(label || '')}</div>`;
   },
 
+  // 現在モーダル表示中の assignment（編集対象）
+  currentAssignment: null,
+
   // モーダルで配属詳細を表示
   showAssignmentModal(asgId) {
     const assignments = Sync.cache.assignments || [];
     const projects = Sync.cache.projects || [];
     const a = assignments.find(x => String(x.assignment_id) === String(asgId));
     if (!a) return;
+    this.currentAssignment = a;
     const proj = projects.find(p => p.project_id === a.project_id) || {};
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -345,6 +355,9 @@ const GanttView = {
       ? Math.max(1, Math.ceil((end - start) / (24 * 60 * 60 * 1000)) + 1)
       : null;
     const fmt = d => d && !isNaN(d) ? `${d.getFullYear()}/${(d.getMonth() + 1)}/${d.getDate()}` : '-';
+    const overrideBadge = a.overridden
+      ? '<span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs ml-2">✎ 変更済み</span>'
+      : '';
 
     const body =
       `<div class="grid grid-cols-3 gap-x-4 gap-y-2 items-baseline">` +
@@ -359,13 +372,173 @@ const GanttView = {
       `<div class="text-slate-500">事務所</div>` +
       `<div class="col-span-2">${this.esc(proj.dept || '-')}</div>` +
       `<div class="text-slate-500">配属期間</div>` +
-      `<div class="col-span-2 font-bold">${fmt(start)} 〜 ${fmt(end)}${periodDays ? ` <span class="text-xs text-slate-500">（${periodDays}日）</span>` : ''}</div>` +
+      `<div class="col-span-2 font-bold">${fmt(start)} 〜 ${fmt(end)}${periodDays ? ` <span class="text-xs text-slate-500">（${periodDays}日）</span>` : ''}${overrideBadge}</div>` +
       `<div class="text-slate-500">状態</div>` +
       `<div class="col-span-2">${stateBadge}</div>` +
+      (a.override_note ? `<div class="text-slate-500">変更メモ</div><div class="col-span-2 text-slate-600">${this.esc(a.override_note)}</div>` : '') +
       `</div>`;
 
     document.getElementById('gantt-modal-body').innerHTML = body;
+
+    // 編集ボタンの表示制御（API設定がある場合のみ有効化）
+    const editBtn = document.getElementById('gantt-modal-edit-btn');
+    const resetBtn = document.getElementById('gantt-modal-reset-btn');
+    const apiAvailable = !!(Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN);
+    if (apiAvailable) {
+      editBtn.classList.remove('hidden');
+      editBtn.disabled = false;
+      editBtn.title = '';
+      // 変更済みの場合のみ「元に戻す」表示
+      if (a.overridden) resetBtn.classList.remove('hidden');
+      else resetBtn.classList.add('hidden');
+    } else {
+      editBtn.classList.add('hidden');
+      resetBtn.classList.add('hidden');
+    }
+
+    this.exitEditMode();  // 編集フォームは閉じた状態で開く
     document.getElementById('gantt-modal').classList.remove('hidden');
+  },
+
+  // ISO yyyy-mm-dd への変換（date input 用）
+  toIsoDate(s) {
+    if (!s) return '';
+    const d = new Date(String(s).replace(/\//g, '-'));
+    if (isNaN(d)) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  },
+
+  // 編集モードへ
+  enterEditMode() {
+    const a = this.currentAssignment;
+    if (!a) return;
+    document.getElementById('edit-join').value = this.toIsoDate(a.join);
+    document.getElementById('edit-end').value = this.toIsoDate(a.planned_end);
+    document.getElementById('edit-note').value = a.override_note || '';
+    document.getElementById('edit-status').textContent = '';
+    document.getElementById('gantt-modal-edit').classList.remove('hidden');
+    document.getElementById('gantt-modal-edit-btn').classList.add('hidden');
+    document.getElementById('gantt-modal-save-btn').classList.remove('hidden');
+    document.getElementById('gantt-modal-cancel-btn').classList.remove('hidden');
+  },
+
+  // 表示モードに戻す
+  exitEditMode() {
+    document.getElementById('gantt-modal-edit').classList.add('hidden');
+    document.getElementById('gantt-modal-save-btn').classList.add('hidden');
+    document.getElementById('gantt-modal-cancel-btn').classList.add('hidden');
+    if (Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN) {
+      document.getElementById('gantt-modal-edit-btn').classList.remove('hidden');
+    }
+  },
+
+  // 保存（GAS へ upsert POST）
+  async saveEdit() {
+    const a = this.currentAssignment;
+    if (!a) return;
+    const join = document.getElementById('edit-join').value;
+    const end = document.getElementById('edit-end').value;
+    const note = document.getElementById('edit-note').value;
+    const statusEl = document.getElementById('edit-status');
+
+    if (!join && !end) {
+      statusEl.textContent = '⚠ 開始日か終了日のいずれかは入力してください';
+      statusEl.className = 'text-xs text-red-600';
+      return;
+    }
+    if (join && end && join > end) {
+      statusEl.textContent = '⚠ 終了日は開始日より後にしてください';
+      statusEl.className = 'text-xs text-red-600';
+      return;
+    }
+
+    statusEl.textContent = '保存中…';
+    statusEl.className = 'text-xs text-slate-500';
+    const saveBtn = document.getElementById('gantt-modal-save-btn');
+    saveBtn.disabled = true;
+
+    try {
+      const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
+      const payload = {
+        action: 'upsert',
+        override_key: overrideKey,
+        emp_name: a.emp_name,
+        project_id: a.project_id,
+        join_date: join,
+        planned_end: end,
+        role: a.role || '',
+        note: note,
+        updated_by: 'web',
+      };
+      const result = await Sync.postOverride(payload);
+
+      // ローカル assignments を即時更新
+      if (join) a.join = join;
+      if (end) a.planned_end = end;
+      a.overridden = true;
+      a.override_note = note;
+      // キャッシュにも反映（同一参照なので不要だが念のため）
+      const cached = Sync.cache.assignment_overrides || [];
+      const idx = cached.findIndex(r => String(r.override_key) === String(overrideKey));
+      const row = {
+        override_key: overrideKey,
+        emp_name: a.emp_name,
+        project_id: a.project_id,
+        join_date: join,
+        planned_end: end,
+        role: a.role || '',
+        note: note,
+        updated_at: new Date().toISOString(),
+        updated_by: 'web',
+      };
+      if (idx >= 0) cached[idx] = row; else cached.push(row);
+      Sync.cache.assignment_overrides = cached;
+
+      statusEl.textContent = `✓ 保存しました（${result.action || 'ok'}）`;
+      statusEl.className = 'text-xs text-emerald-600';
+      this.refresh();
+
+      // 0.8秒後に編集モードを閉じる
+      setTimeout(() => this.exitEditMode(), 800);
+      // 同じ assignment を再表示してバッジ更新
+      setTimeout(() => this.showAssignmentModal(a.assignment_id), 850);
+    } catch (e) {
+      console.error('保存失敗:', e);
+      statusEl.textContent = '× 保存失敗: ' + (e.message || e);
+      statusEl.className = 'text-xs text-red-600';
+    } finally {
+      saveBtn.disabled = false;
+    }
+  },
+
+  // override を削除して Salesforce 元値に戻す
+  async resetOverride() {
+    const a = this.currentAssignment;
+    if (!a || !a.overridden) return;
+    if (!confirm('この配属の変更を取り消し、Salesforce 元値に戻しますか？')) return;
+
+    try {
+      const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
+      await Sync.postOverride({ action: 'delete', override_key: overrideKey });
+
+      // overrides キャッシュから削除
+      Sync.cache.assignment_overrides = (Sync.cache.assignment_overrides || [])
+        .filter(r => String(r.override_key) !== String(overrideKey));
+
+      // 元に戻すには Salesforce 元値の再取り込みが必要 → 再同期トリガ
+      if (typeof App !== 'undefined' && typeof App.loadData === 'function') {
+        await App.loadData();
+      }
+
+      document.getElementById('gantt-modal').classList.add('hidden');
+      this.refresh();
+    } catch (e) {
+      console.error('リセット失敗:', e);
+      alert('リセット失敗: ' + (e.message || e));
+    }
   },
 
   esc(text) {

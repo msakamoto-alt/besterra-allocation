@@ -19,6 +19,7 @@ const Sync = {
     employee_qualifications: ['employee_qualifications', '06_employee_qualifications'],
     salesforce_imports: ['salesforce_imports', '09_salesforce_imports'],
     prospects: ['prospects', '11_prospects'],
+    assignment_overrides: ['assignment_overrides', '12_assignment_overrides'],
   },
 
   // 各シートの形式バリデータ（先頭行で判定）
@@ -29,6 +30,7 @@ const Sync = {
     employee_qualifications: txt => /record_id|qualification_id|emp_id|社員|資格/i.test((txt || '').split('\n')[0] || ''),
     salesforce_imports: txt => /工事部員|工事番号|人事配置一覧|現場管理表/i.test((txt || '').split('\n')[0] || ''),
     prospects: txt => /prospect_id|project_name|customer|見込み/i.test((txt || '').split('\n')[0] || ''),
+    assignment_overrides: txt => /override_key|emp_name|project_id/i.test((txt || '').split('\n')[0] || ''),
   },
 
   cache: {},
@@ -454,10 +456,66 @@ const Sync = {
     };
   },
 
+  // override_key の正規化（GAS側 upsert と一致させる）
+  buildOverrideKey(empName, projectId) {
+    return `${(empName || '').replace(/\s+/g, '')}__${(projectId || '').trim()}`;
+  },
+
+  // override 行を assignments にマージ（同一 emp_name × project_id を上書き）
+  // override 側に値があるカラムのみ上書き、空欄は元値を尊重
+  mergeOverridesIntoAssignments(assignments, overrideRows) {
+    if (!Array.isArray(overrideRows) || overrideRows.length === 0) return assignments;
+    const map = {};
+    overrideRows.forEach(r => {
+      const key = String(r.override_key || this.buildOverrideKey(r.emp_name, r.project_id) || '').trim();
+      if (!key) return;
+      map[key] = r;
+    });
+
+    let appliedCount = 0;
+    const merged = assignments.map(a => {
+      const key = this.buildOverrideKey(a.emp_name, a.project_id);
+      const o = map[key];
+      if (!o) return a;
+      appliedCount++;
+      const next = { ...a };
+      if (o.join_date) next.join = this.normalizeDate(o.join_date);
+      if (o.planned_end) next.planned_end = this.normalizeDate(o.planned_end);
+      if (o.role) next.role = o.role;
+      next.overridden = true;
+      next.override_note = o.note || '';
+      next.override_updated_at = o.updated_at || '';
+      return next;
+    });
+
+    if (appliedCount > 0) {
+      console.info(`assignment_overrides: ${appliedCount} 件をマージ`);
+    } else {
+      console.info(`assignment_overrides: ${overrideRows.length} 行あるが対応する配置に一致なし`);
+    }
+    return merged;
+  },
+
+  // GAS Web App に POST（配属期間 override の upsert / delete）
+  // Content-Type を text/plain にして CORS preflight を回避
+  async postOverride(payload) {
+    if (!this.OVERRIDE_API_URL) throw new Error('OVERRIDE_API_URL が未設定です（config.js を確認）');
+    const body = JSON.stringify({ ...payload, token: this.OVERRIDE_TOKEN });
+    const response = await fetch(this.OVERRIDE_API_URL, {
+      method: 'POST',
+      body,
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    });
+    if (!response.ok) throw new Error(`API応答エラー: ${response.status}`);
+    const json = await response.json();
+    if (!json.ok) throw new Error(`API失敗: ${json.error || 'unknown'}`);
+    return json;
+  },
+
   async syncAll() {
     if (this.SHEET_ID) {
       // 各シートを候補名でフォールバック取得（バリデータでヘッダ確認）
-      const keys = ['employees', 'departments', 'qualifications', 'employee_qualifications', 'salesforce_imports', 'prospects'];
+      const keys = ['employees', 'departments', 'qualifications', 'employee_qualifications', 'salesforce_imports', 'prospects', 'assignment_overrides'];
       const texts = await Promise.allSettled(keys.map(k => this.fetchSheetWithValidation(k)));
 
       keys.forEach((key, i) => {
@@ -530,6 +588,18 @@ const Sync = {
       } else {
         this.cache.projects = MOCK_DATA.projects;
         this.cache.assignments = MOCK_DATA.assignments;
+      }
+
+      // assignment_overrides を assignments にマージ（Salesforce由来のみ対象）
+      if (this.cache.assignment_overrides && this.cache.assignment_overrides.length > 0) {
+        try {
+          this.cache.assignments = this.mergeOverridesIntoAssignments(
+            this.cache.assignments,
+            this.cache.assignment_overrides
+          );
+        } catch (e) {
+          console.error('overrides マージ失敗:', e);
+        }
       }
     } else {
       this.loadMockData();
