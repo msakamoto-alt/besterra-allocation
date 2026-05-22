@@ -48,3 +48,34 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
 
 /* 共通 */
 .hidden { display: none !important; }
+
+/* ========== ログイン画面（スプリット型） ========== */
+.auth-split { background: #f8fafc; }
+
+.auth-brand {
+  background: linear-gradient(135deg, #b91c1c 0%, #dc2626 45%, #991b1b 100%);
+  min-height: 280px;
+}
+
+/* 左パネルに微細な放射状ハイライト＋斜めライン模様（ブランド感） */
+.auth-brand-bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 40%),
+    radial-gradient(circle at 80% 80%, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0) 50%),
+    repeating-linear-gradient(135deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, transparent 1px, transparent 14px);
+  pointer-events: none;
+}
+
+/* ロゴは白く反転表示（赤背景に乗せるため） */
+.brand-logo {
+  filter: brightness(0) invert(1);
+  -webkit-filter: brightness(0) invert(1);
+}
+
+/* PCではフルハイト・モバイルでは上下分割 */
+@media (min-width: 768px) {
+  .auth-brand { min-height: 100vh; }
+  .auth-form-side { min-height: 100vh; }
+}
