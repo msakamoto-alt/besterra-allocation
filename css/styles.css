@@ -79,3 +79,20 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
   .auth-brand { min-height: 100vh; }
   .auth-form-side { min-height: 100vh; }
 }
+
+/* ========== アプリヘッダー（ログイン画面と統一感） ========== */
+.app-header {
+  background: linear-gradient(135deg, #b91c1c 0%, #dc2626 45%, #991b1b 100%);
+  position: relative;
+  overflow: hidden;
+}
+.app-header::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 80% 50%, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0) 50%),
+    repeating-linear-gradient(135deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, transparent 1px, transparent 14px);
+  pointer-events: none;
+}
+.app-header > * { position: relative; z-index: 1; }
