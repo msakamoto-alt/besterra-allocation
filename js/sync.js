@@ -302,7 +302,7 @@ const Sync = {
   },
 
   // 役割表示順（バー描画・ソート用）
-  ROLE_ORDER: { '主任技術者': 0, '専任技術者': 0, '副監督': 1, '応援': 2 },
+  ROLE_ORDER: { '主任技術者': 0, '監理技術者': 0, '副監督': 1, '応援': 2 },
 
   // 完成工事の判定（status + 計画終了日の両方を見る）
   isCompletedProject(status, endDate) {
@@ -330,10 +330,10 @@ const Sync = {
     return true;
   },
 
-  // 氏名先頭の絵文字から資格を判定（🔴=専任技術者 / 🔵=主任技術者）
+  // 氏名先頭の絵文字から資格を判定（🔴=監理技術者 / 🔵=主任技術者）
   detectQualMarker(rawName) {
     if (!rawName) return null;
-    if (rawName.includes('🔴')) return 'Q-DED';   // 専任技術者
+    if (rawName.includes('🔴')) return 'Q-DED';   // 監理技術者
     if (rawName.includes('🔵')) return 'Q-MAIN';  // 主任技術者
     return null;
   },

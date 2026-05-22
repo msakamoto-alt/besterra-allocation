@@ -30,18 +30,18 @@ const GanttView = {
   // 役割→色（全軸共通）
   ROLE_COLOR: {
     '主任技術者': '#1e40af',
-    '専任技術者': '#dc2626',  // 元請の主任技術者は赤（建設業法上の専任技術者）
+    '監理技術者': '#dc2626',  // 元請の主任技術者は赤（建設業法上の監理技術者）
     '副監督': '#0891b2',
     '応援': '#a16207',  // 旧「支援」「視察」を統合
   },
 
-  // 元請の主任技術者を「専任技術者」として表示するための変換
+  // 元請の主任技術者を「監理技術者」として表示するための変換
   // 旧表記「支援」「視察」は「応援」に正規化
   resolveRoleDisplay(assignment, project) {
     const isPrime = String(project && project.contract_type || '').includes('元請');
     const baseRole = Sync.normalizeRole ? Sync.normalizeRole(assignment.role) : (assignment.role || '');
     if (isPrime && baseRole === '主任技術者') {
-      return { role: '専任技術者', color: this.ROLE_COLOR['専任技術者'] };
+      return { role: '監理技術者', color: this.ROLE_COLOR['監理技術者'] };
     }
     return { role: baseRole, color: this.ROLE_COLOR[baseRole] || '#a16207' };
   },
@@ -396,7 +396,7 @@ const GanttView = {
     const disp = this.resolveRoleDisplay(a, proj);
     const isPrime = String(proj.contract_type || '').includes('元請');
     const roleDisplay = `<span style="color:${disp.color};font-weight:600">${this.esc(disp.role || '-')}</span>` +
-      (isPrime && a.role === '主任技術者' ? '<span class="ml-2 text-[10px] text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">建設業法上の専任技術者</span>' : '') +
+      (isPrime && a.role === '主任技術者' ? '<span class="ml-2 text-[10px] text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">建設業法上の監理技術者</span>' : '') +
       (a.role_sf ? ` <span class="text-xs text-slate-400">（SF: ${this.esc(a.role_sf)}）</span>` : '');
 
     const body =
@@ -883,12 +883,12 @@ const GanttView = {
     let html = '<div class="p-3 border-t bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
       '<span class="font-semibold text-slate-700">色＝役割:</span>';
     Object.entries(this.ROLE_COLOR).forEach(([k, v]) => {
-      const note = k === '専任技術者' ? '<span class="text-[10px] text-red-700 ml-0.5">(元請の主任)</span>' : '';
+      const note = k === '監理技術者' ? '<span class="text-[10px] text-red-700 ml-0.5">(元請の主任)</span>' : '';
       html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${this.esc(k)}${note}</span>`;
     });
     html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;background:#cbd5e1;border-radius:3px"></span>配置未登録</span>';
     html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:2px;height:14px;background:#ef4444"></span>今日</span>';
-    html += '<span class="inline-flex items-center gap-1 ml-3"><span class="bg-red-100 text-red-700 border border-red-300 px-1.5 py-0 rounded text-[10px] font-bold">元請</span>建設業法上の専任技術者配置義務あり</span>';
+    html += '<span class="inline-flex items-center gap-1 ml-3"><span class="bg-red-100 text-red-700 border border-red-300 px-1.5 py-0 rounded text-[10px] font-bold">元請</span>建設業法上の監理技術者配置義務あり</span>';
     html += '</div>';
     return html;
   },

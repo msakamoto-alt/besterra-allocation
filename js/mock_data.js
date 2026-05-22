@@ -153,7 +153,7 @@ const MOCK_DATA = {
 
   qualifications: [
     {id: "Q-MAIN", name: "主任技術者", type: "建設業法"},
-    {id: "Q-DED", name: "専任技術者", type: "建設業法"},
+    {id: "Q-DED", name: "監理技術者", type: "建設業法"},
     {id: "Q001", name: "1級土木施工管理技士", type: "国家資格"},
     {id: "Q002", name: "解体作業主任者", type: "作業主任者"},
     {id: "Q003", name: "酸素欠乏・硫化水素危険作業主任者", type: "作業主任者"},

@@ -149,7 +149,7 @@ const DashboardView = {
     const roleOf = (a) => {
       const norm = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
       const proj = projsById[a.project_id];
-      if (proj && String(proj.contract_type || '').includes('元請') && norm === '主任技術者') return '専任技術者';
+      if (proj && String(proj.contract_type || '').includes('元請') && norm === '主任技術者') return '監理技術者';
       return norm;
     };
     const roleCount = {};
@@ -165,7 +165,7 @@ const DashboardView = {
       pastTbl = '<p class="text-slate-400 text-sm">過去の配置データがありません</p>';
     } else {
       // 役割別カウントチップ（旧「支援」「視察」は「応援」に正規化済み）
-      const ROLE_ORDER = ['主任技術者', '専任技術者', '副監督', '応援'];
+      const ROLE_ORDER = ['主任技術者', '監理技術者', '副監督', '応援'];
       const chips = ROLE_ORDER
         .filter(r => roleCount[r])
         .map(r => `<span class="inline-block bg-slate-100 border border-slate-300 px-2 py-0.5 rounded text-xs mr-2">${this.esc(r)} <b>${roleCount[r]}</b>件</span>`)
