@@ -15,6 +15,7 @@ const App = {
     GanttView.init();
     DashboardView.init();
     ProspectsView.init();
+    MemberAdd.init();
 
     if (Auth.getSession()) {
       this.showMain();

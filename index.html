@@ -278,9 +278,68 @@
           </div>
           <div id="prospect-form-status" class="text-xs min-h-[16px]"></div>
         </form>
+
+        <!-- 担当監督セクション（既存案件編集時のみ表示） -->
+        <div id="prospect-members-section" class="hidden mt-4 pt-4 border-t border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <h4 class="text-sm font-semibold text-slate-700">担当監督</h4>
+            <button id="prospect-add-member-btn" class="text-emerald-700 hover:underline text-sm">+ メンバー追加</button>
+          </div>
+          <div id="prospect-members-list" class="text-sm space-y-1"></div>
+        </div>
+
         <div class="mt-5 flex justify-end gap-2">
           <button id="prospect-modal-cancel" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm">キャンセル</button>
           <button id="prospect-modal-save" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded text-sm font-medium">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== メンバー追加モーダル（共通） ========== -->
+    <div id="member-add-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div class="bg-white rounded-lg shadow-xl max-w-xl w-full mx-4 p-6">
+        <div class="flex justify-between items-start mb-4">
+          <h3 class="text-lg font-bold text-slate-900">配属メンバーを追加</h3>
+          <button id="member-add-close" class="text-slate-400 hover:text-slate-700 text-2xl leading-none">×</button>
+        </div>
+        <div class="space-y-3">
+          <div class="bg-slate-50 border border-slate-200 rounded p-3 text-sm">
+            <div class="text-xs text-slate-500">現場</div>
+            <div class="font-bold" id="member-add-project-name">-</div>
+            <div class="text-xs text-slate-500 mt-1" id="member-add-project-meta"></div>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">監督を選択 <span class="text-red-500">*</span></label>
+            <input type="search" id="member-add-search" placeholder="氏名・社員番号で検索" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm mb-2">
+            <select id="member-add-emp" size="6" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm font-mono"></select>
+          </div>
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="block text-xs text-slate-500 mb-1">役割</label>
+              <select id="member-add-role" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm">
+                <option value="主任技術者">主任技術者</option>
+                <option value="副監督" selected>副監督</option>
+                <option value="応援">応援</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-500 mb-1">配属開始日</label>
+              <input type="date" id="member-add-start" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-500 mb-1">配属終了日</label>
+              <input type="date" id="member-add-end" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm">
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">メモ（任意）</label>
+            <input type="text" id="member-add-note" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm" placeholder="追加理由など">
+          </div>
+          <div id="member-add-status" class="text-xs min-h-[16px]"></div>
+        </div>
+        <div class="mt-5 flex justify-end gap-2">
+          <button id="member-add-cancel" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm">キャンセル</button>
+          <button id="member-add-save" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded text-sm font-medium">追加</button>
         </div>
       </div>
     </div>
@@ -296,8 +355,8 @@
 
         <!-- 編集フォーム（初期は hidden） -->
         <div id="gantt-modal-edit" class="hidden mt-4 pt-4 border-t border-slate-200 space-y-3">
-          <div class="text-sm font-semibold text-slate-700">配属期間を変更</div>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="text-sm font-semibold text-slate-700">配属内容を変更</div>
+          <div class="grid grid-cols-3 gap-3">
             <div>
               <label class="block text-xs text-slate-500 mb-1">開始日</label>
               <input type="date" id="edit-join" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm">
@@ -305,6 +364,14 @@
             <div>
               <label class="block text-xs text-slate-500 mb-1">終了日</label>
               <input type="date" id="edit-end" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-500 mb-1">役割</label>
+              <select id="edit-role" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm">
+                <option value="主任技術者">主任技術者</option>
+                <option value="副監督">副監督</option>
+                <option value="応援">応援</option>
+              </select>
             </div>
           </div>
           <div>
@@ -315,8 +382,9 @@
         </div>
 
         <div class="mt-6 flex justify-end gap-2 flex-wrap">
+          <button id="gantt-modal-remove-btn" class="hidden bg-red-100 hover:bg-red-200 text-red-700 border border-red-300 px-3 py-2 rounded text-sm" title="この配属を取り消す（メンバーから外す）">配属解除</button>
           <button id="gantt-modal-reset-btn" class="hidden bg-amber-100 hover:bg-amber-200 text-amber-800 px-3 py-2 rounded text-sm" title="保存された変更を取り消し、Salesforce元値に戻す">元値に戻す</button>
-          <button id="gantt-modal-edit-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">期間を変更</button>
+          <button id="gantt-modal-edit-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm">編集する</button>
           <button id="gantt-modal-save-btn" class="hidden bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-sm">保存</button>
           <button id="gantt-modal-cancel-btn" class="hidden bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded text-sm">キャンセル</button>
           <button id="gantt-modal-close-btn" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm">閉じる</button>
@@ -338,6 +406,7 @@
   <script src="js/views/gantt.js"></script>
   <script src="js/views/dashboard.js"></script>
   <script src="js/views/prospects.js"></script>
+  <script src="js/views/member_add.js"></script>
   <script src="js/config.js" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
   <script src="js/app.js"></script>
 </body>

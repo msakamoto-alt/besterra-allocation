@@ -81,6 +81,27 @@ const GanttView = {
         this.showAssignmentModal(bar.dataset.asgId);
         return;
       }
+      // 「+ メンバー追加」ボタン
+      const addBtn = e.target.closest('.gantt-add-member');
+      if (addBtn) {
+        const pid = addBtn.dataset.projectId;
+        const proj = (Sync.cache.projects || []).find(p => p.project_id === pid);
+        if (proj && typeof MemberAdd !== 'undefined') {
+          const meta = [
+            proj.contract_type || '-',
+            proj.dept || '-',
+            proj.prospect ? '見込み' : '受注済'
+          ].join(' / ');
+          MemberAdd.open({
+            project_id: proj.project_id,
+            project_name: proj.name,
+            start: proj.start,
+            end: proj.end,
+            meta,
+          });
+        }
+        return;
+      }
       // 月ヘッダクリック → 月⇄日ドリルダウン
       const th = e.target.closest('[data-month-key]');
       if (!th) return;
@@ -102,6 +123,7 @@ const GanttView = {
     document.getElementById('gantt-modal-cancel-btn').addEventListener('click', () => this.exitEditMode());
     document.getElementById('gantt-modal-save-btn').addEventListener('click', () => this.saveEdit());
     document.getElementById('gantt-modal-reset-btn').addEventListener('click', () => this.resetOverride());
+    document.getElementById('gantt-modal-remove-btn').addEventListener('click', () => this.removeAssignment());
 
     // 期間フィルタ
     const startInput = document.getElementById('gantt-start');
@@ -457,12 +479,24 @@ const GanttView = {
     if (!a) return;
     document.getElementById('edit-join').value = this.toIsoDate(a.join);
     document.getElementById('edit-end').value = this.toIsoDate(a.planned_end);
+    const normRole = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
+    const roleSel = document.getElementById('edit-role');
+    // 主任技術者/副監督/応援以外は応援にフォールバック
+    if (['主任技術者', '副監督', '応援'].includes(normRole)) {
+      roleSel.value = normRole;
+    } else {
+      roleSel.value = '応援';
+    }
     document.getElementById('edit-note').value = a.override_note || '';
     document.getElementById('edit-status').textContent = '';
     document.getElementById('gantt-modal-edit').classList.remove('hidden');
     document.getElementById('gantt-modal-edit-btn').classList.add('hidden');
     document.getElementById('gantt-modal-save-btn').classList.remove('hidden');
     document.getElementById('gantt-modal-cancel-btn').classList.remove('hidden');
+    // 解除ボタンも表示（API利用可なら）
+    if (Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN) {
+      document.getElementById('gantt-modal-remove-btn').classList.remove('hidden');
+    }
   },
 
   // 表示モードに戻す
@@ -470,6 +504,7 @@ const GanttView = {
     document.getElementById('gantt-modal-edit').classList.add('hidden');
     document.getElementById('gantt-modal-save-btn').classList.add('hidden');
     document.getElementById('gantt-modal-cancel-btn').classList.add('hidden');
+    document.getElementById('gantt-modal-remove-btn').classList.add('hidden');
     if (Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN) {
       document.getElementById('gantt-modal-edit-btn').classList.remove('hidden');
     }
@@ -481,6 +516,7 @@ const GanttView = {
     if (!a) return;
     const join = document.getElementById('edit-join').value;
     const end = document.getElementById('edit-end').value;
+    const role = document.getElementById('edit-role').value;
     const note = document.getElementById('edit-note').value;
     const statusEl = document.getElementById('edit-status');
 
@@ -505,16 +541,20 @@ const GanttView = {
     const joinSlash = toSlash(join);
     const endSlash = toSlash(end);
 
+    // op 判定：source=override_add だった場合は add のまま、そうでなければ update
+    const op = (a.source === 'override_add' || a.override_op === 'add') ? 'add' : 'update';
+
     try {
       const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
       const payload = {
         action: 'upsert',
+        op,
         override_key: overrideKey,
         emp_name: a.emp_name,
         project_id: a.project_id,
         join_date: joinSlash,
         planned_end: endSlash,
-        role: a.role || '',
+        role: role || a.role || '',
         note: note,
         updated_by: 'web',
       };
@@ -523,8 +563,10 @@ const GanttView = {
       // ローカル assignments を即時更新（表記統一済み）
       if (joinSlash) a.join = joinSlash;
       if (endSlash) a.planned_end = endSlash;
+      if (role) a.role = role;
       a.overridden = true;
       a.override_note = note;
+      a.override_op = op;
       // キャッシュにも反映（同一参照なので不要だが念のため）
       const cached = Sync.cache.assignment_overrides || [];
       const idx = cached.findIndex(r => String(r.override_key) === String(overrideKey));
@@ -560,6 +602,51 @@ const GanttView = {
       statusEl.className = 'text-xs text-red-600';
     } finally {
       saveBtn.disabled = false;
+    }
+  },
+
+  // 配属解除（op=remove で論理削除）
+  // - SF 由来：assignment_overrides に op=remove で記録 → マージ時に除外
+  // - override_add 由来：override 行を物理削除すれば元に戻る（addが消える）
+  async removeAssignment() {
+    const a = this.currentAssignment;
+    if (!a) return;
+    const isAddSource = (a.source === 'override_add' || a.override_op === 'add');
+    const msg = isAddSource
+      ? `「${a.emp_name}」の追加配置を取り消しますか？`
+      : `「${a.emp_name}」を「${a.project_name}」の配属から外しますか？\n（Salesforceで再同期しても解除状態が保持されます）`;
+    if (!confirm(msg)) return;
+
+    const statusEl = document.getElementById('edit-status');
+    statusEl.textContent = '配属解除中…';
+    statusEl.className = 'text-xs text-slate-500';
+
+    try {
+      const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
+      if (isAddSource) {
+        // add 由来：物理削除
+        await Sync.postOverride({ action: 'delete', override_key: overrideKey });
+      } else {
+        // SF 由来：op=remove で論理削除
+        await Sync.postOverride({
+          action: 'upsert',
+          op: 'remove',
+          override_key: overrideKey,
+          emp_name: a.emp_name,
+          project_id: a.project_id,
+          note: document.getElementById('edit-note').value || '',
+          updated_by: 'web',
+        });
+      }
+
+      if (typeof App !== 'undefined' && typeof App.loadData === 'function') {
+        await App.loadData();
+      }
+      document.getElementById('gantt-modal').classList.add('hidden');
+    } catch (e) {
+      console.error('配属解除失敗:', e);
+      statusEl.textContent = '× 解除失敗: ' + (e.message || e);
+      statusEl.className = 'text-xs text-red-600';
     }
   },
 
@@ -650,11 +737,16 @@ const GanttView = {
         `<span class="inline-block mr-2 font-medium">${this.esc(a.emp_name)}</span>`
       ).join('');
 
+      const canEdit = !!(Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN);
+      const addBtn = canEdit
+        ? `<button class="text-xs text-emerald-700 hover:underline mt-1 gantt-add-member" data-project-id="${this.esc(p.project_id)}">+ メンバー追加</button>`
+        : '';
       html += '<tr class="border-t">' +
         `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
           `<div class="font-medium text-sm">${this.esc(p.name)}${this.contractBadge(p.contract_type)}</div>` +
           `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
           `<div class="text-xs mt-1">${labelMembers || '<span class="text-slate-400">配置未登録</span>'}</div>` +
+          addBtn +
         '</td>' +
         `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
           this.gridDivs(cells) +

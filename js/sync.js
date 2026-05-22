@@ -628,10 +628,15 @@ const Sync = {
     return `${(empName || '').replace(/\s+/g, '')}__${(projectId || '').trim()}`;
   },
 
-  // override 行を assignments にマージ（同一 emp_name × project_id を上書き）
-  // override 側に値があるカラムのみ上書き、空欄は元値を尊重
-  mergeOverridesIntoAssignments(assignments, overrideRows) {
+  // override 行を assignments にマージ（v4: op 別処理）
+  // op=update: 既存配置の期間/役割を上書き（旧挙動）
+  // op=add: 新規配置を追加（見込み案件への監督紐付け / 既存案件への追加メンバー）
+  // op=remove: 既存配置を除外（マージ後の assignments から消す）
+  // 後方互換: op 列なし or 空欄は update とみなす
+  mergeOverridesIntoAssignments(assignments, overrideRows, projects) {
     if (!Array.isArray(overrideRows) || overrideRows.length === 0) return assignments;
+
+    // override をキー→行 にマップ化
     const map = {};
     overrideRows.forEach(r => {
       const key = String(r.override_key || this.buildOverrideKey(r.emp_name, r.project_id) || '').trim();
@@ -639,12 +644,21 @@ const Sync = {
       map[key] = r;
     });
 
-    let appliedCount = 0;
-    const merged = assignments.map(a => {
+    // 1. 既存 assignments に対し update / remove を適用
+    let updateCount = 0, removeCount = 0, addCount = 0;
+    const removedKeys = new Set();
+    let working = assignments.map(a => {
       const key = this.buildOverrideKey(a.emp_name, a.project_id);
       const o = map[key];
       if (!o) return a;
-      appliedCount++;
+      const op = String(o.op || 'update').trim();
+      if (op === 'remove') {
+        removeCount++;
+        removedKeys.add(key);
+        return null;  // 後で filter で除外
+      }
+      // update（または未指定）
+      updateCount++;
       const next = { ...a };
       if (o.join_date) next.join = this.normalizeDate(o.join_date);
       if (o.planned_end) next.planned_end = this.normalizeDate(o.planned_end);
@@ -652,15 +666,71 @@ const Sync = {
       next.overridden = true;
       next.override_note = o.note || '';
       next.override_updated_at = o.updated_at || '';
+      next.override_op = 'update';
       return next;
+    }).filter(Boolean);
+
+    // 2. op=add のレコードを新規 assignment として追加
+    const employees = this.cache.employees || [];
+    const empByName = {};
+    employees.forEach(e => {
+      const k = (e.name || '').replace(/\s+/g, '');
+      if (k) empByName[k] = e;
+    });
+    const projMap = {};
+    (projects || []).forEach(p => { projMap[p.project_id] = p; });
+
+    // 既存 assignments の assignment_id の最大値を取得（衝突防止）
+    let maxAsgId = 0;
+    working.forEach(a => {
+      const n = Number(a.assignment_id) || 0;
+      if (n > maxAsgId) maxAsgId = n;
+    });
+    let nextAsgId = Math.max(maxAsgId + 1, 50000);  // override由来は 50000 以降
+
+    overrideRows.forEach(o => {
+      const op = String(o.op || 'update').trim();
+      if (op !== 'add') return;
+      const empName = String(o.emp_name || '').trim();
+      const projId = String(o.project_id || '').trim();
+      if (!empName || !projId) return;
+
+      // 重複チェック：既に同 emp×project の配置があれば skip（update で対応すべき）
+      const key = this.buildOverrideKey(empName, projId);
+      if (removedKeys.has(key)) return;  // remove と同時指定はおかしい
+      const already = working.some(a => this.buildOverrideKey(a.emp_name, a.project_id) === key);
+      if (already) {
+        console.warn(`add 重複スキップ: ${key}（既存配置あり）`);
+        return;
+      }
+
+      const emp = empByName[empName.replace(/\s+/g, '')];
+      const proj = projMap[projId];
+      working.push({
+        assignment_id: nextAsgId++,
+        emp_id: emp ? emp.id : null,
+        emp_name: empName,
+        project_id: projId,
+        project_name: proj ? proj.name : '',
+        allocation: 1,
+        join: this.normalizeDate(o.join_date),
+        leave: null,
+        planned_end: this.normalizeDate(o.planned_end),
+        role: o.role || '応援',
+        role_sf: '',
+        confirmed: false,
+        completed: false,
+        prospect: proj ? !!proj.prospect : false,
+        source: 'override_add',
+        overridden: true,
+        override_note: o.note || '',
+        override_op: 'add',
+      });
+      addCount++;
     });
 
-    if (appliedCount > 0) {
-      console.info(`assignment_overrides: ${appliedCount} 件をマージ`);
-    } else {
-      console.info(`assignment_overrides: ${overrideRows.length} 行あるが対応する配置に一致なし`);
-    }
-    return merged;
+    console.info(`assignment_overrides: update=${updateCount} / add=${addCount} / remove=${removeCount}`);
+    return working;
   },
 
   // GAS Web App に POST（配属期間 override の upsert / delete）
@@ -761,12 +831,13 @@ const Sync = {
         this.cache.assignments = MOCK_DATA.assignments;
       }
 
-      // assignment_overrides を assignments にマージ（Salesforce由来のみ対象）
+      // assignment_overrides を assignments にマージ（v4: op 別処理対応）
       if (this.cache.assignment_overrides && this.cache.assignment_overrides.length > 0) {
         try {
           this.cache.assignments = this.mergeOverridesIntoAssignments(
             this.cache.assignments,
-            this.cache.assignment_overrides
+            this.cache.assignment_overrides,
+            this.cache.projects
           );
         } catch (e) {
           console.error('overrides マージ失敗:', e);

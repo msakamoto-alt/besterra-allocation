@@ -31,6 +31,13 @@ const ProspectsView = {
 
     // 保存
     document.getElementById('prospect-modal-save').addEventListener('click', () => this.save());
+
+    // メンバー追加・解除
+    document.getElementById('prospect-add-member-btn').addEventListener('click', () => this.openMemberAdd());
+    document.getElementById('prospect-members-list').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action="member-remove"]');
+      if (btn) this.removeMember(btn.dataset.asgId);
+    });
   },
 
   // 全 prospects 行（archived 除外しない元データ）を取得
@@ -134,6 +141,7 @@ const ProspectsView = {
     const title = document.getElementById('prospect-modal-title');
     this.populateDeptSelect();
 
+    const memSection = document.getElementById('prospect-members-section');
     if (prospectId) {
       const r = this.allRows().find(x => String(x.prospect_id) === String(prospectId));
       if (!r) return;
@@ -149,14 +157,81 @@ const ProspectsView = {
       document.getElementById('prospect-end-date').value = this.toIsoDate(r.end_date);
       document.getElementById('prospect-amount').value = r.amount || '';
       document.getElementById('prospect-note').value = r.note || '';
+      // 既存案件はメンバー管理セクションを表示
+      memSection.classList.remove('hidden');
+      this.refreshMemberList(r.prospect_id);
     } else {
       title.textContent = '見込み案件 新規追加';
       document.getElementById('prospect-form').reset();
       document.getElementById('prospect-id').value = '';
       document.getElementById('prospect-status').value = '見込み';
+      // 新規時はメンバー管理を隠す（保存後の再オープンで表示）
+      memSection.classList.add('hidden');
     }
     document.getElementById('prospect-form-status').textContent = '';
     modal.classList.remove('hidden');
+  },
+
+  // 現在の prospect の担当メンバー一覧を表示
+  refreshMemberList(prospectId) {
+    const listEl = document.getElementById('prospect-members-list');
+    const assignments = (Sync.cache.assignments || []).filter(a => a.project_id === prospectId);
+    if (assignments.length === 0) {
+      listEl.innerHTML = '<div class="text-slate-400 text-xs py-1">担当監督が未設定です</div>';
+      return;
+    }
+    listEl.innerHTML = assignments.map(a => {
+      const role = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
+      const period = `${a.join || '-'} 〜 ${a.planned_end || '-'}`;
+      return `<div class="flex items-center justify-between border border-slate-200 rounded px-2 py-1 text-xs">` +
+        `<div><span class="font-medium">${this.esc(a.emp_name)}</span> <span class="text-slate-500 ml-1">${this.esc(role)}</span> <span class="text-slate-400 ml-1">${this.esc(period)}</span></div>` +
+        `<button data-action="member-remove" data-asg-id="${this.esc(a.assignment_id)}" class="text-red-600 hover:underline text-xs">解除</button>` +
+        '</div>';
+    }).join('');
+  },
+
+  openMemberAdd() {
+    const prospectId = document.getElementById('prospect-id').value;
+    if (!prospectId) return;
+    const r = this.allRows().find(x => String(x.prospect_id) === String(prospectId));
+    if (!r) return;
+    const meta = `${r.contract_type || '-'} / ${r.managing_dept || '-'} / 見込み`;
+    if (typeof MemberAdd !== 'undefined') {
+      MemberAdd.open({
+        project_id: r.prospect_id,
+        project_name: r.project_name,
+        start: r.start_date,
+        end: r.end_date,
+        meta,
+      });
+    }
+  },
+
+  async removeMember(asgId) {
+    const a = (Sync.cache.assignments || []).find(x => String(x.assignment_id) === String(asgId));
+    if (!a) return;
+    if (!confirm(`「${a.emp_name}」をこの案件から解除しますか？`)) return;
+    try {
+      const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
+      // 見込みは add 由来のはず → 物理削除
+      if (a.source === 'override_add' || a.override_op === 'add') {
+        await Sync.postOverride({ action: 'delete', override_key: overrideKey });
+      } else {
+        await Sync.postOverride({
+          action: 'upsert', op: 'remove',
+          override_key: overrideKey, emp_name: a.emp_name, project_id: a.project_id,
+          updated_by: 'web',
+        });
+      }
+      if (typeof App !== 'undefined' && typeof App.loadData === 'function') {
+        await App.loadData();
+      }
+      // モーダル開いたままリスト更新
+      this.refreshMemberList(a.project_id);
+    } catch (e) {
+      console.error('解除失敗:', e);
+      alert('解除失敗: ' + (e.message || e));
+    }
   },
 
   toIsoDate(s) {
