@@ -72,10 +72,27 @@ const DashboardView = {
     }
     const emp = (Sync.cache.employees || []).find(e => e.id === empId);
     if (!emp) return;
-    // 現在進行形の配置のみ（完成・未開始は除外）
-    const asgs = (Sync.cache.assignments || []).filter(a =>
-      a.emp_id === empId && !a.completed && Sync.isActiveAssignment(a)
-    );
+
+    // 全配置を取得して分類（active / past / future）
+    const allAsgs = (Sync.cache.assignments || []).filter(a => a.emp_id === empId);
+    const todayD = new Date();
+    todayD.setHours(0, 0, 0, 0);
+    const parseEnd = a => a.planned_end ? new Date(String(a.planned_end).replace(/\//g, '-')) : null;
+    const parseStart = a => a.join ? new Date(String(a.join).replace(/\//g, '-')) : null;
+
+    const asgs = allAsgs.filter(a => !a.completed && Sync.isActiveAssignment(a));
+    const pastAsgs = allAsgs.filter(a => {
+      if (a.prospect) return false;  // 見込みは過去扱いしない
+      if (a.completed) return true;
+      const end = parseEnd(a);
+      return end && !isNaN(end) && end < todayD;
+    }).sort((x, y) => {
+      // 終了日の新しい順
+      const ex = parseEnd(x); const ey = parseEnd(y);
+      const tx = ex && !isNaN(ex) ? ex.getTime() : 0;
+      const ty = ey && !isNaN(ey) ? ey.getTime() : 0;
+      return ty - tx;
+    });
 
     // G工番：先月の実データ集計（g_work_logs シートから）
     const prevYm = Sync.previousYearMonthKey();
@@ -119,6 +136,72 @@ const DashboardView = {
           '</tr>';
       });
       asgTbl += '</tbody></table>';
+    }
+
+    // ===== 過去の配置（経験現場一覧）=====
+    const projectsMap = {};
+    (Sync.cache.projects || []).forEach(p => { projectsMap[p.project_id] = p; });
+
+    // 役割別カウント
+    const roleCount = {};
+    pastAsgs.forEach(a => { roleCount[a.role] = (roleCount[a.role] || 0) + 1; });
+    // 重複現場除外したユニーク数
+    const uniqProjectIds = new Set(pastAsgs.map(a => a.project_id));
+
+    let pastTbl = '';
+    if (pastAsgs.length === 0) {
+      pastTbl = '<p class="text-slate-400 text-sm">過去の配置データがありません</p>';
+    } else {
+      // 役割別カウントチップ
+      const ROLE_ORDER = ['主任技術者', '副監督', '支援', '視察'];
+      const chips = ROLE_ORDER
+        .filter(r => roleCount[r])
+        .map(r => `<span class="inline-block bg-slate-100 border border-slate-300 px-2 py-0.5 rounded text-xs mr-2">${this.esc(r)} <b>${roleCount[r]}</b>件</span>`)
+        .join('');
+      const otherRoles = Object.keys(roleCount).filter(r => !ROLE_ORDER.includes(r));
+      const otherChips = otherRoles
+        .map(r => `<span class="inline-block bg-slate-100 border border-slate-300 px-2 py-0.5 rounded text-xs mr-2">${this.esc(r)} <b>${roleCount[r]}</b>件</span>`)
+        .join('');
+
+      pastTbl = '<div class="mb-3 text-sm flex flex-wrap items-center gap-y-1">' +
+        `<span class="text-slate-700 mr-3">経験現場 <b class="text-base">${uniqProjectIds.size}</b> 件 / 配置回数 <b>${pastAsgs.length}</b> 回</span>` +
+        chips + otherChips +
+      '</div>';
+
+      pastTbl += '<div class="overflow-auto max-h-[420px] border rounded">';
+      pastTbl += '<table class="w-full text-sm"><thead class="bg-slate-100 sticky top-0"><tr>' +
+        '<th class="px-3 py-2 text-left">工事番号</th>' +
+        '<th class="px-3 py-2 text-left">現場</th>' +
+        '<th class="px-3 py-2">役割</th>' +
+        '<th class="px-3 py-2">期間</th>' +
+        '<th class="px-3 py-2 text-right">売上規模</th>' +
+        '</tr></thead><tbody>';
+      pastAsgs.forEach(a => {
+        const proj = projectsMap[a.project_id] || {};
+        const amountM = proj.amount ? (proj.amount / 1e6) : 0;
+        const amountTxt = amountM >= 100 ? `¥${(amountM / 100).toFixed(1)}億`
+                       : amountM > 0 ? `¥${amountM.toFixed(1)}M`
+                       : '-';
+        // 期間：YYYY/M〜YYYY/M に省略
+        const s = parseStart(a); const e = parseEnd(a);
+        const fmtYM = d => d && !isNaN(d) ? `${d.getFullYear()}/${d.getMonth() + 1}` : '-';
+        const periodTxt = `${fmtYM(s)} 〜 ${fmtYM(e)}`;
+        const overrideMark = a.overridden
+          ? '<span class="ml-1 bg-purple-100 text-purple-700 px-1 py-0 rounded text-[10px]">✎</span>'
+          : '';
+        const rowClass = canEdit
+          ? 'border-t hover:bg-blue-50 cursor-pointer'
+          : 'border-t';
+        const titleAttr = canEdit ? ' title="クリックして配属期間を変更"' : '';
+        pastTbl += `<tr class="${rowClass}" data-asg-id="${this.esc(a.assignment_id)}"${titleAttr}>` +
+          `<td class="px-3 py-2 font-mono text-xs text-slate-500">${this.esc(a.project_id)}</td>` +
+          `<td class="px-3 py-2">${this.esc(a.project_name)}${overrideMark}</td>` +
+          `<td class="px-3 py-2 text-center">${this.esc(a.role)}</td>` +
+          `<td class="px-3 py-2 text-center text-xs">${this.esc(periodTxt)}</td>` +
+          `<td class="px-3 py-2 text-right text-xs">${this.esc(amountTxt)}</td>` +
+          '</tr>';
+      });
+      pastTbl += '</tbody></table></div>';
     }
 
     // G工番カテゴリ内訳：時間が多い順にソート
@@ -169,13 +252,16 @@ const DashboardView = {
           `<div class="mt-2">${PoolView.categoryBadge(emp.category)}</div>` +
         '</div>' +
         '<div class="bg-white rounded-lg shadow p-4">' +
-          '<div class="text-sm text-slate-600">配置現場数</div>' +
-          `<div class="text-3xl font-bold mt-1">${asgs.length}</div>` +
-          '<div class="text-xs text-slate-500 mt-1">アクティブな配置</div>' +
+          '<div class="text-sm text-slate-600">配置状況</div>' +
+          `<div class="text-3xl font-bold mt-1">${asgs.length} <span class="text-base text-slate-500 font-normal">アクティブ</span></div>` +
+          `<div class="text-xs text-slate-500 mt-1">経験現場 ${uniqProjectIds.size}件 / 過去 ${pastAsgs.length}回</div>` +
         '</div>' +
       '</div>' +
       '<div class="bg-white rounded-lg shadow p-4 mb-4">' +
         '<h3 class="font-bold mb-3">現在の配置</h3>' + asgTbl +
+      '</div>' +
+      '<div class="bg-white rounded-lg shadow p-4 mb-4">' +
+        '<h3 class="font-bold mb-3">過去の配置（経験現場一覧）</h3>' + pastTbl +
       '</div>' +
       '<div class="bg-white rounded-lg shadow p-4 mb-4">' +
         '<h3 class="font-bold mb-3">保有資格</h3>' + qualHtml +
