@@ -1129,7 +1129,35 @@ const GanttView = {
       if (!empByDept[e.department]) empByDept[e.department] = [];
       empByDept[e.department].push(e);
     });
-    const depts = Object.keys(empByDept).sort();
+    // 事務所軸の表示順（部分一致・前にあるものほど優先）
+    // リストにない部署は末尾に、その中では文字列昇順
+    const DEPT_ORDER = [
+      '安全衛生室',
+      'プラント事業本部',
+      '脱炭素事業推進部',
+      '営業課',
+      '工務課',
+      '工事部',
+      '本社事務所',
+      '千葉事務所',
+      '京浜事務所',
+      '西日本事務所',
+      '九州事務所',
+      '人事部付',
+    ];
+    const deptOrderIdx = (d) => {
+      const s = String(d || '');
+      for (let i = 0; i < DEPT_ORDER.length; i++) {
+        if (s.includes(DEPT_ORDER[i])) return i;
+      }
+      return DEPT_ORDER.length;
+    };
+    const depts = Object.keys(empByDept).sort((a, b) => {
+      const ai = deptOrderIdx(a);
+      const bi = deptOrderIdx(b);
+      if (ai !== bi) return ai - bi;
+      return String(a).localeCompare(String(b), 'ja');
+    });
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     depts.forEach(dept => {
