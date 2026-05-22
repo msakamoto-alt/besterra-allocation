@@ -13,5 +13,5 @@
 Sync.SHEET_ID = '1f1OBRkX4UG1BQqBCf196dTuoiGKin-WPcXOpHrE0rhA';
 
 // Apps Script Web App（配属期間の overrides 書き込み口）
-Sync.OVERRIDE_API_URL = 'https://script.google.com/macros/s/AKfycbxrvwMi6UAYX-xqXrU--gdg-ocJGHaXwpOX-ZlAg0KhQ-zPOoQ3VZLCVOfYOPYA_RyErg/exec';
+Sync.OVERRIDE_API_URL = 'https://script.google.com/macros/s/AKfycbzOQHyBWIN6BsA1aVWKWY6uJfjxhMsJ0A-CkNDRtBZNl39prXJBCz8Fa6NpqARlyfsO/exec';
 Sync.OVERRIDE_TOKEN = 'oyh0oYNq5w7jaK7ssaIiTbXFhAJQ6Scb';
