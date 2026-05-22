@@ -114,7 +114,7 @@ const MemberAdd = {
     }
   },
 
-  // 派遣社員のみ現場内の連番を採番（配置未定・不足は固定名）
+  // 派遣社員の連番を採番（現場内）
   nextDispatchSerial() {
     const ctx = this.currentContext || {};
     const projectId = ctx.project_id;
@@ -132,6 +132,36 @@ const MemberAdd = {
     return maxN + 1;
   },
 
+  // 配置未定・不足の同役割連番を採番（emp_name は固定、override_key だけ衝突回避用）
+  nextPlaceholderSerial(role) {
+    const ctx = this.currentContext || {};
+    const projectId = ctx.project_id;
+    if (!projectId) return 1;
+    const assignments = (Sync.cache.assignments || []).filter(a => {
+      if (a.project_id !== projectId) return false;
+      if (!this.isPlaceholderName(a.emp_name)) return false;
+      const normRole = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
+      return normRole === role;
+    });
+    if (assignments.length === 0) return 1;
+    let maxN = 0;
+    const escRole = role.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const reNumbered = new RegExp(`配置未定・不足（${escRole}）#(\\d+)__`);
+    const reBase = new RegExp(`配置未定・不足（${escRole}）__`);
+    assignments.forEach(a => {
+      const key = String(a.override_key || '');
+      const m = reNumbered.exec(key);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > maxN) maxN = n;
+      } else if (reBase.test(key)) {
+        // 連番なし版は #1 とみなす
+        if (maxN < 1) maxN = 1;
+      }
+    });
+    return maxN + 1;
+  },
+
   // 派遣・未定の登録名プレビュー（画面表示はいずれも固定文言）
   updatePreview() {
     const nameEl = document.getElementById('member-add-preview-name');
@@ -141,7 +171,7 @@ const MemberAdd = {
       hintEl.textContent = '同じ現場に複数の派遣社員を登録できます（画面表示はいずれも「派遣社員」）。';
     } else if (this.currentType === 'placeholder') {
       nameEl.textContent = '配置未定・不足';
-      hintEl.textContent = '人員不足の「枠」を時系列で可視化します。役割（主任技術者/副監督/派遣）ごとに1枠まで登録できます。後から当社社員・派遣社員に置き換えてください。';
+      hintEl.textContent = '人員不足の「枠」を時系列で可視化します。同じ現場に同じ役割の枠を複数登録できます（画面表示はいずれも「配置未定・不足」）。後から当社社員・派遣社員に置き換えてください。';
     }
   },
 
@@ -207,9 +237,11 @@ const MemberAdd = {
     } else if (this.currentType === 'dispatch') {
       empName = `派遣社員 #${this.nextDispatchSerial()}`;
     } else if (this.currentType === 'placeholder') {
-      // emp_name は「配置未定・不足」固定。役割でレコードを区別する
+      // emp_name は「配置未定・不足」固定。override_key は役割＋連番で区別（同役割複数登録対応）
       empName = '配置未定・不足';
-      keySuffix = `（${role}）`;
+      const n = this.nextPlaceholderSerial(role);
+      // 1人目は連番なし（後方互換）、2人目以降は #N を付与
+      keySuffix = n === 1 ? `（${role}）` : `（${role}）#${n}`;
     }
 
     const toSlash = s => s ? String(s).replace(/-/g, '/') : '';
