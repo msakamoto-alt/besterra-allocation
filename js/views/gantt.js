@@ -50,23 +50,30 @@ const GanttView = {
   },
 
   // 派遣社員 / 配置未定 の判定
+  // 派遣社員は内部的に "派遣社員 #N" 連番（override_key衝突回避）、表示時は "派遣社員" 固定
   isDispatchName(name) {
-    return /^派遣社員\s*#\d+$/.test(String(name || '').trim());
+    return /^派遣社員(\s*#\d+)?$/.test(String(name || '').trim());
   },
   isPlaceholderName(name) {
     return String(name || '').trim() === '配置未定・不足';
   },
 
+  // 表示用のemp_name（派遣社員は #N を除去して「派遣社員」固定）
+  displayEmpName(name) {
+    return this.isDispatchName(name) ? '派遣社員' : String(name || '');
+  },
+
   // assignment の表示スタイル（色・点線・ラベル）を決定
-  // 派遣社員（応援役割）の色はそのまま応援色（黄褐色）。バッジはなし。
+  // 派遣社員は黄褐色、内部連番は除去して「派遣社員」と表示
   // 戻り値: { color, dashed, label, role }
   resolveBarStyle(a, p) {
     const isPlaceholder = this.isPlaceholderName(a.emp_name);
     const disp = this.resolveRoleDisplay(a, p);
+    const label = this.displayEmpName(a.emp_name);
     if (isPlaceholder) {
-      return { color: this.PLACEHOLDER_COLOR, dashed: true, label: a.emp_name, role: '配置未定・不足' };
+      return { color: this.PLACEHOLDER_COLOR, dashed: true, label, role: '配置未定・不足' };
     }
-    return { color: disp.color, dashed: !!a.prospect, label: a.emp_name, role: disp.role };
+    return { color: disp.color, dashed: !!a.prospect, label, role: disp.role };
   },
 
   // 元請/下請 バッジHTML
@@ -448,7 +455,7 @@ const GanttView = {
     const body =
       `<div class="grid grid-cols-3 gap-x-4 gap-y-2 items-baseline">` +
       `<div class="text-slate-500">担当者</div>` +
-      `<div class="col-span-2 font-bold text-base">${this.esc(a.emp_name || '-')}</div>` +
+      `<div class="col-span-2 font-bold text-base">${this.esc(this.displayEmpName(a.emp_name) || '-')}</div>` +
       `<div class="text-slate-500">役割</div>` +
       `<div class="col-span-2">${roleDisplay}</div>` +
       `<div class="text-slate-500">工事番号</div>` +
@@ -778,12 +785,16 @@ const GanttView = {
       const projAsgs = assignments.filter(a => a.project_id === p.project_id);
       const rowH = Math.max(64, 16 + Math.max(1, projAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
-      // 配置未定・不足はバー内にのみ表示（ラベル列との重複を避ける）
+      // 配置未定・不足・派遣社員はバー内にのみ表示し、ラベル列はサマリー化（重複表示回避）
       const placeholderCount = projAsgs.filter(a => this.isPlaceholderName(a.emp_name)).length;
+      const dispatchCount = projAsgs.filter(a => this.isDispatchName(a.emp_name)).length;
       const labelMembers = projAsgs
-        .filter(a => !this.isPlaceholderName(a.emp_name))
+        .filter(a => !this.isPlaceholderName(a.emp_name) && !this.isDispatchName(a.emp_name))
         .map(a => `<span class="inline-block mr-2 font-medium">${this.esc(a.emp_name)}</span>`)
         .join('');
+      const dispatchNote = dispatchCount > 0
+        ? `<span class="inline-block mr-2" style="color:#a16207">派遣社員 ×${dispatchCount}</span>`
+        : '';
       const placeholderNote = placeholderCount > 0
         ? `<span class="inline-block mr-2 text-slate-500">配置未定・不足 ×${placeholderCount}</span>`
         : '';
@@ -796,7 +807,7 @@ const GanttView = {
         `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
           `<div class="font-medium text-sm">${this.esc(p.name)}${this.contractBadge(p.contract_type)}</div>` +
           `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
-          `<div class="text-xs mt-1">${(labelMembers || placeholderNote) ? (labelMembers + placeholderNote) : '<span class="text-slate-400">配置未定・不足</span>'}</div>` +
+          `<div class="text-xs mt-1">${(labelMembers || dispatchNote || placeholderNote) ? (labelMembers + dispatchNote + placeholderNote) : '<span class="text-slate-400">配置未定・不足</span>'}</div>` +
           addBtn +
         '</td>' +
         `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +

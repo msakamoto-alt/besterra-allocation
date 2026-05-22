@@ -132,14 +132,13 @@ const MemberAdd = {
     return maxN + 1;
   },
 
-  // 派遣・未定の登録名プレビュー
+  // 派遣・未定の登録名プレビュー（画面表示はいずれも固定文言）
   updatePreview() {
     const nameEl = document.getElementById('member-add-preview-name');
     const hintEl = document.getElementById('member-add-preview-hint');
     if (this.currentType === 'dispatch') {
-      const n = this.nextDispatchSerial();
-      nameEl.textContent = `派遣社員 #${n}`;
-      hintEl.textContent = '同じ現場で複数の派遣社員を登録する場合は自動で番号が増えます。';
+      nameEl.textContent = '派遣社員';
+      hintEl.textContent = '同じ現場に複数の派遣社員を登録できます（画面表示はいずれも「派遣社員」）。';
     } else if (this.currentType === 'placeholder') {
       nameEl.textContent = '配置未定・不足';
       hintEl.textContent = '人員不足の「枠」を時系列で可視化します。役割（主任技術者/副監督/派遣）ごとに1枠まで登録できます。後から当社社員・派遣社員に置き換えてください。';

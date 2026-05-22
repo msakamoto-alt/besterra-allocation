@@ -181,8 +181,11 @@ const ProspectsView = {
     listEl.innerHTML = assignments.map(a => {
       const role = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
       const period = `${a.join || '-'} 〜 ${a.planned_end || '-'}`;
+      const displayName = (typeof GanttView !== 'undefined' && GanttView.displayEmpName)
+        ? GanttView.displayEmpName(a.emp_name)
+        : a.emp_name;
       return `<div class="flex items-center justify-between border border-slate-200 rounded px-2 py-1 text-xs">` +
-        `<div><span class="font-medium">${this.esc(a.emp_name)}</span> <span class="text-slate-500 ml-1">${this.esc(role)}</span> <span class="text-slate-400 ml-1">${this.esc(period)}</span></div>` +
+        `<div><span class="font-medium">${this.esc(displayName)}</span> <span class="text-slate-500 ml-1">${this.esc(role)}</span> <span class="text-slate-400 ml-1">${this.esc(period)}</span></div>` +
         `<button data-action="member-remove" data-asg-id="${this.esc(a.assignment_id)}" class="text-red-600 hover:underline text-xs">解除</button>` +
         '</div>';
     }).join('');
