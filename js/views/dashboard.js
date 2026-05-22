@@ -81,8 +81,8 @@ const DashboardView = {
         asgTbl += `<tr class="${rowClass}" data-asg-id="${this.esc(a.assignment_id)}"${titleAttr}>` +
           `<td class="p-2">${this.esc(a.project_name)}${overrideMark}</td>` +
           `<td class="p-2 text-center">${this.esc(a.role)}</td>` +
-          `<td class="p-2 text-center text-xs">${this.esc(a.join || '-')}</td>` +
-          `<td class="p-2 text-center text-xs">${this.esc(a.planned_end || '-')}</td>` +
+          `<td class="p-2 text-center text-xs">${this.fmtDate(a.join)}</td>` +
+          `<td class="p-2 text-center text-xs">${this.fmtDate(a.planned_end)}</td>` +
           editLink +
           '</tr>';
       });
@@ -148,5 +148,11 @@ const DashboardView = {
   esc(text) {
     if (text == null) return '';
     return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  },
+
+  // 表記統一：'2025-07-31' / '2025/07/31' どちらも 'YYYY/MM/DD' で表示
+  fmtDate(s) {
+    if (!s) return '-';
+    return this.esc(String(s).replace(/-/g, '/'));
   },
 };

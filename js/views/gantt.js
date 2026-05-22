@@ -460,6 +460,11 @@ const GanttView = {
     const saveBtn = document.getElementById('gantt-modal-save-btn');
     saveBtn.disabled = true;
 
+    // Salesforce 由来表記（YYYY/MM/DD）に統一して保存
+    const toSlash = s => s ? String(s).replace(/-/g, '/') : '';
+    const joinSlash = toSlash(join);
+    const endSlash = toSlash(end);
+
     try {
       const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
       const payload = {
@@ -467,17 +472,17 @@ const GanttView = {
         override_key: overrideKey,
         emp_name: a.emp_name,
         project_id: a.project_id,
-        join_date: join,
-        planned_end: end,
+        join_date: joinSlash,
+        planned_end: endSlash,
         role: a.role || '',
         note: note,
         updated_by: 'web',
       };
       const result = await Sync.postOverride(payload);
 
-      // ローカル assignments を即時更新
-      if (join) a.join = join;
-      if (end) a.planned_end = end;
+      // ローカル assignments を即時更新（表記統一済み）
+      if (joinSlash) a.join = joinSlash;
+      if (endSlash) a.planned_end = endSlash;
       a.overridden = true;
       a.override_note = note;
       // キャッシュにも反映（同一参照なので不要だが念のため）
@@ -487,8 +492,8 @@ const GanttView = {
         override_key: overrideKey,
         emp_name: a.emp_name,
         project_id: a.project_id,
-        join_date: join,
-        planned_end: end,
+        join_date: joinSlash,
+        planned_end: endSlash,
         role: a.role || '',
         note: note,
         updated_at: new Date().toISOString(),
