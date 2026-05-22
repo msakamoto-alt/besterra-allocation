@@ -18,8 +18,8 @@ const GanttView = {
 
   // 完成工事の表示トグル（デフォルト：非表示）
   showCompleted: false,
-  // 見込み案件の表示トグル（デフォルト：非表示）
-  showProspects: false,
+  // 見込み案件の表示トグル（デフォルト：表示）
+  showProspects: true,
 
   MONTH_WIDTH: 70,
   DAY_WIDTH: 26,
