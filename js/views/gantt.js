@@ -38,12 +38,18 @@ const GanttView = {
   // 配置未定・不足のバー色（点線描画）
   PLACEHOLDER_COLOR: '#cbd5e1',
 
+  // 建設業法上、元請×下請外注合計5,000万円以上で監理技術者が必要。
+  // 当システムは下請外注合計を持たないため、工事金額 ≥ 5,000万円 を proxy として使う
+  // （工事金額4,500万円未満で下請外注合計5,000万円超になるケースは想定しないという業務判断）
+  KANRI_AMOUNT_THRESHOLD: 50000000,
+
   // 元請の主任技術者を「監理技術者」として表示するための変換
   // 旧表記「支援」「視察」「応援」は「派遣」に正規化（normalizeRole）
   resolveRoleDisplay(assignment, project) {
     const isPrime = String(project && project.contract_type || '').includes('元請');
+    const amount = Number(project && project.amount) || 0;
     const baseRole = Sync.normalizeRole ? Sync.normalizeRole(assignment.role) : (assignment.role || '');
-    if (isPrime && baseRole === '主任技術者') {
+    if (isPrime && amount >= this.KANRI_AMOUNT_THRESHOLD && baseRole === '主任技術者') {
       return { role: '監理技術者', color: this.ROLE_COLOR['監理技術者'] };
     }
     return { role: baseRole, color: this.ROLE_COLOR[baseRole] || '#a16207' };
@@ -451,8 +457,10 @@ const GanttView = {
 
     const disp = this.resolveRoleDisplay(a, proj);
     const isPrime = String(proj.contract_type || '').includes('元請');
+    const projAmount = Number(proj.amount) || 0;
+    const requiresKanri = isPrime && projAmount >= this.KANRI_AMOUNT_THRESHOLD;
     const roleDisplay = `<span style="color:${disp.color};font-weight:600">${this.esc(disp.role || '-')}</span>` +
-      (isPrime && a.role === '主任技術者' ? '<span class="ml-2 text-[10px] text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">建設業法上の監理技術者</span>' : '') +
+      (requiresKanri && a.role === '主任技術者' ? '<span class="ml-2 text-[10px] text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">建設業法上の監理技術者</span>' : '') +
       (a.role_sf ? ` <span class="text-xs text-slate-400">（SF: ${this.esc(a.role_sf)}）</span>` : '');
 
     const body =
@@ -1049,7 +1057,7 @@ const GanttView = {
     const sampleColor = this.ROLE_COLOR['副監督'];
     html += `<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;border:2px dashed ${sampleColor};border-radius:3px;background:${this.toLightBg(sampleColor)};box-sizing:border-box"></span>点線＝配置未定・不足（役割色のまま）</span>`;
     html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:2px;height:14px;background:#ef4444"></span>今日</span>';
-    html += '<span class="inline-flex items-center gap-1 ml-3"><span class="bg-red-100 text-red-700 border border-red-300 px-1.5 py-0 rounded text-[10px] font-bold">元請</span>建設業法上の監理技術者配置義務あり</span>';
+    html += '<span class="inline-flex items-center gap-1 ml-3"><span class="bg-red-100 text-red-700 border border-red-300 px-1.5 py-0 rounded text-[10px] font-bold">元請</span>5,000万円以上で監理技術者必要</span>';
     html += '</div>';
     return html;
   },
