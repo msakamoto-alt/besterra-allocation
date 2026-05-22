@@ -344,24 +344,25 @@ const Sync = {
     return raw;
   },
 
-  // ロールマッピング：Salesforceロール → 役割色（主任技術者/副監督/応援）
-  // 旧「視察」「支援」は「応援」に統合
+  // ロールマッピング：Salesforceロール → 当社社員の役割
+  // SF経由は当社社員前提なので 主任技術者 or 副監督 のみ（派遣は手動で登録）
   mapRole(sfRole) {
-    if (!sfRole) return '応援';
+    if (!sfRole) return '副監督';
     if (sfRole.includes('責任者')) return '主任技術者';
     if (sfRole.includes('メンバー')) return '副監督';
-    return '応援';  // 応援・視察・支援・その他すべて応援
+    return '副監督';
   },
 
-  // 旧表記「支援」「視察」を新表記「応援」に正規化
+  // 旧表記「支援」「視察」「応援」を新表記「派遣」に正規化
+  // ※「応援」は派遣社員専用の役割名として再定義（v0.6.2）
   normalizeRole(role) {
     const r = String(role || '').trim();
-    if (r === '支援' || r === '視察') return '応援';
+    if (r === '支援' || r === '視察' || r === '応援') return '派遣';
     return r;
   },
 
   // 役割表示順（バー描画・ソート用）
-  ROLE_ORDER: { '主任技術者': 0, '監理技術者': 0, '副監督': 1, '応援': 2 },
+  ROLE_ORDER: { '主任技術者': 0, '監理技術者': 0, '副監督': 1, '派遣': 2 },
 
   // 完成工事の判定（status + 計画終了日の両方を見る）
   isCompletedProject(status, endDate) {

@@ -86,33 +86,42 @@ const MemberAdd = {
   },
 
   // 人員タイプに応じて役割セレクトの選択肢を差し替え
+  // employee     : 主任技術者 / 副監督
+  // dispatch     : 派遣 固定（disabled）
+  // placeholder  : 主任技術者 / 副監督 / 派遣（枠だけ確保するので全種類選べる）
   applyRoleOptions(type) {
     const roleSel = document.getElementById('member-add-role');
     if (!roleSel) return;
+    const current = roleSel.value;
     if (type === 'dispatch') {
-      roleSel.innerHTML = '<option value="応援" selected>応援（派遣社員専用）</option>';
-      roleSel.value = '応援';
+      roleSel.innerHTML = '<option value="派遣" selected>派遣</option>';
+      roleSel.value = '派遣';
       roleSel.disabled = true;
-    } else {
-      // 当社社員・配置未定・不足
+    } else if (type === 'placeholder') {
       roleSel.disabled = false;
-      const current = roleSel.value;
       roleSel.innerHTML =
         '<option value="主任技術者">主任技術者</option>' +
-        '<option value="副監督" selected>副監督</option>';
-      // 既存の値が主任技術者なら保持、それ以外は副監督既定
+        '<option value="副監督">副監督</option>' +
+        '<option value="派遣">派遣</option>';
+      roleSel.value = ['主任技術者', '副監督', '派遣'].includes(current) ? current : '副監督';
+    } else {
+      // employee
+      roleSel.disabled = false;
+      roleSel.innerHTML =
+        '<option value="主任技術者">主任技術者</option>' +
+        '<option value="副監督">副監督</option>';
       roleSel.value = (current === '主任技術者') ? '主任技術者' : '副監督';
     }
   },
 
-  // 現場内の既存「派遣社員 #N」「配置未定 #N」をスキャンして次の連番を返す
-  nextSerial(prefix) {
+  // 派遣社員のみ現場内の連番を採番（配置未定・不足は固定名）
+  nextDispatchSerial() {
     const ctx = this.currentContext || {};
     const projectId = ctx.project_id;
     if (!projectId) return 1;
     const assignments = (Sync.cache.assignments || []).filter(a => a.project_id === projectId);
     let maxN = 0;
-    const re = new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*#(\\d+)$');
+    const re = /^派遣社員\s*#(\d+)$/;
     assignments.forEach(a => {
       const m = re.exec(String(a.emp_name || '').trim());
       if (m) {
@@ -128,13 +137,12 @@ const MemberAdd = {
     const nameEl = document.getElementById('member-add-preview-name');
     const hintEl = document.getElementById('member-add-preview-hint');
     if (this.currentType === 'dispatch') {
-      const n = this.nextSerial('派遣社員');
+      const n = this.nextDispatchSerial();
       nameEl.textContent = `派遣社員 #${n}`;
       hintEl.textContent = '同じ現場で複数の派遣社員を登録する場合は自動で番号が増えます。';
     } else if (this.currentType === 'placeholder') {
-      const n = this.nextSerial('配置未定');
-      nameEl.textContent = `配置未定 #${n}`;
-      hintEl.textContent = '人員不足の「枠」を時系列で可視化します。後から当社社員に置き換えてください。';
+      nameEl.textContent = '配置未定・不足';
+      hintEl.textContent = '人員不足の「枠」を時系列で可視化します。役割（主任技術者/副監督/派遣）ごとに1枠まで登録できます。後から当社社員・派遣社員に置き換えてください。';
     }
   },
 
@@ -184,8 +192,9 @@ const MemberAdd = {
       return;
     }
 
-    // 人員タイプ別に emp_name / 表示ラベルを決定
+    // 人員タイプ別に emp_name / override_key の suffix を決定
     let empName = '';
+    let keySuffix = '';   // override_key 衝突回避用（配置未定・不足は役割で区別）
     if (this.currentType === 'employee') {
       const sel = document.getElementById('member-add-emp');
       const selected = sel.value;
@@ -197,9 +206,11 @@ const MemberAdd = {
       const [, n] = selected.split('|');
       empName = n;
     } else if (this.currentType === 'dispatch') {
-      empName = `派遣社員 #${this.nextSerial('派遣社員')}`;
+      empName = `派遣社員 #${this.nextDispatchSerial()}`;
     } else if (this.currentType === 'placeholder') {
-      empName = `配置未定 #${this.nextSerial('配置未定')}`;
+      // emp_name は「配置未定・不足」固定。役割でレコードを区別する
+      empName = '配置未定・不足';
+      keySuffix = `（${role}）`;
     }
 
     const toSlash = s => s ? String(s).replace(/-/g, '/') : '';
@@ -210,7 +221,8 @@ const MemberAdd = {
     saveBtn.disabled = true;
 
     try {
-      const overrideKey = Sync.buildOverrideKey(empName, ctx.project_id);
+      // 配置未定・不足は emp_name 固定なので、override_key だけ役割で区別
+      const overrideKey = Sync.buildOverrideKey(empName + keySuffix, ctx.project_id);
       await Sync.postOverride({
         action: 'upsert',
         op: 'add',
@@ -243,7 +255,7 @@ const MemberAdd = {
     return /^派遣社員\s*#\d+$/.test(String(name || '').trim());
   },
   isPlaceholderName(name) {
-    return /^配置未定\s*#\d+$/.test(String(name || '').trim());
+    return String(name || '').trim() === '配置未定・不足';
   },
 
   esc(text) {

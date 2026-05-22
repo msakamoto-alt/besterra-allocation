@@ -32,14 +32,14 @@ const GanttView = {
     '主任技術者': '#1e40af',
     '監理技術者': '#dc2626',  // 元請の主任技術者は赤（建設業法上の監理技術者）
     '副監督': '#0891b2',
-    '応援': '#a16207',  // 旧「支援」「視察」を統合
+    '派遣': '#a16207',  // 派遣社員の役割（旧「応援」「支援」「視察」を統合）
   },
 
   // 配置未定・不足のバー色（点線描画）
   PLACEHOLDER_COLOR: '#cbd5e1',
 
   // 元請の主任技術者を「監理技術者」として表示するための変換
-  // 旧表記「支援」「視察」は「応援」に正規化
+  // 旧表記「支援」「視察」「応援」は「派遣」に正規化（normalizeRole）
   resolveRoleDisplay(assignment, project) {
     const isPrime = String(project && project.contract_type || '').includes('元請');
     const baseRole = Sync.normalizeRole ? Sync.normalizeRole(assignment.role) : (assignment.role || '');
@@ -54,7 +54,7 @@ const GanttView = {
     return /^派遣社員\s*#\d+$/.test(String(name || '').trim());
   },
   isPlaceholderName(name) {
-    return /^配置未定\s*#\d+$/.test(String(name || '').trim());
+    return String(name || '').trim() === '配置未定・不足';
   },
 
   // assignment の表示スタイル（色・点線・ラベル）を決定
@@ -511,12 +511,20 @@ const GanttView = {
     const isPlaceholder = this.isPlaceholderName(a.emp_name);
 
     if (isDispatch) {
-      // 派遣社員：応援固定（変更不可）
-      roleSel.innerHTML = '<option value="応援" selected>応援（派遣社員専用）</option>';
-      roleSel.value = '応援';
+      // 派遣社員：派遣固定（変更不可）
+      roleSel.innerHTML = '<option value="派遣" selected>派遣</option>';
+      roleSel.value = '派遣';
       roleSel.disabled = true;
+    } else if (isPlaceholder) {
+      // 配置未定・不足：3択（派遣枠を未定として確保するケースも許可）
+      roleSel.disabled = false;
+      roleSel.innerHTML =
+        '<option value="主任技術者">主任技術者</option>' +
+        '<option value="副監督">副監督</option>' +
+        '<option value="派遣">派遣</option>';
+      roleSel.value = ['主任技術者', '副監督', '派遣'].includes(normRole) ? normRole : '副監督';
     } else {
-      // 当社社員 or 配置未定・不足：主任技術者 / 副監督
+      // 当社社員：主任技術者 / 副監督
       roleSel.disabled = false;
       roleSel.innerHTML =
         '<option value="主任技術者">主任技術者</option>' +
@@ -770,11 +778,15 @@ const GanttView = {
       const projAsgs = assignments.filter(a => a.project_id === p.project_id);
       const rowH = Math.max(64, 16 + Math.max(1, projAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
-      const labelMembers = projAsgs.map(a => {
-        const isPh = this.isPlaceholderName(a.emp_name);
-        const txt = isPh ? `<span class="text-slate-500">${this.esc(a.emp_name)}</span>` : `<span class="font-medium">${this.esc(a.emp_name)}</span>`;
-        return `<span class="inline-block mr-2">${txt}</span>`;
-      }).join('');
+      // 配置未定・不足はバー内にのみ表示（ラベル列との重複を避ける）
+      const placeholderCount = projAsgs.filter(a => this.isPlaceholderName(a.emp_name)).length;
+      const labelMembers = projAsgs
+        .filter(a => !this.isPlaceholderName(a.emp_name))
+        .map(a => `<span class="inline-block mr-2 font-medium">${this.esc(a.emp_name)}</span>`)
+        .join('');
+      const placeholderNote = placeholderCount > 0
+        ? `<span class="inline-block mr-2 text-slate-500">配置未定・不足 ×${placeholderCount}</span>`
+        : '';
 
       const canEdit = !!(Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN);
       const addBtn = canEdit
@@ -784,7 +796,7 @@ const GanttView = {
         `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
           `<div class="font-medium text-sm">${this.esc(p.name)}${this.contractBadge(p.contract_type)}</div>` +
           `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
-          `<div class="text-xs mt-1">${labelMembers || '<span class="text-slate-400">配置未定・不足</span>'}</div>` +
+          `<div class="text-xs mt-1">${(labelMembers || placeholderNote) ? (labelMembers + placeholderNote) : '<span class="text-slate-400">配置未定・不足</span>'}</div>` +
           addBtn +
         '</td>' +
         `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
@@ -1013,9 +1025,7 @@ const GanttView = {
     let html = '<div class="p-3 border-t bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
       '<span class="font-semibold text-slate-700">色＝役割:</span>';
     Object.entries(this.ROLE_COLOR).forEach(([k, v]) => {
-      let note = '';
-      if (k === '監理技術者') note = '<span class="text-[10px] text-red-700 ml-0.5">(元請の主任)</span>';
-      if (k === '応援') note = '<span class="text-[10px] text-slate-500 ml-0.5">(派遣社員)</span>';
+      const note = (k === '監理技術者') ? '<span class="text-[10px] text-red-700 ml-0.5">(元請の主任)</span>' : '';
       html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${this.esc(k)}${note}</span>`;
     });
     html += `<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;border:2px dashed ${this.PLACEHOLDER_COLOR};border-radius:3px;background:${this.toLightBg(this.PLACEHOLDER_COLOR)};box-sizing:border-box"></span>配置未定・不足（点線）</span>`;
