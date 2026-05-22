@@ -184,14 +184,16 @@ const Sync = {
 
       // 工事番号がある場合のバリデーション
       let pid = project_id;
+      let isProspect = false;
       if (project_id) {
         if (/^(-|nan|null|na|n\/a|undefined)$/i.test(project_id)) continue;
         if (!/[A-Za-z]/.test(project_id) || !/\d/.test(project_id)) continue;
       } else {
-        // 工事番号列が無い場合は工事名をフォールバックIDに（暫定）
+        // 工事番号なし＝受注前の見込み案件として扱う
         const pname = (c[cols.project_name] || '').trim();
         if (!pname) continue;
-        pid = 'NOID-' + pname.substring(0, 20);
+        pid = 'SF-PROSPECT-' + pname.substring(0, 30).replace(/\s+/g, '');
+        isProspect = true;
       }
 
       rows.push({
@@ -208,6 +210,7 @@ const Sync = {
         total_revenue: c[cols.total_revenue] || '',
         order_amount: c[cols.order_amount] || '',
         status: c[cols.status] || '',
+        prospect: isProspect,
       });
     }
     return rows;
@@ -498,11 +501,12 @@ const Sync = {
           start: r.start,
           end: r.end,
           amount: this.parseAmount(r.total_revenue || r.order_amount),
-          kind: '工事',
+          kind: r.prospect ? '見込み（SF）' : '工事',
           dept: deptShort,
           contract_type: r.contract_type || '',
           status: r.status,
           completed,
+          prospect: !!r.prospect,  // 工番なし＝見込み扱い（点線表示）
         };
       }
 
