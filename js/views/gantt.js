@@ -32,19 +32,18 @@ const GanttView = {
     '主任技術者': '#1e40af',
     '専任技術者': '#dc2626',  // 元請の主任技術者は赤（建設業法上の専任技術者）
     '副監督': '#0891b2',
-    '支援': '#64748b',
-    '視察': '#a16207',
+    '応援': '#a16207',  // 旧「支援」「視察」を統合
   },
 
   // 元請の主任技術者を「専任技術者」として表示するための変換
-  // assignment と project の contract_type を見て表示用ロール名と色を返す
+  // 旧表記「支援」「視察」は「応援」に正規化
   resolveRoleDisplay(assignment, project) {
     const isPrime = String(project && project.contract_type || '').includes('元請');
-    const baseRole = assignment.role || '';
+    const baseRole = Sync.normalizeRole ? Sync.normalizeRole(assignment.role) : (assignment.role || '');
     if (isPrime && baseRole === '主任技術者') {
       return { role: '専任技術者', color: this.ROLE_COLOR['専任技術者'] };
     }
-    return { role: baseRole, color: this.ROLE_COLOR[baseRole] || '#64748b' };
+    return { role: baseRole, color: this.ROLE_COLOR[baseRole] || '#a16207' };
   },
 
   // 元請/下請 バッジHTML

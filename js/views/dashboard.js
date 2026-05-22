@@ -127,9 +127,10 @@ const DashboardView = {
           ? 'border-t hover:bg-blue-50 cursor-pointer'
           : 'border-t';
         const titleAttr = canEdit ? ' title="クリックして配属期間を変更"' : '';
+        const dispRole = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
         asgTbl += `<tr class="${rowClass}" data-asg-id="${this.esc(a.assignment_id)}"${titleAttr}>` +
           `<td class="p-2">${this.esc(a.project_name)}${overrideMark}</td>` +
-          `<td class="p-2 text-center">${this.esc(a.role)}</td>` +
+          `<td class="p-2 text-center">${this.esc(dispRole)}</td>` +
           `<td class="p-2 text-center text-xs">${this.fmtDate(a.join)}</td>` +
           `<td class="p-2 text-center text-xs">${this.fmtDate(a.planned_end)}</td>` +
           editLink +
@@ -142,9 +143,20 @@ const DashboardView = {
     const projectsMap = {};
     (Sync.cache.projects || []).forEach(p => { projectsMap[p.project_id] = p; });
 
-    // 役割別カウント
+    // 役割別カウント（旧表記「支援」「視察」を「応援」に正規化）
+    const projsById = {};
+    (Sync.cache.projects || []).forEach(p => { projsById[p.project_id] = p; });
+    const roleOf = (a) => {
+      const norm = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
+      const proj = projsById[a.project_id];
+      if (proj && String(proj.contract_type || '').includes('元請') && norm === '主任技術者') return '専任技術者';
+      return norm;
+    };
     const roleCount = {};
-    pastAsgs.forEach(a => { roleCount[a.role] = (roleCount[a.role] || 0) + 1; });
+    pastAsgs.forEach(a => {
+      const r = roleOf(a);
+      roleCount[r] = (roleCount[r] || 0) + 1;
+    });
     // 重複現場除外したユニーク数
     const uniqProjectIds = new Set(pastAsgs.map(a => a.project_id));
 
@@ -152,8 +164,8 @@ const DashboardView = {
     if (pastAsgs.length === 0) {
       pastTbl = '<p class="text-slate-400 text-sm">過去の配置データがありません</p>';
     } else {
-      // 役割別カウントチップ
-      const ROLE_ORDER = ['主任技術者', '副監督', '支援', '視察'];
+      // 役割別カウントチップ（旧「支援」「視察」は「応援」に正規化済み）
+      const ROLE_ORDER = ['主任技術者', '専任技術者', '副監督', '応援'];
       const chips = ROLE_ORDER
         .filter(r => roleCount[r])
         .map(r => `<span class="inline-block bg-slate-100 border border-slate-300 px-2 py-0.5 rounded text-xs mr-2">${this.esc(r)} <b>${roleCount[r]}</b>件</span>`)
@@ -196,7 +208,7 @@ const DashboardView = {
         pastTbl += `<tr class="${rowClass}" data-asg-id="${this.esc(a.assignment_id)}"${titleAttr}>` +
           `<td class="px-3 py-2 font-mono text-xs text-slate-500">${this.esc(a.project_id)}</td>` +
           `<td class="px-3 py-2">${this.esc(a.project_name)}${overrideMark}</td>` +
-          `<td class="px-3 py-2 text-center">${this.esc(a.role)}</td>` +
+          `<td class="px-3 py-2 text-center">${this.esc(roleOf(a))}</td>` +
           `<td class="px-3 py-2 text-center text-xs">${this.esc(periodTxt)}</td>` +
           `<td class="px-3 py-2 text-right text-xs">${this.esc(amountTxt)}</td>` +
           '</tr>';

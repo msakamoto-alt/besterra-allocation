@@ -285,18 +285,24 @@ const Sync = {
     return raw;
   },
 
-  // ロールマッピング：Salesforceロール → 役割色（主任技術者/副監督/支援/視察）
+  // ロールマッピング：Salesforceロール → 役割色（主任技術者/副監督/応援）
+  // 旧「視察」「支援」は「応援」に統合
   mapRole(sfRole) {
-    if (!sfRole) return '支援';
+    if (!sfRole) return '応援';
     if (sfRole.includes('責任者')) return '主任技術者';
     if (sfRole.includes('メンバー')) return '副監督';
-    if (sfRole.includes('応援')) return '支援';
-    if (sfRole.includes('視察')) return '視察';
-    return '支援';
+    return '応援';  // 応援・視察・支援・その他すべて応援
+  },
+
+  // 旧表記「支援」「視察」を新表記「応援」に正規化
+  normalizeRole(role) {
+    const r = String(role || '').trim();
+    if (r === '支援' || r === '視察') return '応援';
+    return r;
   },
 
   // 役割表示順（バー描画・ソート用）
-  ROLE_ORDER: { '主任技術者': 0, '副監督': 1, '支援': 2, '視察': 3 },
+  ROLE_ORDER: { '主任技術者': 0, '専任技術者': 0, '副監督': 1, '応援': 2 },
 
   // 完成工事の判定（status + 計画終了日の両方を見る）
   isCompletedProject(status, endDate) {
@@ -465,10 +471,10 @@ const Sync = {
       });
     });
 
-    // 役割順→氏名でソート（主任技術者を一番上に）
+    // 役割順→氏名でソート（主任技術者を一番上に・旧表記を正規化）
     assignments.sort((a, b) => {
-      const ra = this.ROLE_ORDER[a.role] ?? 99;
-      const rb = this.ROLE_ORDER[b.role] ?? 99;
+      const ra = this.ROLE_ORDER[this.normalizeRole(a.role)] ?? 99;
+      const rb = this.ROLE_ORDER[this.normalizeRole(b.role)] ?? 99;
       if (ra !== rb) return ra - rb;
       return (a.emp_name || '').localeCompare(b.emp_name || '');
     });
