@@ -707,19 +707,17 @@ const Sync = {
       if (!this.cache.employees || this.cache.employees.length === 0) {
         this.cache.employees = MOCK_DATA.employees;
       }
-      if (!this.cache.qualifications || this.cache.qualifications.length === 0) {
-        this.cache.qualifications = MOCK_DATA.qualifications;
-      }
-      if (!this.cache.employee_qualifications || this.cache.employee_qualifications.length === 0) {
-        this.cache.employee_qualifications = MOCK_DATA.employee_qualifications;
-      }
-
-      // employees の F列「資格」から派生（資格マスタも動的に拡張）
+      // 資格は employees F列のみをソースとする（v0.5方針）
+      // - mock_data フォールバック使わない
+      // - Salesforce 🔴🔵 派生も使わない（v0.6で別ソース統合時に再検討）
+      // - F列が空欄の社員は資格軸に表示されない
+      this.cache.qualifications = [];
+      this.cache.employee_qualifications = [];
       try {
         const d = this.deriveQualificationsFromEmployees(
           this.cache.employees,
-          this.cache.qualifications,
-          this.cache.employee_qualifications
+          [],
+          []
         );
         this.cache.qualifications = d.qualifications;
         this.cache.employee_qualifications = d.employee_qualifications;
@@ -738,15 +736,8 @@ const Sync = {
         } catch (e) {
           console.error('deriveFromSalesforce 失敗:', e);
         }
-        try {
-          this.cache.employee_qualifications = this.deriveQualificationsFromSalesforce(
-            this.cache.salesforce_imports,
-            this.cache.employees,
-            this.cache.employee_qualifications
-          );
-        } catch (e) {
-          console.error('deriveQualificationsFromSalesforce 失敗:', e);
-        }
+        // Salesforce 🔴🔵派生は v0.5 で停止（F列のみソース）
+        // v0.6 で別ソース統合時に再有効化検討
       }
       if (this.cache.prospects && this.cache.prospects.length > 0) {
         try {
