@@ -84,9 +84,7 @@ const ProspectsView = {
     const archRow = isArchived ? ' opacity-50' : '';
     const period = (r.start_date || '') + (r.end_date ? ' 〜 ' + r.end_date : '');
     const amountM = this.parseAmount(r.amount);
-    const amountTxt = amountM >= 100 ? `¥${(amountM / 100).toFixed(1)}億`
-                    : amountM > 0 ? `¥${amountM.toFixed(1)}M`
-                    : '-';
+    const amountTxt = amountM > 0 ? `¥${amountM.toFixed(1)}M` : '-';
     const actions = isArchived
       ? `<button data-action="delete" data-id="${this.esc(r.prospect_id)}" class="text-red-600 hover:underline text-xs">削除</button>`
       : `<button data-action="edit" data-id="${this.esc(r.prospect_id)}" class="text-blue-600 hover:underline text-xs mr-2">編集</button>` +

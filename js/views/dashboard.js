@@ -191,9 +191,7 @@ const DashboardView = {
       pastAsgs.forEach(a => {
         const proj = projectsMap[a.project_id] || {};
         const amountM = proj.amount ? (proj.amount / 1e6) : 0;
-        const amountTxt = amountM >= 100 ? `¥${(amountM / 100).toFixed(1)}億`
-                       : amountM > 0 ? `¥${amountM.toFixed(1)}M`
-                       : '-';
+        const amountTxt = amountM > 0 ? `¥${amountM.toFixed(1)}M` : '-';
         // 期間：YYYY/M〜YYYY/M に省略
         const s = parseStart(a); const e = parseEnd(a);
         const fmtYM = d => d && !isNaN(d) ? `${d.getFullYear()}/${d.getMonth() + 1}` : '-';
