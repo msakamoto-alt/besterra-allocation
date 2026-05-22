@@ -531,22 +531,49 @@ const GanttView = {
 
     try {
       const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
-      await Sync.postOverride({ action: 'delete', override_key: overrideKey });
+      console.log('[resetOverride] 削除対象 override_key:', overrideKey);
+      console.log('[resetOverride] cache 内の override 行:',
+        (Sync.cache.assignment_overrides || []).map(r => ({
+          override_key: r.override_key,
+          emp_name: r.emp_name,
+          project_id: r.project_id,
+        }))
+      );
 
-      // overrides キャッシュから削除
+      try {
+        const result = await Sync.postOverride({ action: 'delete', override_key: overrideKey });
+        console.log('[resetOverride] 削除結果:', result);
+      } catch (e) {
+        // not_found = Sheets 側に既に行が無い。UI は元に戻していい
+        if (/not_found/.test(String(e.message))) {
+          console.warn('[resetOverride] Sheets 側に該当行なし。UIのみ復元します。', e.message);
+        } else {
+          throw e;
+        }
+      }
+
+      // overrides キャッシュから削除（emp_name と project_id でも保険）
       Sync.cache.assignment_overrides = (Sync.cache.assignment_overrides || [])
-        .filter(r => String(r.override_key) !== String(overrideKey));
+        .filter(r => {
+          const rk = String(r.override_key || '');
+          const rkAlt = Sync.buildOverrideKey(r.emp_name, r.project_id);
+          return rk !== String(overrideKey) && rkAlt !== overrideKey;
+        });
 
       // 元に戻すには Salesforce 元値の再取り込みが必要 → 再同期トリガ
       if (typeof App !== 'undefined' && typeof App.loadData === 'function') {
         await App.loadData();
+      } else {
+        // 再同期できなければ少なくともフラグだけ落とす
+        delete a.overridden;
+        delete a.override_note;
+        this.refresh();
       }
 
       document.getElementById('gantt-modal').classList.add('hidden');
-      this.refresh();
     } catch (e) {
       console.error('リセット失敗:', e);
-      alert('リセット失敗: ' + (e.message || e));
+      alert('リセット失敗: ' + (e.message || e) + '\n\nF12 → Console タブのログを確認してください。');
     }
   },
 
