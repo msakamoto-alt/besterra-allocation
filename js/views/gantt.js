@@ -318,13 +318,28 @@ const GanttView = {
     const left = this.dateToPx(clip.start, cells);
     const right = this.dateToPx(clip.end, cells);
     const width = Math.max(16, right - left - 2);
-    const truncLeft = clip.truncStart ? 'border-left:2px dashed #fff;' : '';
-    const truncRight = clip.truncEnd ? 'border-right:2px dashed #fff;' : '';
-    const prospectStyle = prospect ? 'opacity:0.6;border:2px dashed #fff;outline:1px solid ' + color + ';' : '';
+    // 切れ表示（実線バーのみ・点線バーには適用しない）
+    const truncLeft = (!prospect && clip.truncStart) ? 'border-left:2px dashed #fff;' : '';
+    const truncRight = (!prospect && clip.truncEnd) ? 'border-right:2px dashed #fff;' : '';
+    // 見込み案件：色枠の点線・中身は薄い同系色（背景に対する識別性確保）
+    const bg = prospect ? this.toLightBg(color) : color;
+    const prospectStyle = prospect
+      ? `border:2px dashed ${color};color:${color};font-weight:600;`
+      : '';
     const prospectIcon = prospect ? '⊘ ' : '';
     const dataAttr = asgId !== null && asgId !== undefined ? ` data-asg-id="${this.esc(asgId)}"` : '';
     const cursorStyle = asgId !== null && asgId !== undefined ? 'cursor:pointer;' : '';
-    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${color};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}${prospectStyle}${cursorStyle}" title="${this.esc(title || '')}"${dataAttr}>${prospectIcon}${this.esc(label || '')}</div>`;
+    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${bg};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}${prospectStyle}${cursorStyle}" title="${this.esc(title || '')}"${dataAttr}>${prospectIcon}${this.esc(label || '')}</div>`;
+  },
+
+  // 色を薄く（見込み案件のバー背景用）
+  toLightBg(hex) {
+    const m = String(hex).match(/^#([0-9a-f]{6})$/i);
+    if (!m) return '#f1f5f9';
+    const n = parseInt(m[1], 16);
+    const r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff;
+    // 元色をrgba(α=0.12)で表現
+    return `rgba(${r}, ${g}, ${b}, 0.12)`;
   },
 
   // 現在モーダル表示中の assignment（編集対象）
