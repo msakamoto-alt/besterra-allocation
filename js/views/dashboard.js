@@ -5,6 +5,21 @@
 const DashboardView = {
   init() {
     document.getElementById('dash-select').addEventListener('change', () => this.render());
+
+    // 「現在の配置」行クリックでガント詳細モーダルを開く（編集UI共通化）
+    document.getElementById('dash-content').addEventListener('click', (e) => {
+      const tr = e.target.closest('tr[data-asg-id]');
+      if (!tr) return;
+      const asgId = tr.dataset.asgId;
+      if (typeof GanttView !== 'undefined' && typeof GanttView.showAssignmentModal === 'function') {
+        GanttView.showAssignmentModal(asgId);
+      }
+    });
+  },
+
+  // 配置編集後に呼ばれる：選択中の監督の現在配置を再描画
+  refreshCurrentEmployee() {
+    this.render();
   },
 
   refresh() {
@@ -43,17 +58,33 @@ const DashboardView = {
     const now = new Date();
     const in90Days = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
 
+    const canEdit = !!(Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN);
     let asgTbl = '';
     if (asgs.length === 0) {
       asgTbl = '<p class="text-slate-400 text-sm">配置なし</p>';
     } else {
       asgTbl = '<table class="w-full text-sm"><thead class="bg-slate-50"><tr>' +
-        '<th class="p-2 text-left">現場</th><th class="p-2">役割</th><th class="p-2">開始</th><th class="p-2">予定終了</th></tr></thead><tbody>';
+        '<th class="p-2 text-left">現場</th><th class="p-2">役割</th><th class="p-2">開始</th><th class="p-2">予定終了</th>' +
+        (canEdit ? '<th class="p-2 w-20"></th>' : '') +
+        '</tr></thead><tbody>';
       asgs.forEach(a => {
-        asgTbl += `<tr class="border-t"><td class="p-2">${this.esc(a.project_name)}</td>` +
+        const overrideMark = a.overridden
+          ? '<span class="ml-2 bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-[10px]">✎ 変更済み</span>'
+          : '';
+        const editLink = canEdit
+          ? '<td class="p-2 text-center"><span class="text-blue-600 text-xs underline">期間を変更</span></td>'
+          : '';
+        const rowClass = canEdit
+          ? 'border-t hover:bg-blue-50 cursor-pointer'
+          : 'border-t';
+        const titleAttr = canEdit ? ' title="クリックして配属期間を変更"' : '';
+        asgTbl += `<tr class="${rowClass}" data-asg-id="${this.esc(a.assignment_id)}"${titleAttr}>` +
+          `<td class="p-2">${this.esc(a.project_name)}${overrideMark}</td>` +
           `<td class="p-2 text-center">${this.esc(a.role)}</td>` +
           `<td class="p-2 text-center text-xs">${this.esc(a.join || '-')}</td>` +
-          `<td class="p-2 text-center text-xs">${this.esc(a.planned_end || '-')}</td></tr>`;
+          `<td class="p-2 text-center text-xs">${this.esc(a.planned_end || '-')}</td>` +
+          editLink +
+          '</tr>';
       });
       asgTbl += '</tbody></table>';
     }

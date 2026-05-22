@@ -500,6 +500,10 @@ const GanttView = {
       statusEl.textContent = `✓ 保存しました（${result.action || 'ok'}）`;
       statusEl.className = 'text-xs text-emerald-600';
       this.refresh();
+      // ダッシュボード側も再描画（現在の配置テーブルに反映）
+      if (typeof DashboardView !== 'undefined' && typeof DashboardView.render === 'function') {
+        DashboardView.render();
+      }
 
       // 0.8秒後に編集モードを閉じる
       setTimeout(() => this.exitEditMode(), 800);
