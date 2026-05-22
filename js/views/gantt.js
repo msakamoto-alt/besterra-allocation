@@ -64,7 +64,8 @@ const GanttView = {
   },
 
   // assignment の表示スタイル（色・点線・ラベル）を決定
-  // 派遣社員は黄褐色、内部連番は除去して「派遣社員」と表示
+  // 点線 = 配置未定・不足のみ（不足人員の警告として一貫したセマンティクス）
+  // 見込み・派遣・社員のアサイン済はすべて実線（見込み区別はラベルの【見込み】テキストで担保）
   // 戻り値: { color, dashed, label, role }
   resolveBarStyle(a, p) {
     const isPlaceholder = this.isPlaceholderName(a.emp_name);
@@ -73,7 +74,7 @@ const GanttView = {
     if (isPlaceholder) {
       return { color: this.PLACEHOLDER_COLOR, dashed: true, label, role: '配置未定・不足' };
     }
-    return { color: disp.color, dashed: !!a.prospect, label, role: disp.role };
+    return { color: disp.color, dashed: false, label, role: disp.role };
   },
 
   // 元請/下請 バッジHTML
