@@ -21,6 +21,11 @@ const GanttView = {
   // 見込み案件の表示トグル（デフォルト：表示）
   showProspects: true,
 
+  // 現場軸の並び替え（デフォルト：開始日・既定方向）
+  // 既定方向はキーごとに自然な向き（PROJECT_SORTS.dir 参照）。reversed=true で反転
+  currentProjectSort: 'start',
+  currentProjectSortReversed: false,
+
   MONTH_WIDTH: 70,
   DAY_WIDTH: 26,
   LABEL_WIDTH: 300,
@@ -83,6 +88,85 @@ const GanttView = {
       return { color: disp.color, dashed: true, label, role: '配置未定・不足' };
     }
     return { color: disp.color, dashed: false, label, role: disp.role };
+  },
+
+  // 現場軸の並び替え定義
+  // dir: 既定方向（'asc'=小→大、'desc'=大→小）。reversed フラグで反転する
+  // key(p, assignmentsOfProject): 比較用の値を返す。欠損は null を返すと末尾に回る
+  PROJECT_SORTS: {
+    start:        { dir: 'asc',  key: (p) => p.start ? new Date(p.start).getTime() : null },
+    end:          { dir: 'asc',  key: (p) => p.end   ? new Date(p.end).getTime()   : null },
+    duration:     { dir: 'desc', key: (p) => (p.start && p.end) ? (new Date(p.end) - new Date(p.start)) : null },
+    amount:       { dir: 'desc', key: (p) => (typeof p.amount === 'number' && !isNaN(p.amount)) ? p.amount : null },
+    placeholders: { dir: 'desc', key: (p, asgs) => asgs.filter(a => GanttView.isPlaceholderName(a.emp_name)).length },
+    members:      { dir: 'desc', key: (p, asgs) => asgs.filter(a => !GanttView.isPlaceholderName(a.emp_name)).length },
+    contract:     { dir: 'asc',  key: (p) => {
+      const ct = String(p.contract_type || '');
+      if (ct.includes('元請')) return 0;
+      if (ct.includes('下請')) return 1;
+      return 2;
+    }},
+    dept:         { dir: 'asc',  key: (p) => {
+      const d = String(p.dept || '');
+      if (!d) return null;
+      const order = ['東日本', '本社', '千葉', '京浜', '西日本', '倉敷', '九州'];
+      for (let i = 0; i < order.length; i++) {
+        if (d.includes(order[i])) return i;
+      }
+      return order.length;  // それ以外は末尾
+    }},
+    project_id:   { dir: 'asc',  key: (p) => p.project_id || null },
+  },
+
+  // 現場ソートの実方向（既定方向 × reversed）
+  effectiveProjectSortDir() {
+    const def = (this.PROJECT_SORTS[this.currentProjectSort] || {}).dir || 'asc';
+    if (!this.currentProjectSortReversed) return def;
+    return def === 'asc' ? 'desc' : 'asc';
+  },
+
+  // visibleProjects を currentProjectSort に従って安定ソート（タイブレーク=project_id 昇順）
+  sortProjects(projects, assignments) {
+    const def = this.PROJECT_SORTS[this.currentProjectSort];
+    if (!def) return projects;
+    const dir = this.effectiveProjectSortDir();
+    const sign = dir === 'asc' ? 1 : -1;
+    const asgByProject = new Map();
+    (assignments || []).forEach(a => {
+      const arr = asgByProject.get(a.project_id) || [];
+      arr.push(a);
+      asgByProject.set(a.project_id, arr);
+    });
+    const decorated = projects.map((p, idx) => ({
+      p,
+      idx,
+      v: def.key(p, asgByProject.get(p.project_id) || []),
+    }));
+    decorated.sort((a, b) => {
+      // null は常に末尾
+      if (a.v == null && b.v == null) return 0;
+      if (a.v == null) return 1;
+      if (b.v == null) return -1;
+      if (a.v < b.v) return -1 * sign;
+      if (a.v > b.v) return  1 * sign;
+      // タイブレーク：project_id 昇順
+      const ai = String(a.p.project_id || ''), bi = String(b.p.project_id || '');
+      if (ai < bi) return -1;
+      if (ai > bi) return  1;
+      return a.idx - b.idx;
+    });
+    return decorated.map(d => d.p);
+  },
+
+  // 現場軸ソートUIの表示制御＋反転ボタンの矢印更新
+  updateProjectSortToolbar() {
+    const wrap = document.getElementById('gantt-project-sort-wrap');
+    if (wrap) wrap.style.display = (this.currentAxis === 'project') ? '' : 'none';
+    const reverseBtn = document.getElementById('gantt-project-sort-reverse');
+    if (reverseBtn) {
+      reverseBtn.textContent = this.effectiveProjectSortDir() === 'asc' ? '↑' : '↓';
+      reverseBtn.title = `現在: ${this.effectiveProjectSortDir() === 'asc' ? '昇順' : '降順'}（クリックで反転）`;
+    }
   },
 
   // 元請/下請 バッジHTML
@@ -219,6 +303,26 @@ const GanttView = {
       });
     }
 
+    // 現場軸 並び替えセレクタ
+    const sortSelect = document.getElementById('gantt-project-sort');
+    if (sortSelect) {
+      sortSelect.value = this.currentProjectSort;
+      sortSelect.addEventListener('change', () => {
+        this.currentProjectSort = sortSelect.value;
+        this.currentProjectSortReversed = false;  // キー変更時は既定方向に戻す
+        this.updateProjectSortToolbar();
+        this.refresh();
+      });
+    }
+    const sortReverseBtn = document.getElementById('gantt-project-sort-reverse');
+    if (sortReverseBtn) {
+      sortReverseBtn.addEventListener('click', () => {
+        this.currentProjectSortReversed = !this.currentProjectSortReversed;
+        this.updateProjectSortToolbar();
+        this.refresh();
+      });
+    }
+
     // 今日ラベル
     const today = new Date();
     document.getElementById('gantt-today-label').textContent =
@@ -235,6 +339,7 @@ const GanttView = {
     });
     const descEl = document.getElementById('gantt-description');
     if (descEl) descEl.textContent = this.AXIS_DESC[this.currentAxis] || '';
+    this.updateProjectSortToolbar();
 
     const container = document.getElementById('gantt-container');
     if (!container) return;
@@ -786,13 +891,16 @@ const GanttView = {
     const todayMarkerHtml = this.todayMarker(cells);
 
     // 表示範囲フィルタ・完成/見込みトグル
-    const visibleProjects = projects.filter(p => {
+    const visibleProjectsRaw = projects.filter(p => {
       if (p.completed && !this.showCompleted) return false;
       if (p.prospect && !this.showProspects) return false;
       const s = this.parseDate(p.start);
       const e = this.parseDate(p.end);
       return this.clipRange(s, e, cells);
     });
+
+    // 並び替え（現場軸のみ・現在のソートキーと方向に従う）
+    const visibleProjects = this.sortProjects(visibleProjectsRaw, assignments);
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     visibleProjects.forEach(p => {

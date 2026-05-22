@@ -155,6 +155,21 @@
           <input type="month" id="gantt-end" class="border rounded px-2 py-1 text-sm">
           <button id="gantt-today" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm font-medium">今日へ</button>
           <button id="gantt-reset" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded text-sm">期間リセット</button>
+          <span id="gantt-project-sort-wrap" class="ml-2 inline-flex items-center gap-1">
+            <span class="text-sm text-slate-600">並び替え:</span>
+            <select id="gantt-project-sort" class="border rounded px-2 py-1 text-sm bg-white">
+              <option value="start">開始日（早い順）</option>
+              <option value="placeholders">配置未定数（多い順）</option>
+              <option value="amount">売上規模（大→小）</option>
+              <option value="end">終了日（早い順）</option>
+              <option value="duration">工期（長い順）</option>
+              <option value="members">配置人数（多い順）</option>
+              <option value="contract">受注形態（元請→下請）</option>
+              <option value="dept">事務所別</option>
+              <option value="project_id">工事番号順</option>
+            </select>
+            <button id="gantt-project-sort-reverse" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded text-sm" title="昇降反転">↓</button>
+          </span>
           <label class="ml-3 inline-flex items-center gap-1 text-sm text-slate-700 cursor-pointer">
             <input type="checkbox" id="gantt-show-completed" class="rounded border-slate-400">
             完成工事も表示
