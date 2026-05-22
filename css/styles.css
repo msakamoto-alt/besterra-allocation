@@ -80,9 +80,9 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
   .auth-form-side { min-height: 100vh; }
 }
 
-/* ========== アプリヘッダー（ログイン画面と統一感） ========== */
+/* ========== アプリヘッダー（ログイン画面よりワントーン暗め） ========== */
 .app-header {
-  background: linear-gradient(135deg, #b91c1c 0%, #dc2626 45%, #991b1b 100%);
+  background: linear-gradient(135deg, #991b1b 0%, #b91c1c 45%, #7f1d1d 100%);
   position: relative;
   overflow: hidden;
 }
