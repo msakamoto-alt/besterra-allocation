@@ -37,7 +37,7 @@ const GanttView = {
 
   AXIS_DESC: {
     project: '縦軸＝現場、横軸＝配置期間（join〜leave）。配置監督ごとに個別バー表示。色は役割。',
-    person: '縦軸＝監督職員、横軸＝配置現場の期間。色は配置現場での役割。複数現場の配置はバー縦積み。',
+    person: '縦軸＝現場監督（準現場監督含む）、横軸＝配置現場の期間。色は配置現場での役割。複数現場の配置はバー縦積み。',
     department: '縦軸＝事務所配下の個人、横軸＝配置現場の期間。色は役割。事務所別キャパが個人別に分かる。',
     qualification: '縦軸＝資格別の保有者、横軸＝配置現場の期間。色は役割。同一人複数資格は各グループに繰り返し表示。',
   },
@@ -372,7 +372,7 @@ const GanttView = {
   // ===== 2. 人軸 =====
 
   renderPersonAxis() {
-    const employees = (Sync.cache.employees || []).filter(e => e.category === '監督職' || e.category === '準監督職');
+    const employees = (Sync.cache.employees || []).filter(e => e.category === '現場監督' || e.category === '準現場監督');
     const assignments = Sync.cache.assignments || [];
     const projects = Sync.cache.projects || [];
     const cells = this.buildCells();
@@ -423,7 +423,7 @@ const GanttView = {
   // ===== 3. 事務所軸 =====
 
   renderDepartmentAxis() {
-    const employees = (Sync.cache.employees || []).filter(e => e.category === '監督職' || e.category === '準監督職');
+    const employees = (Sync.cache.employees || []).filter(e => e.category === '現場監督' || e.category === '準現場監督');
     const assignments = Sync.cache.assignments || [];
     const projects = Sync.cache.projects || [];
     const cells = this.buildCells();

@@ -165,6 +165,17 @@ const Sync = {
   },
 
   // employees シートを両形式（仕様書テンプレ / Phase0ベース）に対応して正規化
+  // 区分は新表記（現場監督 / 準現場監督 / 監督サポート / 対象外）に統一
+  normalizeCategoryName(c) {
+    const s = String(c || '').trim();
+    if (!s) return '対象外';
+    // 旧表記 → 新表記
+    if (s === '監督職' || s === '現場監督') return '現場監督';
+    if (s === '準監督職' || s === '準現場監督' || s.includes('準')) return '準現場監督';
+    if (s === '広義監督職' || s === '監督サポート') return '監督サポート';
+    return s;  // 「対象外」やその他はそのまま
+  },
+
   normalizeEmployees(raw) {
     if (!Array.isArray(raw) || raw.length === 0) return [];
     const first = raw[0];
@@ -177,7 +188,7 @@ const Sync = {
         department: r.department || r.department_id || '',
         role: r.role_title || '',
         role_title: r.role_title || '',
-        category: r.category || '対象外',
+        category: this.normalizeCategoryName(r.category),
         status: r.status || 'active',
         rank: r.rank_code || '',
       })).filter(e => e.id && e.name);
@@ -191,13 +202,13 @@ const Sync = {
         const inChukei = chukei.includes('〇') || chukei.includes('○') || chukei === '◯';
         let category;
         if (inChukei) {
-          if (kubun.includes('準') || kubun.includes('準監督')) category = '準監督職';
-          else if (kubun === '監督職') category = '監督職';
-          else category = '広義監督職';
+          if (kubun.includes('準') || kubun.includes('準監督')) category = '準現場監督';
+          else if (kubun === '監督職') category = '現場監督';
+          else category = '監督サポート';
         } else {
           // 中計外でも区分から判定（フェイルセーフ）
-          if (kubun.includes('準')) category = '準監督職';
-          else if (kubun === '監督職') category = '監督職';
+          if (kubun.includes('準')) category = '準現場監督';
+          else if (kubun === '監督職') category = '現場監督';
           else category = '対象外';
         }
         return {

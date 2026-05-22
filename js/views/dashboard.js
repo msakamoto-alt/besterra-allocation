@@ -8,7 +8,7 @@ const DashboardView = {
   },
 
   refresh() {
-    const employees = (Sync.cache.employees || []).filter(e => e.category === '監督職' || e.category === '準監督職');
+    const employees = (Sync.cache.employees || []).filter(e => e.category === '現場監督' || e.category === '準現場監督');
     const sel = document.getElementById('dash-select');
     const current = sel.value;
     sel.innerHTML = employees.map(e =>

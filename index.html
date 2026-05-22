@@ -48,7 +48,7 @@
     <!-- タブナビ -->
     <nav class="bg-slate-100 border-b border-slate-300 px-6">
       <div class="flex space-x-1">
-        <button class="tab-btn px-5 py-3 font-medium" data-tab="pool">1. 人材プール（3階層）</button>
+        <button class="tab-btn px-5 py-3 font-medium" data-tab="pool">1. 監督リスト（3階層）</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="gantt">2. 現場人員配置</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="dash">3. 監督ダッシュボード</button>
       </div>
@@ -56,24 +56,24 @@
 
     <main class="p-6 max-w-7xl mx-auto">
 
-      <!-- ========== タブ1：人材プール ========== -->
+      <!-- ========== タブ1：監督リスト ========== -->
       <section id="tab-pool" class="tab-panel">
-        <h2 class="text-xl font-bold mb-4">人材プール（監督員数 3階層表示）</h2>
+        <h2 class="text-xl font-bold mb-4">監督リスト（監督員数 3階層表示）</h2>
         <div class="grid grid-cols-3 gap-4 mb-6">
           <div class="bg-emerald-50 border border-emerald-300 rounded-lg p-4">
-            <div class="text-sm text-emerald-800 font-medium">階層1：監督職（狭義・常時人員）</div>
+            <div class="text-sm text-emerald-800 font-medium">階層1：現場監督（狭義・常時人員）</div>
             <div class="text-3xl font-bold text-emerald-700 mt-2"><span id="cnt-sup">-</span> <span class="text-base">名</span></div>
             <div class="text-xs text-slate-600 mt-2">現場監督として常時配置可能</div>
           </div>
           <div class="bg-amber-50 border border-amber-300 rounded-lg p-4">
-            <div class="text-sm text-amber-800 font-medium">階層2：+ 準監督職（最大稼働キャパ）</div>
+            <div class="text-sm text-amber-800 font-medium">階層2：+ 準現場監督（最大稼動・応援要員）</div>
             <div class="text-3xl font-bold text-amber-700 mt-2"><span id="cnt-sup2">-</span> <span class="text-base">名</span></div>
-            <div class="text-xs text-slate-600 mt-2">飽和時応援を含む配置プール総数</div>
+            <div class="text-xs text-slate-600 mt-2">飽和時の応援を含む配置プール総数</div>
           </div>
           <div class="bg-orange-50 border border-orange-300 rounded-lg p-4">
-            <div class="text-sm text-orange-800 font-medium">階層3：+ 広義監督職（開示数値）</div>
+            <div class="text-sm text-orange-800 font-medium">階層3：+ 監督サポート（ＩＲ数値）</div>
             <div class="text-3xl font-bold text-orange-700 mt-2"><span id="cnt-sup3">-</span> <span class="text-base">名</span></div>
-            <div class="text-xs text-slate-600 mt-2">中計開示上の監督者数（工事組織全体）</div>
+            <div class="text-xs text-slate-600 mt-2">ＩＲ開示上の監督者数（工事組織全体）</div>
           </div>
         </div>
 
@@ -82,9 +82,9 @@
             <label class="text-sm font-medium">区分:</label>
             <select id="filter-cat" class="border rounded px-2 py-1 text-sm">
               <option value="">すべて</option>
-              <option value="監督職">監督職</option>
-              <option value="準監督職">準監督職</option>
-              <option value="広義監督職">広義監督職</option>
+              <option value="現場監督">現場監督</option>
+              <option value="準現場監督">準現場監督</option>
+              <option value="監督サポート">監督サポート</option>
             </select>
             <label class="text-sm font-medium ml-4">所属:</label>
             <select id="filter-dept" class="border rounded px-2 py-1 text-sm">
@@ -139,7 +139,7 @@
           </label>
           <span class="text-xs text-slate-500 ml-auto" id="gantt-today-label"></span>
         </div>
-        <p class="text-sm text-slate-600 mb-2" id="gantt-description">各現場の工期と配置されている監督職を時系列で可視化。月ヘッダ「⌄」クリックで該当月を日単位にドリルダウン。</p>
+        <p class="text-sm text-slate-600 mb-2" id="gantt-description">各現場の工期と配置されている現場監督を時系列で可視化。月ヘッダ「⌄」クリックで該当月を日単位にドリルダウン。</p>
         <div class="bg-white rounded-lg shadow">
           <div id="gantt-container" class="overflow-auto" style="max-height: calc(100vh - 320px); min-height: 400px;"></div>
         </div>

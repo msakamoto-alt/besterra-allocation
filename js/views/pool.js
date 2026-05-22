@@ -1,5 +1,5 @@
 /**
- * pool.js - 人材プール（3階層表示・社員テーブル）
+ * pool.js - 監督リスト（3階層表示・社員テーブル）
  * 区分「対象外」は表示しない方針
  */
 
@@ -18,10 +18,10 @@ const PoolView = {
   refresh() {
     const employees = this.visibleEmployees();
 
-    // 3階層カウント
-    const cntSup = employees.filter(e => e.category === '監督職').length;
-    const cntQuasi = employees.filter(e => e.category === '準監督職').length;
-    const cntBroad = employees.filter(e => e.category === '広義監督職').length;
+    // 3階層カウント（新表記）
+    const cntSup = employees.filter(e => e.category === '現場監督').length;
+    const cntQuasi = employees.filter(e => e.category === '準現場監督').length;
+    const cntBroad = employees.filter(e => e.category === '監督サポート').length;
     document.getElementById('cnt-sup').textContent = cntSup;
     document.getElementById('cnt-sup2').textContent = cntSup + cntQuasi;
     document.getElementById('cnt-sup3').textContent = cntSup + cntQuasi + cntBroad;
@@ -85,7 +85,12 @@ const PoolView = {
   },
 
   categoryBadge(cat) {
-    const klass = { '監督職': 'badge-sup', '準監督職': 'badge-quasi', '広義監督職': 'badge-broad', '対象外': 'badge-out' }[cat] || '';
+    const klass = {
+      '現場監督': 'badge-sup',
+      '準現場監督': 'badge-quasi',
+      '監督サポート': 'badge-broad',
+      '対象外': 'badge-out',
+    }[cat] || '';
     return '<span class="' + klass + ' px-2 py-0.5 rounded text-xs">' + this.escape(cat || '') + '</span>';
   },
 
