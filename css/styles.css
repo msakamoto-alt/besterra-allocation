@@ -96,3 +96,32 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
   pointer-events: none;
 }
 .app-header > * { position: relative; z-index: 1; }
+
+/* ========== メンバー追加 人員タイプ切替ボタン ========== */
+.member-type-btn {
+  background: white;
+  color: #475569;
+  border-color: #cbd5e1;
+}
+.member-type-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+.member-type-btn.active {
+  background: #b91c1c;
+  color: white;
+  border-color: #b91c1c;
+}
+
+/* 派遣バッジ */
+.badge-dispatch {
+  display: inline-block;
+  background: #f97316;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 4px;
+  letter-spacing: 0.02em;
+}

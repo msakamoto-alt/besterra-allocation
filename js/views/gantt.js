@@ -35,6 +35,9 @@ const GanttView = {
     '応援': '#a16207',  // 旧「支援」「視察」を統合
   },
 
+  // 配置未定・不足のバー色（点線描画）
+  PLACEHOLDER_COLOR: '#cbd5e1',
+
   // 元請の主任技術者を「監理技術者」として表示するための変換
   // 旧表記「支援」「視察」は「応援」に正規化
   resolveRoleDisplay(assignment, project) {
@@ -44,6 +47,29 @@ const GanttView = {
       return { role: '監理技術者', color: this.ROLE_COLOR['監理技術者'] };
     }
     return { role: baseRole, color: this.ROLE_COLOR[baseRole] || '#a16207' };
+  },
+
+  // 派遣社員 / 配置未定 の判定
+  isDispatchName(name) {
+    return /^派遣社員\s*#\d+$/.test(String(name || '').trim());
+  },
+  isPlaceholderName(name) {
+    return /^配置未定\s*#\d+$/.test(String(name || '').trim());
+  },
+
+  // assignment の表示スタイル（色・点線・ラベル接尾辞）を決定
+  // 戻り値: { color, dashed, label, role }
+  resolveBarStyle(a, p) {
+    const isPlaceholder = this.isPlaceholderName(a.emp_name);
+    const isDispatch = this.isDispatchName(a.emp_name);
+    const disp = this.resolveRoleDisplay(a, p);
+    if (isPlaceholder) {
+      return { color: this.PLACEHOLDER_COLOR, dashed: true, label: a.emp_name, role: '配置未定・不足' };
+    }
+    if (isDispatch) {
+      return { color: disp.color, dashed: false, label: `${a.emp_name}（派遣）`, role: disp.role };
+    }
+    return { color: disp.color, dashed: !!a.prospect, label: a.emp_name, role: disp.role };
   },
 
   // 元請/下請 バッジHTML
@@ -352,25 +378,26 @@ const GanttView = {
     return `<div class="gantt-today-line" style="position:absolute;left:${px}px;top:0;bottom:0;width:2px;background:#ef4444;z-index:2;pointer-events:none"><div style="position:absolute;top:-4px;left:-4px;width:10px;height:10px;background:#ef4444;border-radius:50%"></div></div>`;
   },
 
-  // バー描画（左切れ・右切れの矢印付き・prospect は点線枠で区別・assignment id 紐付け）
-  renderBar(start, end, cells, color, label, top, title, prospect = false, asgId = null) {
+  // バー描画（左切れ・右切れの矢印付き・dashed は点線枠で区別・assignment id 紐付け）
+  // dashed: true で点線描画（見込み案件・配置未定 共通）
+  renderBar(start, end, cells, color, label, top, title, dashed = false, asgId = null) {
     const clip = this.clipRange(start, end, cells);
     if (!clip) return '';
     const left = this.dateToPx(clip.start, cells);
     const right = this.dateToPx(clip.end, cells);
     const width = Math.max(16, right - left - 2);
     // 切れ表示（実線バーのみ・点線バーには適用しない）
-    const truncLeft = (!prospect && clip.truncStart) ? 'border-left:2px dashed #fff;' : '';
-    const truncRight = (!prospect && clip.truncEnd) ? 'border-right:2px dashed #fff;' : '';
-    // 見込み案件：色枠の点線・中身は薄い同系色（背景に対する識別性確保）
-    const bg = prospect ? this.toLightBg(color) : color;
-    const prospectStyle = prospect
-      ? `border:2px dashed ${color};color:${color};font-weight:600;`
+    const truncLeft = (!dashed && clip.truncStart) ? 'border-left:2px dashed #fff;' : '';
+    const truncRight = (!dashed && clip.truncEnd) ? 'border-right:2px dashed #fff;' : '';
+    // 点線バー：色枠の点線・中身は薄い同系色（背景に対する識別性確保）。テキストは読みやすい濃色固定。
+    const bg = dashed ? this.toLightBg(color) : color;
+    const dashedStyle = dashed
+      ? `border:2px dashed ${color};color:#475569;font-weight:600;`
       : '';
-    const prospectIcon = prospect ? '⊘ ' : '';
+    const dashedIcon = dashed ? '⊘ ' : '';
     const dataAttr = asgId !== null && asgId !== undefined ? ` data-asg-id="${this.esc(asgId)}"` : '';
     const cursorStyle = asgId !== null && asgId !== undefined ? 'cursor:pointer;' : '';
-    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${bg};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}${prospectStyle}${cursorStyle}" title="${this.esc(title || '')}"${dataAttr}>${prospectIcon}${this.esc(label || '')}</div>`;
+    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${bg};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}${dashedStyle}${cursorStyle}" title="${this.esc(title || '')}"${dataAttr}>${dashedIcon}${this.esc(label || '')}</div>`;
   },
 
   // 色を薄く（見込み案件のバー背景用）
@@ -733,9 +760,13 @@ const GanttView = {
       const projAsgs = assignments.filter(a => a.project_id === p.project_id);
       const rowH = Math.max(64, 16 + Math.max(1, projAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
-      const labelMembers = projAsgs.map(a =>
-        `<span class="inline-block mr-2 font-medium">${this.esc(a.emp_name)}</span>`
-      ).join('');
+      const labelMembers = projAsgs.map(a => {
+        const isDisp = this.isDispatchName(a.emp_name);
+        const isPh = this.isPlaceholderName(a.emp_name);
+        const txt = isPh ? `<span class="text-slate-500">${this.esc(a.emp_name)}</span>` : `<span class="font-medium">${this.esc(a.emp_name)}</span>`;
+        const badge = isDisp ? '<span class="badge-dispatch">派遣</span>' : '';
+        return `<span class="inline-block mr-2">${txt}${badge}</span>`;
+      }).join('');
 
       const canEdit = !!(Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN);
       const addBtn = canEdit
@@ -745,7 +776,7 @@ const GanttView = {
         `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
           `<div class="font-medium text-sm">${this.esc(p.name)}${this.contractBadge(p.contract_type)}</div>` +
           `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
-          `<div class="text-xs mt-1">${labelMembers || '<span class="text-slate-400">配置未登録</span>'}</div>` +
+          `<div class="text-xs mt-1">${labelMembers || '<span class="text-slate-400">配置未定・不足</span>'}</div>` +
           addBtn +
         '</td>' +
         `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
@@ -755,16 +786,15 @@ const GanttView = {
       if (projAsgs.length === 0) {
         const start = this.parseDate(p.start);
         const end = this.parseDate(p.end);
-        const barColor = p.prospect ? '#a16207' : '#cbd5e1';  // 見込みはamberで点線描画
-        const barLabel = p.prospect ? '見込み（配置未定）' : '配置未登録';
-        html += this.renderBar(start, end, cells, barColor, barLabel, 8, `${p.name}（${p.start}〜${p.end}）${p.prospect ? '見込み案件' : '配置未登録'}`, !!p.prospect);
+        html += this.renderBar(start, end, cells, this.PLACEHOLDER_COLOR, '配置未定・不足', 8, `${p.name}（${p.start}〜${p.end}）配置未定・不足`, true);
       } else {
         projAsgs.forEach((a, idx) => {
           const start = this.parseDate(a.join);
           const end = this.parseDate(a.planned_end || p.end);
-          const disp = this.resolveRoleDisplay(a, p);
+          const style = this.resolveBarStyle(a, p);
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          html += this.renderBar(start, end, cells, disp.color, a.emp_name, top, `${a.emp_name}（${disp.role}） ${a.join}〜${a.planned_end || p.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
+          const titleTag = a.prospect ? '【見込み】' : '';
+          html += this.renderBar(start, end, cells, style.color, style.label, top, `${style.label}（${style.role}） ${a.join}〜${a.planned_end || p.end}${titleTag}`, style.dashed, a.assignment_id);
         });
       }
       html += '</td></tr>';
@@ -814,10 +844,10 @@ const GanttView = {
         if (!proj) return;
         const start = this.parseDate(a.join);
         const end = this.parseDate(a.planned_end || proj.end);
-        const disp = this.resolveRoleDisplay(a, proj);
+        const style = this.resolveBarStyle(a, proj);
         const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
         const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
-        html += this.renderBar(start, end, cells, disp.color, projLabel, top, `${a.project_name}（${disp.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
+        html += this.renderBar(start, end, cells, style.color, projLabel, top, `${a.project_name}（${style.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, style.dashed, a.assignment_id);
       });
       html += '</td></tr>';
     });
@@ -875,10 +905,10 @@ const GanttView = {
           if (!proj) return;
           const start = this.parseDate(a.join);
           const end = this.parseDate(a.planned_end || proj.end);
-          const disp = this.resolveRoleDisplay(a, proj);
+          const style = this.resolveBarStyle(a, proj);
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
           const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
-          html += this.renderBar(start, end, cells, disp.color, projLabel, top, `${a.project_name}（${disp.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
+          html += this.renderBar(start, end, cells, style.color, projLabel, top, `${a.project_name}（${style.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, style.dashed, a.assignment_id);
         });
         html += '</td></tr>';
       });
@@ -953,10 +983,10 @@ const GanttView = {
           if (!proj) return;
           const start = this.parseDate(a.join);
           const end = this.parseDate(a.planned_end || proj.end);
-          const disp = this.resolveRoleDisplay(a, proj);
+          const style = this.resolveBarStyle(a, proj);
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
           const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
-          html += this.renderBar(start, end, cells, disp.color, projLabel, top, `${a.project_name}（${disp.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, a.prospect, a.assignment_id);
+          html += this.renderBar(start, end, cells, style.color, projLabel, top, `${a.project_name}（${style.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, style.dashed, a.assignment_id);
         });
         if (myAsgs.length === 0) {
           html += '<div style="position:absolute;left:8px;top:14px;color:#94a3b8;font-size:11px">配置なし</div>';
@@ -978,7 +1008,8 @@ const GanttView = {
       const note = k === '監理技術者' ? '<span class="text-[10px] text-red-700 ml-0.5">(元請の主任)</span>' : '';
       html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${this.esc(k)}${note}</span>`;
     });
-    html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;background:#cbd5e1;border-radius:3px"></span>配置未登録</span>';
+    html += `<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;border:2px dashed ${this.PLACEHOLDER_COLOR};border-radius:3px;background:${this.toLightBg(this.PLACEHOLDER_COLOR)};box-sizing:border-box"></span>配置未定・不足（点線）</span>`;
+    html += '<span class="inline-flex items-center gap-1 ml-3"><span class="badge-dispatch" style="margin-left:0">派遣</span>派遣社員</span>';
     html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:2px;height:14px;background:#ef4444"></span>今日</span>';
     html += '<span class="inline-flex items-center gap-1 ml-3"><span class="bg-red-100 text-red-700 border border-red-300 px-1.5 py-0 rounded text-[10px] font-bold">元請</span>建設業法上の監理技術者配置義務あり</span>';
     html += '</div>';

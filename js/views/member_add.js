@@ -1,22 +1,29 @@
 /**
- * member_add.js - メンバー追加モーダル（共通UI）
+ * member_add.js - メンバー追加モーダル（人員タイプ3種対応）
  *
- * 現場（受注案件 or 見込み案件）に対し、新規に担当監督を紐付ける。
- * - GAS Web App の assignment_overrides に op=add で保存
- * - ガントの現場行・見込み案件タブから呼び出し
+ * 人員タイプ：
+ *   - employee    : 当社社員（employees から選択）
+ *   - dispatch    : 派遣社員（個別氏名は管理せず「派遣社員 #N」の連番）
+ *   - placeholder : 配置未定・不足（「配置未定 #N」の連番・枠だけ確保）
  *
- * 使用例:
- *   MemberAdd.open({ project_id: 'K0001-01', project_name: '...', start: '2026/05/01', end: '2026/12/31', meta: '元請 / 京浜事務所' });
+ * 保存先：既存 assignment_overrides シート（op=add）。
+ * 監督リスト・ダッシュボードは employees ベースなので、emp_id 不一致の dispatch/placeholder は自然に除外される。
  */
 
 const MemberAdd = {
-  currentContext: null,  // { project_id, project_name, start, end, meta }
+  currentContext: null,    // { project_id, project_name, start, end, meta }
+  currentType: 'employee', // employee | dispatch | placeholder
 
   init() {
     document.getElementById('member-add-close').addEventListener('click', () => this.close());
     document.getElementById('member-add-cancel').addEventListener('click', () => this.close());
     document.getElementById('member-add-save').addEventListener('click', () => this.save());
     document.getElementById('member-add-search').addEventListener('input', () => this.populateEmployeeList());
+
+    // 人員タイプ切替
+    document.querySelectorAll('.member-type-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.setType(btn.dataset.type));
+    });
 
     // モーダル背景クリックで閉じる
     const modal = document.getElementById('member-add-modal');
@@ -42,13 +49,74 @@ const MemberAdd = {
     document.getElementById('member-add-search').value = '';
     document.getElementById('member-add-status').textContent = '';
 
-    this.populateEmployeeList();
+    this.setType('employee');
     document.getElementById('member-add-modal').classList.remove('hidden');
   },
 
   close() {
     document.getElementById('member-add-modal').classList.add('hidden');
     this.currentContext = null;
+  },
+
+  // 人員タイプ切替（UIの表示/非表示・既定役割の調整）
+  setType(type) {
+    this.currentType = type;
+    document.querySelectorAll('.member-type-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.type === type);
+    });
+
+    const empSection = document.getElementById('member-add-emp-section');
+    const previewBox = document.getElementById('member-add-preview');
+    const roleSel = document.getElementById('member-add-role');
+
+    if (type === 'employee') {
+      empSection.classList.remove('hidden');
+      previewBox.classList.add('hidden');
+      this.populateEmployeeList();
+    } else {
+      empSection.classList.add('hidden');
+      previewBox.classList.remove('hidden');
+      // 派遣は「応援」、未定は「副監督」を既定に
+      if (type === 'dispatch') {
+        roleSel.value = '応援';
+      } else if (type === 'placeholder') {
+        if (roleSel.value === '応援') roleSel.value = '副監督';
+      }
+      this.updatePreview();
+    }
+  },
+
+  // 現場内の既存「派遣社員 #N」「配置未定 #N」をスキャンして次の連番を返す
+  nextSerial(prefix) {
+    const ctx = this.currentContext || {};
+    const projectId = ctx.project_id;
+    if (!projectId) return 1;
+    const assignments = (Sync.cache.assignments || []).filter(a => a.project_id === projectId);
+    let maxN = 0;
+    const re = new RegExp('^' + prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*#(\\d+)$');
+    assignments.forEach(a => {
+      const m = re.exec(String(a.emp_name || '').trim());
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > maxN) maxN = n;
+      }
+    });
+    return maxN + 1;
+  },
+
+  // 派遣・未定の登録名プレビュー
+  updatePreview() {
+    const nameEl = document.getElementById('member-add-preview-name');
+    const hintEl = document.getElementById('member-add-preview-hint');
+    if (this.currentType === 'dispatch') {
+      const n = this.nextSerial('派遣社員');
+      nameEl.textContent = `派遣社員 #${n}`;
+      hintEl.textContent = '同じ現場で複数の派遣社員を登録する場合は自動で番号が増えます。';
+    } else if (this.currentType === 'placeholder') {
+      const n = this.nextSerial('配置未定');
+      nameEl.textContent = `配置未定 #${n}`;
+      hintEl.textContent = '人員不足の「枠」を時系列で可視化します。後から当社社員に置き換えてください。';
+    }
   },
 
   populateEmployeeList() {
@@ -73,21 +141,14 @@ const MemberAdd = {
   },
 
   async save() {
-    const sel = document.getElementById('member-add-emp');
-    const selected = sel.value;
     const statusEl = document.getElementById('member-add-status');
-    if (!selected) {
-      statusEl.textContent = '⚠ 監督を選択してください';
-      statusEl.className = 'text-xs text-red-600';
-      return;
-    }
-    const [empId, empName] = selected.split('|');
-    const role = document.getElementById('member-add-role').value;
     const start = document.getElementById('member-add-start').value;
     const end = document.getElementById('member-add-end').value;
+    const role = document.getElementById('member-add-role').value;
     const note = document.getElementById('member-add-note').value;
     const ctx = this.currentContext || {};
 
+    // 共通バリデーション
     if (!start || !end) {
       statusEl.textContent = '⚠ 配属開始日と終了日を入力してください';
       statusEl.className = 'text-xs text-red-600';
@@ -102,6 +163,24 @@ const MemberAdd = {
       statusEl.textContent = '⚠ 現場情報が取得できません';
       statusEl.className = 'text-xs text-red-600';
       return;
+    }
+
+    // 人員タイプ別に emp_name / 表示ラベルを決定
+    let empName = '';
+    if (this.currentType === 'employee') {
+      const sel = document.getElementById('member-add-emp');
+      const selected = sel.value;
+      if (!selected) {
+        statusEl.textContent = '⚠ 監督を選択してください';
+        statusEl.className = 'text-xs text-red-600';
+        return;
+      }
+      const [, n] = selected.split('|');
+      empName = n;
+    } else if (this.currentType === 'dispatch') {
+      empName = `派遣社員 #${this.nextSerial('派遣社員')}`;
+    } else if (this.currentType === 'placeholder') {
+      empName = `配置未定 #${this.nextSerial('配置未定')}`;
     }
 
     const toSlash = s => s ? String(s).replace(/-/g, '/') : '';
@@ -138,6 +217,14 @@ const MemberAdd = {
     } finally {
       saveBtn.disabled = false;
     }
+  },
+
+  // 派遣・未定の判定ヘルパー（他ビューから利用）
+  isDispatchName(name) {
+    return /^派遣社員\s*#\d+$/.test(String(name || '').trim());
+  },
+  isPlaceholderName(name) {
+    return /^配置未定\s*#\d+$/.test(String(name || '').trim());
   },
 
   esc(text) {

@@ -334,10 +334,29 @@
             <div class="font-bold" id="member-add-project-name">-</div>
             <div class="text-xs text-slate-500 mt-1" id="member-add-project-meta"></div>
           </div>
+
+          <!-- 人員タイプ切替 -->
           <div>
+            <label class="block text-xs text-slate-500 mb-1.5">人員タイプ <span class="text-red-500">*</span></label>
+            <div class="flex gap-2" id="member-add-type-group">
+              <button type="button" data-type="employee" class="member-type-btn flex-1 px-3 py-2 rounded border text-sm font-medium transition">当社社員</button>
+              <button type="button" data-type="dispatch" class="member-type-btn flex-1 px-3 py-2 rounded border text-sm font-medium transition">派遣社員</button>
+              <button type="button" data-type="placeholder" class="member-type-btn flex-1 px-3 py-2 rounded border text-sm font-medium transition">配置未定・不足</button>
+            </div>
+          </div>
+
+          <!-- 当社社員選択（type=employee 時のみ表示） -->
+          <div id="member-add-emp-section">
             <label class="block text-xs text-slate-500 mb-1">監督を選択 <span class="text-red-500">*</span></label>
             <input type="search" id="member-add-search" placeholder="氏名・社員番号で検索" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm mb-2">
             <select id="member-add-emp" size="6" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm font-mono"></select>
+          </div>
+
+          <!-- プレビュー（派遣・未定時に表示） -->
+          <div id="member-add-preview" class="hidden bg-slate-50 border border-dashed border-slate-300 rounded p-3 text-sm">
+            <div class="text-xs text-slate-500 mb-1">登録される枠</div>
+            <div id="member-add-preview-name" class="font-bold text-slate-800">-</div>
+            <div class="text-xs text-slate-500 mt-1" id="member-add-preview-hint"></div>
           </div>
           <div class="grid grid-cols-3 gap-3">
             <div>
