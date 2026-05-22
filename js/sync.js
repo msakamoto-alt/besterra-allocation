@@ -90,47 +90,39 @@ const Sync = {
     // Google Sheets の gviz/tq?tqx=out:csv は、全列が文字列のシートで
     // 「ヘッダ自動検出に失敗」し、各セルが "ヘッダ名 値" のように
     // 空白区切りで結合されて返される既知のバグがある。
-    // 既知のヘッダ語のいずれかで始まり、かつ空白で続く場合は分離する。
+    //
+    // A列の値を見て、よくあるヘッダ名のパターンで始まれば「結合バグ」と判定し、
+    // 全列でヘッダ部分と値を分離する。
     const firstRow = this.parseRow(lines[0]);
-    const KNOWN_HEADERS = [
-      'override_key', 'emp_name', 'project_id', 'prospect_id',
-      'qualification_id', 'qual_id', 'department_id', 'emp_id',
-      'social_security', '社員番号', '名前', 'employee_id', '部門'
-    ];
-    const allMerged = firstRow.length >= 2 && firstRow.every(cell => {
-      const s = String(cell || '');
-      // 既知ヘッダ＋空白で始まる、または 既知ヘッダ単体
-      return KNOWN_HEADERS.some(h => s === h || s.startsWith(h + ' ') || s.startsWith(h + '\n'));
-    });
+    // ASCII英数字 _ で始まり、空白＋何か続く形（例: "override_key 竹内信広__..."）
+    // 1単語ヘッダ＋空白＋他の値、を検出
+    const HEADER_TOKEN = /^([a-z][a-z0-9_]*)\s/i;
+    const firstCellStr = String(firstRow[0] || '');
+    const headerMatch = firstCellStr.match(HEADER_TOKEN);
+    // 検出条件：A列が「ascii_token + 空白 + 何か」のパターン
+    // かつ、その先頭トークンがヘッダ名らしい（override_key, prospect_id等）
+    const HEADER_PATTERN = /^(override_key|prospect_id|qualification_id|qual_id|department_id|emp_id|employee_id|社員番号|record_id|名前)$/i;
+    const isMerged = headerMatch && HEADER_PATTERN.test(headerMatch[1]);
 
-    if (allMerged) {
+    if (isMerged) {
       console.warn('[parseCSV] gviz/tq 結合バグを検出。ヘッダと最初のデータ行を分離します。');
       const headers = [];
       const firstDataValues = [];
       firstRow.forEach(cell => {
         const s = String(cell || '');
-        // 既知ヘッダで始まる場合：先頭からヘッダ部分を切り出す
-        let matched = false;
-        for (const h of KNOWN_HEADERS) {
-          if (s === h) {
-            headers.push(h);
-            firstDataValues.push('');
-            matched = true;
-            break;
-          }
-          if (s.startsWith(h + ' ') || s.startsWith(h + '\n')) {
-            headers.push(h);
-            firstDataValues.push(s.substring(h.length + 1));
-            matched = true;
-            break;
-          }
-        }
-        if (!matched) {
+        // 最初の空白でヘッダと値を分割
+        const m = s.match(/^(\S+)(\s+(.*))?$/);
+        if (m) {
+          headers.push(m[1]);
+          firstDataValues.push(m[3] != null ? m[3].trim() : '');
+        } else {
           headers.push(s);
           firstDataValues.push('');
         }
       });
-      // 1行目を「ヘッダ＋分離した最初のデータ行」、2行目以降はそのまま
+      console.info('[parseCSV] 復元ヘッダ:', headers);
+      console.info('[parseCSV] 復元最初のデータ行:', firstDataValues);
+
       const firstObj = {};
       headers.forEach((h, i) => firstObj[h] = firstDataValues[i] || '');
       const restRows = lines.slice(1).map(line => {
@@ -139,7 +131,7 @@ const Sync = {
         headers.forEach((h, i) => row[h] = values[i] || '');
         return row;
       });
-      // 最初のデータ行が空（ヘッダのみのシート）なら除外
+      // 最初のデータ行が全空なら除外（ヘッダだけの状態）
       const hasFirstData = firstDataValues.some(v => String(v || '').trim() !== '');
       return hasFirstData ? [firstObj, ...restRows] : restRows;
     }
