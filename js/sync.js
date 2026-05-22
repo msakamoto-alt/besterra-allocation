@@ -27,8 +27,16 @@ const Sync = {
   SHEET_VALIDATORS: {
     employees: txt => /employee_id|社員番号|名前/i.test((txt || '').split('\n')[0] || ''),
     departments: txt => /department_id|department_name|事務所|部署/i.test((txt || '').split('\n')[0] || ''),
-    qualifications: txt => /qualification_id|qualification_name|資格/i.test((txt || '').split('\n')[0] || ''),
-    employee_qualifications: txt => /record_id|qualification_id|emp_id|社員|資格/i.test((txt || '').split('\n')[0] || ''),
+    // 厳密化：employees と被らないよう qualification_id 必須
+    qualifications: txt => {
+      const head = (txt || '').split('\n')[0] || '';
+      return /qualification_id/i.test(head);
+    },
+    employee_qualifications: txt => {
+      const head = (txt || '').split('\n')[0] || '';
+      // emp_id × qual_id の組み合わせを必須（社員リスト誤認を防ぐ）
+      return /qualification_id|qual_id/i.test(head) && /emp_id|社員番号/i.test(head);
+    },
     salesforce_imports: txt => /工事部員|工事番号|人事配置一覧|現場管理表/i.test((txt || '').split('\n')[0] || ''),
     prospects: txt => /prospect_id|project_name|customer|見込み/i.test((txt || '').split('\n')[0] || ''),
     assignment_overrides: txt => /override_key|emp_name|project_id/i.test((txt || '').split('\n')[0] || ''),
