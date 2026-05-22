@@ -318,75 +318,42 @@ const Sync = {
     return merged;
   },
 
-  // 見込み案件（prospects）から projects と assignments を派生
-  // 1行 = 1配置候補（人×現場×期間）。同じ prospect_id の複数行は projects は1件、assignments は複数
+  // 見込み案件（prospects v2）から projects を派生
+  // v2スキーマ: prospect_id, status, customer, project_name, contract_type, area,
+  //             managing_dept, start_date, end_date, amount, note, archived
+  // 担当監督は今回スコープ外（assignments は生成しない）
+  // archived=TRUE の行は除外
   deriveFromProspects(prospectRows, employees) {
-    const projectsMap = {};
-    const assignments = [];
-    const empByName = {};
-    (employees || []).forEach(e => {
-      const key = (e.name || '').replace(/\s+/g, '');
-      if (key) empByName[key] = e;
-    });
-
-    let asgIdSeq = 10000;  // Salesforce由来と衝突しないよう大きな値から
+    const projects = [];
     prospectRows.forEach(r => {
+      // アーカイブ済みはスキップ
+      const arch = String(r.archived || '').trim().toUpperCase();
+      if (arch === 'TRUE' || arch === '1' || arch === 'YES') return;
+
       const pid = String(r.prospect_id || '').trim();
       if (!pid) return;
+      const projName = String(r.project_name || '').trim();
+      if (!projName) return;  // 工事名なしは表示価値なし
 
-      if (!projectsMap[pid]) {
-        projectsMap[pid] = {
-          project_id: pid,
-          name: r.project_name,
-          customer: r.customer,
-          start: this.normalizeDate(r.start_date),
-          end: this.normalizeDate(r.end_date),
-          amount: this.parseAmount(r.amount),
-          kind: '見込み',
-          dept: r.managing_dept || '',
-          status: r.status || '見込み',
-          probability: r.probability || '',
-          prospect: true,
-          completed: false,
-        };
-      }
-
-      const empName = this.normalizeName(r.proposed_member || '');
-      if (!empName) return;
-      const empKey = empName.replace(/\s+/g, '');
-      const emp = empByName[empKey];
-
-      assignments.push({
-        assignment_id: asgIdSeq++,
-        emp_id: emp ? emp.id : null,
-        emp_name: empName,
+      projects.push({
         project_id: pid,
-        project_name: r.project_name,
-        allocation: 1,
-        join: this.normalizeDate(r.start_date),
-        leave: null,
-        planned_end: this.normalizeDate(r.end_date),
-        role: this.mapRole(r.role) || (r.role || '副監督'),
-        role_sf: r.role,
-        confirmed: false,
-        completed: false,
+        name: projName,
+        customer: r.customer || '',
+        start: this.normalizeDate(r.start_date),
+        end: this.normalizeDate(r.end_date),
+        amount: this.parseAmount(r.amount),
+        kind: '見込み',
+        dept: r.managing_dept || '',
+        area: r.area || '',
+        contract_type: r.contract_type || '',
+        status: r.status || '見込み',
+        note: r.note || '',
         prospect: true,
-        source: 'prospect',
+        completed: false,
       });
     });
 
-    // 役割順→氏名でソート
-    assignments.sort((a, b) => {
-      const ra = this.ROLE_ORDER[a.role] ?? 99;
-      const rb = this.ROLE_ORDER[b.role] ?? 99;
-      if (ra !== rb) return ra - rb;
-      return (a.emp_name || '').localeCompare(b.emp_name || '');
-    });
-
-    return {
-      projects: Object.values(projectsMap),
-      assignments,
-    };
+    return { projects, assignments: [] };
   },
 
   // Salesforceデータから projects と assignments を派生

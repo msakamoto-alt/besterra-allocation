@@ -14,6 +14,7 @@ const App = {
     PoolView.init();
     GanttView.init();
     DashboardView.init();
+    ProspectsView.init();
 
     if (Auth.getSession()) {
       this.showMain();
@@ -56,6 +57,7 @@ const App = {
       p.classList.toggle('hidden', p.id !== 'tab-' + name);
     });
     if (name === 'gantt') GanttView.refresh();
+    if (name === 'prospects') ProspectsView.refresh();
   },
 
   setupLogout() {
@@ -77,6 +79,7 @@ const App = {
     try { PoolView.refresh(); } catch (e) { console.error('PoolView失敗:', e); }
     try { GanttView.refresh(); } catch (e) { console.error('GanttView失敗:', e); }
     try { DashboardView.refresh(); } catch (e) { console.error('DashboardView失敗:', e); }
+    try { ProspectsView.refresh(); } catch (e) { console.error('ProspectsView失敗:', e); }
   },
 
   updateLastSync() {

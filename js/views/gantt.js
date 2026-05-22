@@ -638,7 +638,9 @@ const GanttView = {
       if (projAsgs.length === 0) {
         const start = this.parseDate(p.start);
         const end = this.parseDate(p.end);
-        html += this.renderBar(start, end, cells, '#cbd5e1', '配置未登録', 8, `${p.name}（${p.start}〜${p.end}）配置未登録`);
+        const barColor = p.prospect ? '#a16207' : '#cbd5e1';  // 見込みはamberで点線描画
+        const barLabel = p.prospect ? '見込み（配置未定）' : '配置未登録';
+        html += this.renderBar(start, end, cells, barColor, barLabel, 8, `${p.name}（${p.start}〜${p.end}）${p.prospect ? '見込み案件' : '配置未登録'}`, !!p.prospect);
       } else {
         projAsgs.forEach((a, idx) => {
           const start = this.parseDate(a.join);
