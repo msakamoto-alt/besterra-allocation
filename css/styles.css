@@ -113,15 +113,3 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
   border-color: #b91c1c;
 }
 
-/* 派遣バッジ */
-.badge-dispatch {
-  display: inline-block;
-  background: #f97316;
-  color: white;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 5px;
-  border-radius: 3px;
-  margin-left: 4px;
-  letter-spacing: 0.02em;
-}

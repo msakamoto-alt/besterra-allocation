@@ -57,17 +57,14 @@ const GanttView = {
     return /^配置未定\s*#\d+$/.test(String(name || '').trim());
   },
 
-  // assignment の表示スタイル（色・点線・ラベル接尾辞）を決定
+  // assignment の表示スタイル（色・点線・ラベル）を決定
+  // 派遣社員（応援役割）の色はそのまま応援色（黄褐色）。バッジはなし。
   // 戻り値: { color, dashed, label, role }
   resolveBarStyle(a, p) {
     const isPlaceholder = this.isPlaceholderName(a.emp_name);
-    const isDispatch = this.isDispatchName(a.emp_name);
     const disp = this.resolveRoleDisplay(a, p);
     if (isPlaceholder) {
       return { color: this.PLACEHOLDER_COLOR, dashed: true, label: a.emp_name, role: '配置未定・不足' };
-    }
-    if (isDispatch) {
-      return { color: disp.color, dashed: false, label: `${a.emp_name}（派遣）`, role: disp.role };
     }
     return { color: disp.color, dashed: !!a.prospect, label: a.emp_name, role: disp.role };
   },
@@ -500,7 +497,7 @@ const GanttView = {
     return `${y}-${m}-${day}`;
   },
 
-  // 編集モードへ
+  // 編集モードへ（人員タイプに応じて役割セレクト選択肢を切替）
   enterEditMode() {
     const a = this.currentAssignment;
     if (!a) return;
@@ -508,12 +505,25 @@ const GanttView = {
     document.getElementById('edit-end').value = this.toIsoDate(a.planned_end);
     const normRole = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
     const roleSel = document.getElementById('edit-role');
-    // 主任技術者/副監督/応援以外は応援にフォールバック
-    if (['主任技術者', '副監督', '応援'].includes(normRole)) {
-      roleSel.value = normRole;
-    } else {
+
+    // 人員タイプ判定：派遣 / 配置未定 / 当社社員
+    const isDispatch = this.isDispatchName(a.emp_name);
+    const isPlaceholder = this.isPlaceholderName(a.emp_name);
+
+    if (isDispatch) {
+      // 派遣社員：応援固定（変更不可）
+      roleSel.innerHTML = '<option value="応援" selected>応援（派遣社員専用）</option>';
       roleSel.value = '応援';
+      roleSel.disabled = true;
+    } else {
+      // 当社社員 or 配置未定・不足：主任技術者 / 副監督
+      roleSel.disabled = false;
+      roleSel.innerHTML =
+        '<option value="主任技術者">主任技術者</option>' +
+        '<option value="副監督">副監督</option>';
+      roleSel.value = (normRole === '主任技術者') ? '主任技術者' : '副監督';
     }
+
     document.getElementById('edit-note').value = a.override_note || '';
     document.getElementById('edit-status').textContent = '';
     document.getElementById('gantt-modal-edit').classList.remove('hidden');
@@ -761,11 +771,9 @@ const GanttView = {
       const rowH = Math.max(64, 16 + Math.max(1, projAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
       const labelMembers = projAsgs.map(a => {
-        const isDisp = this.isDispatchName(a.emp_name);
         const isPh = this.isPlaceholderName(a.emp_name);
         const txt = isPh ? `<span class="text-slate-500">${this.esc(a.emp_name)}</span>` : `<span class="font-medium">${this.esc(a.emp_name)}</span>`;
-        const badge = isDisp ? '<span class="badge-dispatch">派遣</span>' : '';
-        return `<span class="inline-block mr-2">${txt}${badge}</span>`;
+        return `<span class="inline-block mr-2">${txt}</span>`;
       }).join('');
 
       const canEdit = !!(Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN);
@@ -1005,11 +1013,12 @@ const GanttView = {
     let html = '<div class="p-3 border-t bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
       '<span class="font-semibold text-slate-700">色＝役割:</span>';
     Object.entries(this.ROLE_COLOR).forEach(([k, v]) => {
-      const note = k === '監理技術者' ? '<span class="text-[10px] text-red-700 ml-0.5">(元請の主任)</span>' : '';
+      let note = '';
+      if (k === '監理技術者') note = '<span class="text-[10px] text-red-700 ml-0.5">(元請の主任)</span>';
+      if (k === '応援') note = '<span class="text-[10px] text-slate-500 ml-0.5">(派遣社員)</span>';
       html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${this.esc(k)}${note}</span>`;
     });
     html += `<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;border:2px dashed ${this.PLACEHOLDER_COLOR};border-radius:3px;background:${this.toLightBg(this.PLACEHOLDER_COLOR)};box-sizing:border-box"></span>配置未定・不足（点線）</span>`;
-    html += '<span class="inline-flex items-center gap-1 ml-3"><span class="badge-dispatch" style="margin-left:0">派遣</span>派遣社員</span>';
     html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:2px;height:14px;background:#ef4444"></span>今日</span>';
     html += '<span class="inline-flex items-center gap-1 ml-3"><span class="bg-red-100 text-red-700 border border-red-300 px-1.5 py-0 rounded text-[10px] font-bold">元請</span>建設業法上の監理技術者配置義務あり</span>';
     html += '</div>';

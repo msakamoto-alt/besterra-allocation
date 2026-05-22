@@ -58,7 +58,7 @@ const MemberAdd = {
     this.currentContext = null;
   },
 
-  // 人員タイプ切替（UIの表示/非表示・既定役割の調整）
+  // 人員タイプ切替（UIの表示/非表示・役割選択肢・既定役割の調整）
   setType(type) {
     this.currentType = type;
     document.querySelectorAll('.member-type-btn').forEach(btn => {
@@ -69,6 +69,11 @@ const MemberAdd = {
     const previewBox = document.getElementById('member-add-preview');
     const roleSel = document.getElementById('member-add-role');
 
+    // 役割セレクトを人員タイプに完全連動：
+    //   当社社員/配置未定・不足 → 主任技術者・副監督 のみ（応援なし）
+    //   派遣社員 → 応援 固定（disabled）
+    this.applyRoleOptions(type);
+
     if (type === 'employee') {
       empSection.classList.remove('hidden');
       previewBox.classList.add('hidden');
@@ -76,13 +81,27 @@ const MemberAdd = {
     } else {
       empSection.classList.add('hidden');
       previewBox.classList.remove('hidden');
-      // 派遣は「応援」、未定は「副監督」を既定に
-      if (type === 'dispatch') {
-        roleSel.value = '応援';
-      } else if (type === 'placeholder') {
-        if (roleSel.value === '応援') roleSel.value = '副監督';
-      }
       this.updatePreview();
+    }
+  },
+
+  // 人員タイプに応じて役割セレクトの選択肢を差し替え
+  applyRoleOptions(type) {
+    const roleSel = document.getElementById('member-add-role');
+    if (!roleSel) return;
+    if (type === 'dispatch') {
+      roleSel.innerHTML = '<option value="応援" selected>応援（派遣社員専用）</option>';
+      roleSel.value = '応援';
+      roleSel.disabled = true;
+    } else {
+      // 当社社員・配置未定・不足
+      roleSel.disabled = false;
+      const current = roleSel.value;
+      roleSel.innerHTML =
+        '<option value="主任技術者">主任技術者</option>' +
+        '<option value="副監督" selected>副監督</option>';
+      // 既存の値が主任技術者なら保持、それ以外は副監督既定
+      roleSel.value = (current === '主任技術者') ? '主任技術者' : '副監督';
     }
   },
 
