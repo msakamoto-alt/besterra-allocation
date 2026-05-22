@@ -713,6 +713,7 @@ const Sync = {
       next.override_note = o.note || '';
       next.override_updated_at = o.updated_at || '';
       next.override_op = 'update';
+      next.override_key = String(o.override_key || key);  // 解除/編集時に正しいキーを使うため保持
       return next;
     }).filter(Boolean);
 
@@ -741,10 +742,13 @@ const Sync = {
       const projId = String(o.project_id || '').trim();
       if (!empName || !projId) return;
 
-      // 重複チェック：既に同 emp×project の配置があれば skip（update で対応すべき）
-      const key = this.buildOverrideKey(empName, projId);
+      // 重複チェック：override_key で識別（配置未定・不足は役割で区別するため emp_name だけでは不十分）
+      const key = String(o.override_key || this.buildOverrideKey(empName, projId)).trim();
       if (removedKeys.has(key)) return;  // remove と同時指定はおかしい
-      const already = working.some(a => this.buildOverrideKey(a.emp_name, a.project_id) === key);
+      const already = working.some(a => {
+        const aKey = String(a.override_key || this.buildOverrideKey(a.emp_name, a.project_id)).trim();
+        return aKey === key;
+      });
       if (already) {
         console.warn(`add 重複スキップ: ${key}（既存配置あり）`);
         return;
@@ -762,7 +766,7 @@ const Sync = {
         join: this.normalizeDate(o.join_date),
         leave: null,
         planned_end: this.normalizeDate(o.planned_end),
-        role: o.role || '応援',
+        role: o.role || '派遣',
         role_sf: '',
         confirmed: false,
         completed: false,
@@ -771,6 +775,7 @@ const Sync = {
         overridden: true,
         override_note: o.note || '',
         override_op: 'add',
+        override_key: String(o.override_key || key),  // 解除/編集時に正しいキーを使うため保持
       });
       addCount++;
     });

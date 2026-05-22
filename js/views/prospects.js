@@ -213,7 +213,8 @@ const ProspectsView = {
     if (!a) return;
     if (!confirm(`「${a.emp_name}」をこの案件から解除しますか？`)) return;
     try {
-      const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
+      // 配置未定・不足は emp_name 固定 + 役割付き override_key → assignmentに保存済みのkeyを優先
+      const overrideKey = a.override_key || Sync.buildOverrideKey(a.emp_name, a.project_id);
       // 見込みは add 由来のはず → 物理削除
       if (a.source === 'override_add' || a.override_op === 'add') {
         await Sync.postOverride({ action: 'delete', override_key: overrideKey });

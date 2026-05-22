@@ -597,7 +597,8 @@ const GanttView = {
     const op = (a.source === 'override_add' || a.override_op === 'add') ? 'add' : 'update';
 
     try {
-      const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
+      // 配置未定・不足は emp_name 固定 + override_key に役割含み → assignmentに保存済みのkeyを優先
+      const overrideKey = a.override_key || Sync.buildOverrideKey(a.emp_name, a.project_id);
       const payload = {
         action: 'upsert',
         op,
@@ -674,7 +675,8 @@ const GanttView = {
     statusEl.className = 'text-xs text-slate-500';
 
     try {
-      const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
+      // assignment 内に override_key が保存されている場合（add/update由来）はそれを優先
+      const overrideKey = a.override_key || Sync.buildOverrideKey(a.emp_name, a.project_id);
       if (isAddSource) {
         // add 由来：物理削除
         await Sync.postOverride({ action: 'delete', override_key: overrideKey });
@@ -709,7 +711,8 @@ const GanttView = {
     if (!confirm('この配属の変更を取り消し、Salesforce 元値に戻しますか？')) return;
 
     try {
-      const overrideKey = Sync.buildOverrideKey(a.emp_name, a.project_id);
+      // assignment 内の override_key を優先利用（配置未定・不足の役割付きキー対応）
+      const overrideKey = a.override_key || Sync.buildOverrideKey(a.emp_name, a.project_id);
       console.log('[resetOverride] 削除対象 override_key:', overrideKey);
       console.log('[resetOverride] cache 内の override 行:',
         (Sync.cache.assignment_overrides || []).map(r => ({
