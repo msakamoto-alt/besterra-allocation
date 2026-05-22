@@ -64,15 +64,17 @@ const GanttView = {
   },
 
   // assignment の表示スタイル（色・点線・ラベル）を決定
+  // 色 = 役割色（実線/点線とも同じ定義）
   // 点線 = 配置未定・不足のみ（不足人員の警告として一貫したセマンティクス）
-  // 見込み・派遣・社員のアサイン済はすべて実線（見込み区別はラベルの【見込み】テキストで担保）
+  // → 「どの役割が不足しているか」が色で一目で分かる
   // 戻り値: { color, dashed, label, role }
   resolveBarStyle(a, p) {
     const isPlaceholder = this.isPlaceholderName(a.emp_name);
     const disp = this.resolveRoleDisplay(a, p);
     const label = this.displayEmpName(a.emp_name);
     if (isPlaceholder) {
-      return { color: this.PLACEHOLDER_COLOR, dashed: true, label, role: '配置未定・不足' };
+      // 役割色の点線（主任技術者=濃青/副監督=シアン/派遣=黄褐色）
+      return { color: disp.color, dashed: true, label, role: '配置未定・不足' };
     }
     return { color: disp.color, dashed: false, label, role: disp.role };
   },
@@ -1043,7 +1045,9 @@ const GanttView = {
       const note = (k === '監理技術者') ? '<span class="text-[10px] text-red-700 ml-0.5">(元請の主任)</span>' : '';
       html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${v};border-radius:3px"></span>${this.esc(k)}${note}</span>`;
     });
-    html += `<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;border:2px dashed ${this.PLACEHOLDER_COLOR};border-radius:3px;background:${this.toLightBg(this.PLACEHOLDER_COLOR)};box-sizing:border-box"></span>配置未定・不足（点線）</span>`;
+    // 役割色×点線のサンプル（副監督色で代表表示）
+    const sampleColor = this.ROLE_COLOR['副監督'];
+    html += `<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:14px;height:14px;border:2px dashed ${sampleColor};border-radius:3px;background:${this.toLightBg(sampleColor)};box-sizing:border-box"></span>点線＝配置未定・不足（役割色のまま）</span>`;
     html += '<span class="inline-flex items-center gap-1 ml-3"><span style="display:inline-block;width:2px;height:14px;background:#ef4444"></span>今日</span>';
     html += '<span class="inline-flex items-center gap-1 ml-3"><span class="bg-red-100 text-red-700 border border-red-300 px-1.5 py-0 rounded text-[10px] font-bold">元請</span>建設業法上の監理技術者配置義務あり</span>';
     html += '</div>';
