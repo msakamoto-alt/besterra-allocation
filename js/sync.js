@@ -1100,9 +1100,10 @@ const Sync = {
     return this.cache;
   },
 
-  // Supabase（段階A）から6テーブルを取得し this.cache に格納する。
+  // Supabase から各テーブルを取得し this.cache に格納する。
   // salesforce_imports は parseSalesforceCsv 整形後の形で保存済みなのでそのまま使える。
   // 取得後の正規化・派生は processRawTables() が Sheets 経路と共通で行う。
+  // ※ 段階D6: 旧 employees テーブルは廃止（organization+employee_tiers が社員の正）。fetch しない。
   async fetchRawFromSupabase() {
     const sb = this.getSupabase();
     const fetchTable = async (table, orderCol) => {
@@ -1124,8 +1125,7 @@ const Sync = {
       }
       return all;
     };
-    const [emp, sf, pro, ov, gw, ps, org, tiers, quals] = await Promise.all([
-      fetchTable('employees', 'id'),
+    const [sf, pro, ov, gw, ps, org, tiers, quals] = await Promise.all([
       fetchTable('salesforce_imports', 'id'),
       fetchTable('prospects', null),
       fetchTable('assignment_overrides', null),
@@ -1135,7 +1135,7 @@ const Sync = {
       fetchTable('employee_tiers', null),      // 段階D: 階層判定（無ければ[]）
       fetchTable('employee_quals', 'id'),      // 段階D5: 資格マスタ（無ければ[]）
     ]);
-    this.cache.employees = emp;
+    this.cache.employees = [];               // 段階D6: 旧 employees 廃止。processRawTables が organization から再生成
     this.cache.salesforce_imports = sf;
     this.cache.prospects = pro;
     this.cache.assignment_overrides = ov;
@@ -1145,7 +1145,7 @@ const Sync = {
     this.cache.employee_tiers = tiers;
     this.cache.employee_quals = quals;
     console.info('Supabaseから取得:',
-      `employees=${emp.length}`, `sf=${sf.length}`, `prospects=${pro.length}`,
+      `sf=${sf.length}`, `prospects=${pro.length}`,
       `overrides=${ov.length}`, `glogs=${gw.length}`, `status=${ps.length}`,
       `org=${org.length}`, `tiers=${tiers.length}`, `quals=${quals.length}`);
   },
