@@ -977,6 +977,35 @@ const Sync = {
     employees: ['No', '社員番号', '名前', '部門', '役職', '資格', '区分', '中計', '所属（最終判定）', 'オーバーライド理由', 'ユーザーチェック'],
     g_work_logs: ['社員コード', '社員名', '日付', '勤務時間差異', 'プロジェクトコード', 'プロジェクト名', '作業時間', '備考'],
     salesforce_imports: ['department', 'emp_name', 'emp_name_raw', 'role', 'role_detail', 'contract_type', 'project_id', 'project_name', 'start', 'end', 'total_revenue', 'order_amount', 'status'],
+    // 段階D: SmartHR名簿(01_organization)の整形後スキーマ
+    organization: ['emp_no', 'last_name', 'first_name', 'kana_last', 'kana_first', 'email', 'business', 'hire_date', 'depts', 'positions'],
+  },
+
+  // 段階D: SmartHR名簿(01_organization)の生行 → organization テーブル形式に整形。
+  // 部署1..10／役職1..10 の非空セルを配列にまとめる（兼任=部署が複数）。
+  parseOrganizationRows(rawRows) {
+    return rawRows.map(r => {
+      const depts = [];
+      const positions = [];
+      for (let i = 1; i <= 10; i++) {
+        const d = String(r[`部署${i} 部署`] || '').trim();
+        if (d) depts.push(d);
+        const p = String(r[`役職${i} 役職`] || '').trim();
+        if (p) positions.push(p);
+      }
+      return {
+        emp_no: String(r['社員番号'] || '').trim(),
+        last_name: String(r['姓'] || '').trim(),
+        first_name: String(r['名'] || '').trim(),
+        kana_last: String(r['姓（ヨミガナ）'] || '').trim(),
+        kana_first: String(r['名（ヨミガナ）'] || '').trim(),
+        email: String(r['メールアドレス'] || '').trim(),
+        business: String(r['業務内容'] || '').trim(),
+        hire_date: String(r['入社年月日'] || '').trim(),
+        depts,
+        positions,
+      };
+    }).filter(r => r.emp_no);
   },
 
   // 段階C: Sheets→Supabase 参照系3テーブルの同期（編集者のみ・「同期」ボタンから呼ばれる）。
@@ -988,16 +1017,22 @@ const Sync = {
       this.fetchSheetWithValidation('g_work_logs'),
       this.fetchSheetWithValidation('salesforce_imports'),
     ]);
+    // 段階D: 組織図名簿（01_organization タブを直接取得）
+    let orgTxt = null;
+    try { orgTxt = await this.fetchSheetRaw('01_organization'); } catch (e) { /* タブ未作成は許容 */ }
+
     const empRows = empTxt ? this.parseCSV(empTxt).filter(r => String(r['社員番号'] || '').trim()) : [];
     const gwRows = gwTxt ? this.parseCSV(gwTxt).filter(r => String(r['社員コード'] || '').trim()) : [];
     const sfRows = sfTxt ? this.parseSalesforceCsv(sfTxt) : [];
+    const orgRows = orgTxt ? this.parseOrganizationRows(this.parseCSV(orgTxt)) : [];
 
     // 0件のテーブルは取得失敗の可能性があるので置換しない（誤って空にしない安全策）
     if (empRows.length) await this._replaceSupabaseTable('employees', empRows);
     if (gwRows.length) await this._replaceSupabaseTable('g_work_logs', gwRows);
     if (sfRows.length) await this._replaceSupabaseTable('salesforce_imports', sfRows);
+    if (orgRows.length) await this._replaceSupabaseTable('organization', orgRows);
 
-    return { employees: empRows.length, g_work_logs: gwRows.length, salesforce_imports: sfRows.length };
+    return { employees: empRows.length, g_work_logs: gwRows.length, salesforce_imports: sfRows.length, organization: orgRows.length };
   },
 
   // 参照系テーブルを全置換。書込は authenticated（編集者）のみRLSで許可。
