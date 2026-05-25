@@ -1119,13 +1119,15 @@ const Sync = {
       }
       return all;
     };
-    const [emp, sf, pro, ov, gw, ps] = await Promise.all([
+    const [emp, sf, pro, ov, gw, ps, org, tiers] = await Promise.all([
       fetchTable('employees', 'id'),
       fetchTable('salesforce_imports', 'id'),
       fetchTable('prospects', null),
       fetchTable('assignment_overrides', null),
       fetchTable('g_work_logs', 'id'),
       fetchTable('project_status_overrides', null),
+      fetchTable('organization', 'id'),       // 段階D: 組織図名簿（無ければ[]）
+      fetchTable('employee_tiers', null),      // 段階D: 階層判定（無ければ[]）
     ]);
     this.cache.employees = emp;
     this.cache.salesforce_imports = sf;
@@ -1133,9 +1135,12 @@ const Sync = {
     this.cache.assignment_overrides = ov;
     this.cache.g_work_logs = gw;
     this.cache.project_status_overrides = ps;
+    this.cache.organization = org;
+    this.cache.employee_tiers = tiers;
     console.info('Supabaseから取得:',
       `employees=${emp.length}`, `sf=${sf.length}`, `prospects=${pro.length}`,
-      `overrides=${ov.length}`, `glogs=${gw.length}`, `status=${ps.length}`);
+      `overrides=${ov.length}`, `glogs=${gw.length}`, `status=${ps.length}`,
+      `org=${org.length}`, `tiers=${tiers.length}`);
   },
 
   // supabase-js クライアント（遅延生成）
@@ -1174,11 +1179,81 @@ const Sync = {
     return this.isEditor;
   },
 
+  // tier（監督職/準監督職/広義監督職/対象外）→ 画面が使う category（現場監督/準現場監督/監督サポート/対象外）
+  TIER_TO_CATEGORY: {
+    '監督職': '現場監督',
+    '準監督職': '準現場監督',
+    '広義監督職': '監督サポート',
+    '対象外': '対象外',
+  },
+
+  // 段階D: 階層の自動判定（階層1のみ自動・階層2/3は手動）。
+  //   - employee_tiers に手動判定があれば最優先
+  //   - 自動：所属が「工事部配下の事務所/作業所」のみ（単独所属）→ 監督職（現場監督）
+  //   - それ以外（兼任・工事企画室・工事部直属・工事部外）→ 対象外（画面で手動昇格）
+  judgeCategory(empNo, depts, tierByEmp) {
+    const manual = tierByEmp[String(empNo).trim()];
+    if (manual && this.TIER_TO_CATEGORY[manual]) return this.TIER_TO_CATEGORY[manual];
+    const isSiteOffice = (d) => {
+      const s = String(d || '');
+      return s.includes('工事部') && (s.includes('事務所') || s.includes('作業所'));
+    };
+    if (depts.length === 1 && isSiteOffice(depts[0])) return '現場監督';
+    return '対象外';
+  },
+
+  // 段階D: organization（構造）＋ employee_tiers（手動階層）＋ 資格ソース から社員オブジェクトを生成。
+  // 旧 normalizeEmployees（区分/中計）を置換。返す形は従来と同じ（id/name/department/role/category/...）。
+  buildEmployeesFromOrg(orgRows, tierRows, qualSource) {
+    const tierByEmp = {};
+    (tierRows || []).forEach(t => {
+      const no = String(t.emp_no || '').trim();
+      if (no) tierByEmp[no] = String(t.tier || '').trim();
+    });
+    // 資格：社員番号→資格文字列（当面は旧 employees テーブルの F列。段階Dで 02_employees に移行）
+    const qualByEmp = {};
+    (qualSource || []).forEach(e => {
+      const no = String(e['社員番号'] || e.emp_no || '').trim();
+      if (no) qualByEmp[no] = String(e['資格'] || e.qualifications_raw || '').trim();
+    });
+    const toArr = (v) => Array.isArray(v) ? v : (typeof v === 'string' && v ? (() => { try { return JSON.parse(v); } catch (e) { return []; } })() : []);
+    return (orgRows || []).map(r => {
+      const empNo = String(r.emp_no || '').trim();
+      const depts = toArr(r.depts);
+      const positions = toArr(r.positions);
+      const primary = depts[0] || '';
+      return {
+        id: parseInt(empNo, 10) || empNo,
+        name: `${r.last_name || ''} ${r.first_name || ''}`.trim(),
+        department: primary ? String(primary).split('/').pop() : '',
+        role: positions[0] || '',
+        role_title: positions[0] || '',
+        qualifications_raw: qualByEmp[empNo] || '',
+        category: this.judgeCategory(empNo, depts, tierByEmp),
+        status: 'active',
+        rank: '',
+        depts,            // 組織図画面用に保持
+        positions,        // 同上
+        emp_no: empNo,
+      };
+    }).filter(e => e.id && e.name);
+  },
+
   // 取得済みの生テーブル（this.cache）から employees 正規化・projects/assignments 派生・
   // overrides/status マージを行う。Sheets 経路 / Supabase 経路で共通。
   processRawTables() {
-      // employees の正規化（仕様書テンプレ / Phase0ベース 両形式対応）
-      if (this.cache.employees && this.cache.employees.length > 0) {
+      // 段階D: organization があれば組織図ベースで社員生成（階層1自動＋手動tier）。
+      // 無ければ従来の 01_employees ベース（normalizeEmployees）。
+      if (this.cache.organization && this.cache.organization.length > 0) {
+        try {
+          this.cache.employees = this.buildEmployeesFromOrg(
+            this.cache.organization, this.cache.employee_tiers, this.cache.employees);
+        } catch (e) {
+          console.error('組織図ベース社員生成失敗・旧employeesにフォールバック:', e);
+          try { this.cache.employees = this.normalizeEmployees(this.cache.employees); }
+          catch (e2) { this.cache.employees = MOCK_DATA.employees; }
+        }
+      } else if (this.cache.employees && this.cache.employees.length > 0) {
         try {
           this.cache.employees = this.normalizeEmployees(this.cache.employees);
         } catch (e) {
@@ -1186,7 +1261,7 @@ const Sync = {
           this.cache.employees = MOCK_DATA.employees;
         }
       }
-      // employees が Sheets に無い場合はモックを使用
+      // employees が無い場合はモックを使用
       if (!this.cache.employees || this.cache.employees.length === 0) {
         this.cache.employees = MOCK_DATA.employees;
       }
