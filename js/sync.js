@@ -971,6 +971,63 @@ const Sync = {
     return !!(this.OVERRIDE_API_URL && this.OVERRIDE_TOKEN);
   },
 
+  // 参照系テーブル（Sheetsで編集する3つ）の列ホワイトリスト。
+  // 余分な空ヘッダ列やサロゲートid を除外し、これらの列だけ投入する。
+  REFERENCE_COLUMNS: {
+    employees: ['No', '社員番号', '名前', '部門', '役職', '資格', '区分', '中計', '所属（最終判定）', 'オーバーライド理由', 'ユーザーチェック'],
+    g_work_logs: ['社員コード', '社員名', '日付', '勤務時間差異', 'プロジェクトコード', 'プロジェクト名', '作業時間', '備考'],
+    salesforce_imports: ['department', 'emp_name', 'emp_name_raw', 'role', 'role_detail', 'contract_type', 'project_id', 'project_name', 'start', 'end', 'total_revenue', 'order_amount', 'status'],
+  },
+
+  // 段階C: Sheets→Supabase 参照系3テーブルの同期（編集者のみ・「同期」ボタンから呼ばれる）。
+  // 編集の正は Google Sheets（employees手入力・勤怠/SF貼付）。運用系には一切触れない。
+  async syncReferenceFromSheets() {
+    // Sheets から取得（既存の gviz 経路を再利用）
+    const [empTxt, gwTxt, sfTxt] = await Promise.all([
+      this.fetchSheetWithValidation('employees'),
+      this.fetchSheetWithValidation('g_work_logs'),
+      this.fetchSheetWithValidation('salesforce_imports'),
+    ]);
+    const empRows = empTxt ? this.parseCSV(empTxt).filter(r => String(r['社員番号'] || '').trim()) : [];
+    const gwRows = gwTxt ? this.parseCSV(gwTxt).filter(r => String(r['社員コード'] || '').trim()) : [];
+    const sfRows = sfTxt ? this.parseSalesforceCsv(sfTxt) : [];
+
+    // 0件のテーブルは取得失敗の可能性があるので置換しない（誤って空にしない安全策）
+    if (empRows.length) await this._replaceSupabaseTable('employees', empRows);
+    if (gwRows.length) await this._replaceSupabaseTable('g_work_logs', gwRows);
+    if (sfRows.length) await this._replaceSupabaseTable('salesforce_imports', sfRows);
+
+    return { employees: empRows.length, g_work_logs: gwRows.length, salesforce_imports: sfRows.length };
+  },
+
+  // 参照系テーブルを全置換。書込は authenticated（編集者）のみRLSで許可。
+  // 安全策：「先に新規投入 → 成功後に旧行を削除」の順。
+  //   - 投入が失敗しても旧データは残る（空にならない）
+  //   - 旧行削除が失敗しても重複が残るだけ（再同期で回復）＝データ消失は起きない
+  // サロゲートidは常に増加するため、投入前の最大idを基準に旧行を特定できる。
+  async _replaceSupabaseTable(table, rows) {
+    const sb = this.getSupabase();
+    const cols = this.REFERENCE_COLUMNS[table];
+    const clean = rows.map(r => {
+      const o = {};
+      cols.forEach(c => { o[c] = (r[c] !== undefined ? r[c] : null); });
+      return o;
+    });
+    // 1. 投入前の最大id（新規行はこれより大きいidになる）
+    const maxRes = await sb.from(table).select('id').order('id', { ascending: false }).limit(1);
+    if (maxRes.error) throw new Error(`${table} 既存id取得失敗: ${maxRes.error.message}`);
+    const maxOldId = (maxRes.data && maxRes.data.length) ? maxRes.data[0].id : 0;
+    // 2. 新規行を投入（旧行と一時共存・失敗時は旧データが残る）
+    const batch = 500;
+    for (let i = 0; i < clean.length; i += batch) {
+      const ins = await sb.from(table).insert(clean.slice(i, i + batch));
+      if (ins.error) throw new Error(`${table} 投入失敗(${i}行目付近): ${ins.error.message}`);
+    }
+    // 3. 旧行を削除（投入成功後。失敗しても重複が残るだけで消失はしない）
+    const del = await sb.from(table).delete().lte('id', maxOldId);
+    if (del.error) throw new Error(`${table} 旧行削除失敗: ${del.error.message}（重複が残った可能性。もう一度同期してください）`);
+  },
+
   async syncAll() {
     if (this.USE_SUPABASE && this.SUPABASE_URL && this.SUPABASE_ANON_KEY) {
       // 段階A: Supabase から各テーブルを取得（gviz/parseCSV をバイパス）

@@ -100,6 +100,9 @@ const App = {
     const toggle = document.getElementById('editor-toggle');
     if (badge) badge.classList.toggle('hidden', !isEd);
     if (toggle) toggle.textContent = isEd ? '🔒 編集を終了' : '🔓 編集ログイン';
+    // 「同期」は編集者がSheetsから参照データを取込む操作なので閲覧者には隠す
+    const syncBtn = document.getElementById('sync-button');
+    if (syncBtn) syncBtn.classList.toggle('hidden', !isEd);
   },
 
   showMain() {
@@ -133,7 +136,28 @@ const App = {
 
   setupSync() {
     document.getElementById('sync-button').addEventListener('click', async () => {
-      await this.loadData();
+      const btn = document.getElementById('sync-button');
+      const orig = btn.textContent;
+      btn.disabled = true;
+      try {
+        // 編集者が同期したときだけ Sheets→Supabase（参照系3テーブル）を取込み。
+        // 閲覧者・編集後の自動再描画(loadData)では実行しない（重い再投入を避ける）。
+        if (Sync.USE_SUPABASE && Sync.canEdit() && typeof Sync.syncReferenceFromSheets === 'function') {
+          btn.textContent = 'Sheets取込中…';
+          try {
+            const n = await Sync.syncReferenceFromSheets();
+            console.info('参照データ同期:', n);
+          } catch (e) {
+            console.error('参照データ同期失敗:', e);
+            alert('Sheetsからの参照データ取込みに失敗しました（表示の更新は続行します）:\n' + (e.message || e));
+          }
+        }
+        btn.textContent = '更新中…';
+        await this.loadData();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
     });
   },
 
