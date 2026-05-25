@@ -1185,6 +1185,32 @@ const Sync = {
     '準監督職': '準現場監督',
     '広義監督職': '監督サポート',
     '対象外': '対象外',
+    // 監督リスト表記（category）を直接保存しても通るように識別マップに含める
+    '現場監督': '現場監督',
+    '準現場監督': '準現場監督',
+    '監督サポート': '監督サポート',
+  },
+
+  // 段階D: 階層の手動判定を保存（組織図画面から）。tier は監督リスト表記でよい。
+  async setEmployeeTier(empNo, tier) {
+    const sb = this.getSupabase();
+    const res = await sb.from('employee_tiers').upsert({
+      emp_no: String(empNo).trim(),
+      tier: tier,
+      note: '',
+      updated_at: new Date().toISOString(),
+      updated_by: 'web',
+    }, { onConflict: 'emp_no' });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
+  // 手動判定を削除して自動判定に戻す
+  async clearEmployeeTier(empNo) {
+    const sb = this.getSupabase();
+    const res = await sb.from('employee_tiers').delete().eq('emp_no', String(empNo).trim());
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
   },
 
   // 段階D: 階層の自動判定（階層1のみ自動・階層2/3は手動）。

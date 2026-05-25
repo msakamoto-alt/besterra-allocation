@@ -151,7 +151,8 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
   padding: 2px 6px; border-radius: 3px 3px 0 0; text-align: center; white-space: nowrap;
 }
 .org-box-members { padding: 3px 6px; }
-.org-member { display: flex; align-items: center; gap: 3px; font-size: 11px; line-height: 1.5; white-space: nowrap; }
+.org-member { display: flex; align-items: center; gap: 3px; font-size: 11px; line-height: 1.5; white-space: nowrap; cursor: pointer; border-radius: 3px; }
+.org-member:hover { background: #f1f5f9; }
 .org-pos { color: #64748b; }
 .org-name { color: #1e293b; }
 .org-dot { display: inline-block; width: 7px; height: 7px; border-radius: 9999px; flex: none; }

@@ -29,11 +29,13 @@ const OrgChartView = {
     const s = document.getElementById('org-search');
     if (s) s.addEventListener('input', () => this.refresh());
 
-    // 組織名クリックで開閉（イベント委譲）
+    // クリック委譲：組織名→開閉 / 氏名→階層判定モーダル
     const content = document.getElementById('orgchart-content');
     if (content) content.addEventListener('click', (e) => {
-      const t = e.target.closest('[data-org-path]');
-      if (t) this.toggle(t.getAttribute('data-org-path'));
+      const tog = e.target.closest('[data-org-path]');
+      if (tog) { this.toggle(tog.getAttribute('data-org-path')); return; }
+      const mem = e.target.closest('.org-member');
+      if (mem && mem.dataset.no && Sync.canEdit()) this.openTierModal(mem.dataset.no);
     });
 
     const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
@@ -41,6 +43,51 @@ const OrgChartView = {
     bind('org-zoom-out', () => this.setZoom(this.zoom - 0.1));
     bind('org-expand-all', () => { this.mode = 'all'; this.userExpanded.clear(); this.userCollapsed.clear(); this.refresh(); });
     bind('org-collapse-all', () => { this.mode = 'none'; this.userExpanded.clear(); this.userCollapsed.clear(); this.refresh(); });
+
+    // 階層判定モーダル
+    const tm = document.getElementById('tier-modal');
+    if (tm) {
+      const close = () => tm.classList.add('hidden');
+      bind('tier-modal-close', close);
+      tm.addEventListener('click', (e) => { if (e.target === tm) close(); });
+      tm.querySelectorAll('.tier-opt').forEach(btn => {
+        btn.addEventListener('click', () => this.saveTier(btn.getAttribute('data-tier')));
+      });
+      bind('tier-auto', () => this.saveTier(null));
+    }
+  },
+
+  openTierModal(empNo) {
+    this.currentEmpNo = String(empNo).trim();
+    const org = (Sync.cache.organization || []).find(r => String(r.emp_no).trim() === this.currentEmpNo);
+    const emp = this.empByNo[this.currentEmpNo];
+    const name = org ? `${org.last_name || ''} ${org.first_name || ''}`.trim() : (emp ? emp.name : empNo);
+    const depts = (org && Array.isArray(org.depts)) ? [...new Set(org.depts)] : [];
+    const cat = emp ? emp.category : '対象外';
+    const isManual = this.tierSet.has(this.currentEmpNo);
+    document.getElementById('tier-modal-name').textContent = `${this.currentEmpNo} ${name}`;
+    document.getElementById('tier-modal-org').textContent = depts.join(' ／ ') || '(所属未設定)';
+    document.getElementById('tier-modal-current').innerHTML = `現在: <b>${this.esc(cat)}</b>（${isManual ? '手動判定' : '自動判定'}）`;
+    document.getElementById('tier-modal-status').textContent = '';
+    document.getElementById('tier-modal').classList.remove('hidden');
+  },
+
+  async saveTier(tier) {
+    const empNo = this.currentEmpNo;
+    if (!empNo) return;
+    const statusEl = document.getElementById('tier-modal-status');
+    statusEl.textContent = '保存中…';
+    statusEl.className = 'text-xs mt-3 text-slate-500';
+    try {
+      if (tier === null) await Sync.clearEmployeeTier(empNo);
+      else await Sync.setEmployeeTier(empNo, tier);
+      if (typeof App !== 'undefined' && typeof App.loadData === 'function') await App.loadData();
+      document.getElementById('tier-modal').classList.add('hidden');
+    } catch (e) {
+      console.error('階層保存失敗:', e);
+      statusEl.textContent = '× 保存失敗: ' + (e.message || e);
+      statusEl.className = 'text-xs mt-3 text-red-600';
+    }
   },
 
   setZoom(z) {

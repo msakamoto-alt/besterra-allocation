@@ -551,6 +551,26 @@
     </div>
   </div>
 
+  <!-- ========== 階層判定モーダル（段階D4: 組織図から）========== -->
+  <div id="tier-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6">
+      <div class="flex items-center justify-between mb-1">
+        <h3 class="text-lg font-bold text-slate-800" id="tier-modal-name">氏名</h3>
+        <button id="tier-modal-close" class="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
+      </div>
+      <p class="text-xs text-slate-500 mb-1" id="tier-modal-org"></p>
+      <p class="text-xs mb-3" id="tier-modal-current"></p>
+      <div class="space-y-2">
+        <button class="tier-opt w-full text-left border rounded px-3 py-2 text-sm hover:bg-slate-50" data-tier="現場監督"><span class="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style="background:#0d9488"></span>現場監督（階層1）</button>
+        <button class="tier-opt w-full text-left border rounded px-3 py-2 text-sm hover:bg-slate-50" data-tier="準現場監督"><span class="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style="background:#d97706"></span>準現場監督（階層2）</button>
+        <button class="tier-opt w-full text-left border rounded px-3 py-2 text-sm hover:bg-slate-50" data-tier="監督サポート"><span class="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style="background:#ea580c"></span>監督サポート（階層3）</button>
+        <button class="tier-opt w-full text-left border rounded px-3 py-2 text-sm hover:bg-slate-50" data-tier="対象外"><span class="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle border border-slate-300"></span>対象外</button>
+        <button id="tier-auto" class="w-full text-center border border-dashed border-slate-400 rounded px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">自動判定に戻す</button>
+      </div>
+      <div id="tier-modal-status" class="text-xs mt-3"></div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/crypto.js"></script>
   <script src="js/mock_data.js"></script>
