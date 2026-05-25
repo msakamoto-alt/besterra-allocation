@@ -979,6 +979,8 @@ const Sync = {
     salesforce_imports: ['department', 'emp_name', 'emp_name_raw', 'role', 'role_detail', 'contract_type', 'project_id', 'project_name', 'start', 'end', 'total_revenue', 'order_amount', 'status'],
     // 段階D: SmartHR名簿(01_organization)の整形後スキーマ
     organization: ['emp_no', 'last_name', 'first_name', 'kana_last', 'kana_first', 'email', 'business', 'hire_date', 'depts', 'positions'],
+    // 段階D5: 資格マスタ(02_employees タブ)。将来 SmartHR 資格で列が増える前提（増えたらここに追記）。
+    employee_quals: ['社員番号', '名前', '資格'],
   },
 
   // 段階D: SmartHR名簿(01_organization)の生行 → organization テーブル形式に整形。
@@ -1008,31 +1010,34 @@ const Sync = {
     }).filter(r => r.emp_no);
   },
 
-  // 段階C: Sheets→Supabase 参照系3テーブルの同期（編集者のみ・「同期」ボタンから呼ばれる）。
-  // 編集の正は Google Sheets（employees手入力・勤怠/SF貼付）。運用系には一切触れない。
+  // 段階C/D/D5: Sheets→Supabase 参照系テーブルの同期（編集者のみ・「同期」ボタンから呼ばれる）。
+  // 同期対象：g_work_logs（勤怠貼付）・salesforce_imports（SF貼付）・organization（01_organization 名簿）・
+  //           employee_quals（02_employees 資格）。編集の正は Google Sheets。運用系には一切触れない。
+  // ※ 旧 employees(01_employees) は段階D5で廃止し、同期対象から除外。
   async syncReferenceFromSheets() {
     // Sheets から取得（既存の gviz 経路を再利用）
-    const [empTxt, gwTxt, sfTxt] = await Promise.all([
-      this.fetchSheetWithValidation('employees'),
+    const [gwTxt, sfTxt] = await Promise.all([
       this.fetchSheetWithValidation('g_work_logs'),
       this.fetchSheetWithValidation('salesforce_imports'),
     ]);
-    // 段階D: 組織図名簿（01_organization タブを直接取得）
-    let orgTxt = null;
+    // 段階D: 組織図名簿（01_organization）／段階D5: 資格マスタ（02_employees）を直接取得
+    let orgTxt = null, qualTxt = null;
     try { orgTxt = await this.fetchSheetRaw('01_organization'); } catch (e) { /* タブ未作成は許容 */ }
+    try { qualTxt = await this.fetchSheetRaw('02_employees'); } catch (e) { /* タブ未作成は許容 */ }
 
-    const empRows = empTxt ? this.parseCSV(empTxt).filter(r => String(r['社員番号'] || '').trim()) : [];
     const gwRows = gwTxt ? this.parseCSV(gwTxt).filter(r => String(r['社員コード'] || '').trim()) : [];
     const sfRows = sfTxt ? this.parseSalesforceCsv(sfTxt) : [];
     const orgRows = orgTxt ? this.parseOrganizationRows(this.parseCSV(orgTxt)) : [];
+    const qualRows = qualTxt ? this.parseCSV(qualTxt).filter(r => String(r['社員番号'] || '').trim()) : [];
 
     // 0件のテーブルは取得失敗の可能性があるので置換しない（誤って空にしない安全策）
-    if (empRows.length) await this._replaceSupabaseTable('employees', empRows);
+    // ※ 段階D5: 旧 employees(01_employees) は廃止につき同期しない。資格は 02_employees→employee_quals へ。
     if (gwRows.length) await this._replaceSupabaseTable('g_work_logs', gwRows);
     if (sfRows.length) await this._replaceSupabaseTable('salesforce_imports', sfRows);
     if (orgRows.length) await this._replaceSupabaseTable('organization', orgRows);
+    if (qualRows.length) await this._replaceSupabaseTable('employee_quals', qualRows);
 
-    return { employees: empRows.length, g_work_logs: gwRows.length, salesforce_imports: sfRows.length, organization: orgRows.length };
+    return { g_work_logs: gwRows.length, salesforce_imports: sfRows.length, organization: orgRows.length, employee_quals: qualRows.length };
   },
 
   // 参照系テーブルを全置換。書込は authenticated（編集者）のみRLSで許可。
@@ -1119,7 +1124,7 @@ const Sync = {
       }
       return all;
     };
-    const [emp, sf, pro, ov, gw, ps, org, tiers] = await Promise.all([
+    const [emp, sf, pro, ov, gw, ps, org, tiers, quals] = await Promise.all([
       fetchTable('employees', 'id'),
       fetchTable('salesforce_imports', 'id'),
       fetchTable('prospects', null),
@@ -1128,6 +1133,7 @@ const Sync = {
       fetchTable('project_status_overrides', null),
       fetchTable('organization', 'id'),       // 段階D: 組織図名簿（無ければ[]）
       fetchTable('employee_tiers', null),      // 段階D: 階層判定（無ければ[]）
+      fetchTable('employee_quals', 'id'),      // 段階D5: 資格マスタ（無ければ[]）
     ]);
     this.cache.employees = emp;
     this.cache.salesforce_imports = sf;
@@ -1137,10 +1143,11 @@ const Sync = {
     this.cache.project_status_overrides = ps;
     this.cache.organization = org;
     this.cache.employee_tiers = tiers;
+    this.cache.employee_quals = quals;
     console.info('Supabaseから取得:',
       `employees=${emp.length}`, `sf=${sf.length}`, `prospects=${pro.length}`,
       `overrides=${ov.length}`, `glogs=${gw.length}`, `status=${ps.length}`,
-      `org=${org.length}`, `tiers=${tiers.length}`);
+      `org=${org.length}`, `tiers=${tiers.length}`, `quals=${quals.length}`);
   },
 
   // supabase-js クライアント（遅延生成）
@@ -1236,7 +1243,8 @@ const Sync = {
       const no = String(t.emp_no || '').trim();
       if (no) tierByEmp[no] = String(t.tier || '').trim();
     });
-    // 資格：社員番号→資格文字列（当面は旧 employees テーブルの F列。段階Dで 02_employees に移行）
+    // 資格：社員番号→資格文字列。段階D5で employee_quals(02_employees タブ由来) を正とする。
+    // （旧 employees テーブルの F列依存は廃止。employee_quals も 社員番号/資格 列を持つ）
     const qualByEmp = {};
     (qualSource || []).forEach(e => {
       const no = String(e['社員番号'] || e.emp_no || '').trim();
@@ -1273,7 +1281,7 @@ const Sync = {
       if (this.cache.organization && this.cache.organization.length > 0) {
         try {
           this.cache.employees = this.buildEmployeesFromOrg(
-            this.cache.organization, this.cache.employee_tiers, this.cache.employees);
+            this.cache.organization, this.cache.employee_tiers, this.cache.employee_quals);
         } catch (e) {
           console.error('組織図ベース社員生成失敗・旧employeesにフォールバック:', e);
           try { this.cache.employees = this.normalizeEmployees(this.cache.employees); }
