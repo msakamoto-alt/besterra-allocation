@@ -16,6 +16,9 @@ const OrgChartView = {
     '対象外': '',
   },
 
+  // 役職の上位順（小さいほど上位）。組織ボックス内で役職者を上に並べる。
+  POSITION_RANK: ['会長', '社長', '代表取締役', '専務', '常務', '本部長', '執行役員', '部長', '副部長', '室長', '所長', '副所長', '課長', '作業所長'],
+
   DEFAULT_DEPTH: 2,        // この深さ以上は初期状態で折りたたむ（部・室レベル）
   mode: 'default',         // default / all（全展開）/ none（全折りたたみ）
   userExpanded: new Set(), // 個別に開いたパス
@@ -110,7 +113,8 @@ const OrgChartView = {
       return node;
     };
     orgRows.forEach(r => {
-      const depts = Array.isArray(r.depts) ? r.depts : [];
+      // 同一部署の重複（SmartHR名簿で部署が二重登録される例：宮内）を除去
+      const depts = Array.isArray(r.depts) ? [...new Set(r.depts)] : [];
       if (depts.length === 0) { ensure(['(所属未設定)']).members.push(r); return; }
       depts.forEach(d => {
         const segs = String(d).split('/').map(s => s.trim()).filter(Boolean);
@@ -124,6 +128,16 @@ const OrgChartView = {
     let n = node.members.length;
     Object.values(node.children).forEach(c => { n += this.countMembers(c); });
     return n;
+  },
+
+  // 役職の上位度（小さいほど上位・該当なしは999）。ボックス内の並べ替え用。
+  positionRank(positions) {
+    let best = 999;
+    (positions || []).forEach(p => {
+      const s = String(p || '');
+      this.POSITION_RANK.forEach((t, i) => { if (s.includes(t) && i < best) best = i; });
+    });
+    return best;
   },
 
   renderTree(root) {
@@ -147,7 +161,7 @@ const OrgChartView = {
     const titleAttrs = hasChildren ? ` data-org-path="${this.esc(path)}" style="cursor:pointer"` : '';
     const members = node.members
       .slice()
-      .sort((a, b) => String(a.emp_no).localeCompare(String(b.emp_no)))
+      .sort((a, b) => (this.positionRank(a.positions) - this.positionRank(b.positions)) || String(a.emp_no).localeCompare(String(b.emp_no)))
       .map(r => this.memberLine(r)).join('');
     return `<div class="org-box">` +
       `<div class="org-box-title"${titleAttrs}>${icon}${this.esc(node.name)}${hidden}</div>` +

@@ -1002,8 +1002,8 @@ const Sync = {
         email: String(r['メールアドレス'] || '').trim(),
         business: String(r['業務内容'] || '').trim(),
         hire_date: String(r['入社年月日'] || '').trim(),
-        depts,
-        positions,
+        depts: [...new Set(depts)],          // 部署の重複登録を除去
+        positions: [...new Set(positions)],
       };
     }).filter(r => r.emp_no);
   },
@@ -1219,7 +1219,7 @@ const Sync = {
     const toArr = (v) => Array.isArray(v) ? v : (typeof v === 'string' && v ? (() => { try { return JSON.parse(v); } catch (e) { return []; } })() : []);
     return (orgRows || []).map(r => {
       const empNo = String(r.emp_no || '').trim();
-      const depts = toArr(r.depts);
+      const depts = [...new Set(toArr(r.depts))];        // 重複部署を除去（単独/兼任判定を正確に）
       const positions = toArr(r.positions);
       const primary = depts[0] || '';
       return {
