@@ -609,7 +609,7 @@ const GanttView = {
     // 編集ボタンの表示制御（API設定がある場合のみ有効化）
     const editBtn = document.getElementById('gantt-modal-edit-btn');
     const resetBtn = document.getElementById('gantt-modal-reset-btn');
-    const apiAvailable = !!(Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN);
+    const apiAvailable = Sync.canEdit();
     if (apiAvailable) {
       editBtn.classList.remove('hidden');
       editBtn.disabled = false;
@@ -679,7 +679,7 @@ const GanttView = {
     document.getElementById('gantt-modal-save-btn').classList.remove('hidden');
     document.getElementById('gantt-modal-cancel-btn').classList.remove('hidden');
     // 解除ボタンも表示（API利用可なら）
-    if (Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN) {
+    if (Sync.canEdit()) {
       document.getElementById('gantt-modal-remove-btn').classList.remove('hidden');
     }
   },
@@ -690,7 +690,7 @@ const GanttView = {
     document.getElementById('gantt-modal-save-btn').classList.add('hidden');
     document.getElementById('gantt-modal-cancel-btn').classList.add('hidden');
     document.getElementById('gantt-modal-remove-btn').classList.add('hidden');
-    if (Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN) {
+    if (Sync.canEdit()) {
       document.getElementById('gantt-modal-edit-btn').classList.remove('hidden');
     }
   },
@@ -1014,7 +1014,7 @@ const GanttView = {
         ? `<span class="inline-block mr-2 text-slate-500">配置未定・不足 ×${placeholderCount}</span>`
         : '';
 
-      const canEdit = !!(Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN);
+      const canEdit = Sync.canEdit();
       const addBtn = canEdit
         ? `<button class="text-xs text-emerald-700 hover:underline mt-1 gantt-add-member" data-project-id="${this.esc(p.project_id)}">+ メンバー追加</button>`
         : '';

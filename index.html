@@ -66,6 +66,8 @@
         <h1 class="text-2xl font-bold">人員配置管理ツール</h1>
       </div>
       <div class="flex items-center gap-3 text-sm">
+        <span id="editor-badge" class="hidden bg-amber-400 text-amber-950 font-semibold px-2 py-1 rounded">✏️ 編集モード</span>
+        <button id="editor-toggle" class="bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition">🔓 編集ログイン</button>
         <button id="sync-button" class="bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition">同期</button>
         <span class="text-white/80">最終同期 <span id="last-sync">未同期</span></span>
         <button id="logout-button" class="text-white/85 hover:text-white underline">ログアウト</button>
@@ -497,6 +499,32 @@
       / Google Sheets + Apps Script 連携（編集モード対応）
     </footer>
 
+  </div>
+
+  <!-- ========== 編集ログイン モーダル（段階B: Supabase Auth）========== -->
+  <div id="editor-login-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6">
+      <div class="flex items-center justify-between mb-1">
+        <h3 class="text-lg font-bold text-slate-800">編集モードにログイン</h3>
+        <button id="editor-login-close" class="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
+      </div>
+      <p class="text-xs text-slate-500 mb-4">編集（配置・見込み案件の追加/変更）には編集者アカウントが必要です。閲覧のみなら不要です。</p>
+      <form id="editor-login-form" class="space-y-3">
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">メールアドレス</label>
+          <input id="editor-email" type="email" autocomplete="username" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" required>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">パスワード</label>
+          <input id="editor-password" type="password" autocomplete="current-password" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" required>
+        </div>
+        <div id="editor-login-error" class="hidden text-xs text-red-600"></div>
+        <div class="flex justify-end gap-2 pt-1">
+          <button type="button" id="editor-login-cancel" class="px-3 py-2 text-sm text-slate-600 hover:text-slate-800">キャンセル</button>
+          <button type="submit" id="editor-login-submit" class="px-4 py-2 text-sm bg-red-600 hover:bg-red-700 text-white rounded">ログイン</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

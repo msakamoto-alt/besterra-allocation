@@ -117,7 +117,7 @@ const DashboardView = {
     const now = new Date();
     const in90Days = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
 
-    const canEdit = !!(Sync.OVERRIDE_API_URL && Sync.OVERRIDE_TOKEN);
+    const canEdit = Sync.canEdit();
     // projects マップ（現在配置・過去配置の両方で参照）
     const projectsMap0 = {};
     (Sync.cache.projects || []).forEach(p => { projectsMap0[p.project_id] = p; });

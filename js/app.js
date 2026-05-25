@@ -7,6 +7,7 @@ const App = {
 
   async init() {
     this.setupAuth();
+    this.setupEditorAuth();
     this.setupTabs();
     this.setupSync();
     this.setupLogout();
@@ -18,9 +19,17 @@ const App = {
     MemberAdd.init();
 
     if (Auth.getSession()) {
-      this.showMain();
-      await this.loadData();
+      await this.enterApp();
     }
+  },
+
+  // 閲覧ログイン（HTMLパスワード）通過後の共通処理：
+  // 編集セッション復元 → 編集UI更新 → データ読込
+  async enterApp() {
+    this.showMain();
+    await Sync.refreshEditorSession();
+    this.updateEditorUI();
+    await this.loadData();
   },
 
   setupAuth() {
@@ -31,12 +40,66 @@ const App = {
       if (await Auth.verify(password)) {
         Auth.saveSession(password);
         errorEl.classList.add('hidden');
-        this.showMain();
-        await this.loadData();
+        await this.enterApp();
       } else {
         errorEl.classList.remove('hidden');
       }
     });
+  },
+
+  // 編集ログイン（Supabase Auth）。閲覧=anon、編集=authenticated。
+  setupEditorAuth() {
+    const modal = document.getElementById('editor-login-modal');
+    if (!modal) return;
+    const closeModal = () => modal.classList.add('hidden');
+    const openModal = () => {
+      document.getElementById('editor-login-error').classList.add('hidden');
+      document.getElementById('editor-login-form').reset();
+      modal.classList.remove('hidden');
+      document.getElementById('editor-email').focus();
+    };
+
+    document.getElementById('editor-toggle').addEventListener('click', async () => {
+      if (Sync.isEditor) {
+        await Sync.logoutEditor();
+        this.updateEditorUI();
+        await this.loadData();   // 編集ボタンを隠した状態で再描画
+      } else {
+        openModal();
+      }
+    });
+    document.getElementById('editor-login-close').addEventListener('click', closeModal);
+    document.getElementById('editor-login-cancel').addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+    document.getElementById('editor-login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('editor-email').value.trim();
+      const password = document.getElementById('editor-password').value;
+      const errEl = document.getElementById('editor-login-error');
+      const btn = document.getElementById('editor-login-submit');
+      errEl.classList.add('hidden');
+      btn.disabled = true; btn.textContent = 'ログイン中…';
+      try {
+        await Sync.loginEditor(email, password);
+        closeModal();
+        this.updateEditorUI();
+        await this.loadData();   // 編集ボタンが出る状態で再描画
+      } catch (err) {
+        errEl.textContent = '× ' + (err.message || 'ログイン失敗');
+        errEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false; btn.textContent = 'ログイン';
+      }
+    });
+  },
+
+  updateEditorUI() {
+    const isEd = !!Sync.isEditor;
+    const badge = document.getElementById('editor-badge');
+    const toggle = document.getElementById('editor-toggle');
+    if (badge) badge.classList.toggle('hidden', !isEd);
+    if (toggle) toggle.textContent = isEd ? '🔒 編集を終了' : '🔓 編集ログイン';
   },
 
   showMain() {

@@ -17,6 +17,7 @@ const Sync = {
   SUPABASE_ANON_KEY: null,
   USE_SUPABASE: false,
   _sb: null,
+  isEditor: false,   // 段階B: 編集ログイン済みか（Supabase Auth authenticated）
 
   // シート名の候補。テンプレ命名 と Box CSV ファイル名（数字接頭辞）の両方を試す
   SHEET_CANDIDATES: {
@@ -825,6 +826,12 @@ const Sync = {
   // GAS Web App に POST（配属期間 override の upsert / delete）
   // Content-Type を text/plain にして CORS preflight を回避
   async postOverride(payload) {
+    // 段階B: USE_SUPABASE のときは supabase-js で直接書き込む（GAS不要）。
+    // RLS により書込は authenticated（編集ログイン済み）のみ許可される。
+    if (this.USE_SUPABASE && this.SUPABASE_URL && this.SUPABASE_ANON_KEY) {
+      return await this.writeToSupabase(payload);
+    }
+    // 従来：Apps Script Web App 経由
     if (!this.OVERRIDE_API_URL) throw new Error('OVERRIDE_API_URL が未設定です（config.js を確認）');
     const body = JSON.stringify({ ...payload, token: this.OVERRIDE_TOKEN });
     const response = await fetch(this.OVERRIDE_API_URL, {
@@ -836,6 +843,132 @@ const Sync = {
     const json = await response.json();
     if (!json.ok) throw new Error(`API失敗: ${json.error || 'unknown'}`);
     return json;
+  },
+
+  // 'P' + 12桁hex（GAS uuidShort 相当・新規 prospect の採番）
+  uuidShortProspect() {
+    const hex = '0123456789abcdef';
+    let s = 'P';
+    for (let i = 0; i < 12; i++) s += hex[Math.floor(Math.random() * 16)];
+    return s;
+  },
+
+  // GAS doPost の各 action を supabase-js で再現。返り値は { ok:true, action, ... }。
+  // エラー時は throw（呼び出し側は従来どおり try/catch でハンドリング）。
+  async writeToSupabase(payload) {
+    const sb = this.getSupabase();
+    const action = payload.action || 'upsert';
+    const nowIso = new Date().toISOString();
+    const fail = (msg) => { throw new Error(msg); };
+    const check = (res) => { if (res && res.error) fail(res.error.message || JSON.stringify(res.error)); return res; };
+
+    if (action === 'upsert') {
+      const key = String(payload.override_key || '').trim();
+      if (!key) fail('override_key required');
+      const row = {
+        override_key: key,
+        emp_name: payload.emp_name || '',
+        project_id: payload.project_id || '',
+        join_date: payload.join_date || '',
+        planned_end: payload.planned_end || '',
+        role: payload.role || '',
+        note: payload.note || '',
+        updated_at: nowIso,
+        updated_by: payload.updated_by || '',
+        op: String(payload.op || 'update').trim(),
+      };
+      check(await sb.from('assignment_overrides').upsert(row, { onConflict: 'override_key' }));
+      return { ok: true, action: 'upserted', key };
+    }
+
+    if (action === 'delete') {
+      const key = String(payload.override_key || '').trim();
+      if (!key) fail('override_key required');
+      check(await sb.from('assignment_overrides').delete().eq('override_key', key));
+      return { ok: true, action: 'deleted', key };
+    }
+
+    if (action === 'prospect_upsert') {
+      const id = String(payload.prospect_id || '').trim();
+      const isNew = !id;
+      const pid = isNew ? this.uuidShortProspect() : id;
+      const row = {
+        prospect_id: pid,
+        status: payload.status || '見込み',
+        customer: payload.customer || '',
+        project_name: payload.project_name || '',
+        contract_type: payload.contract_type || '',
+        area: payload.area || '',
+        managing_dept: payload.managing_dept || '',
+        start_date: payload.start_date || '',
+        end_date: payload.end_date || '',
+        amount: payload.amount || '',
+        note: payload.note || '',
+        updated_at: nowIso,
+        updated_by: payload.updated_by || 'web',
+        archived: (payload.archived === true || payload.archived === 'true') ? 'TRUE' : 'FALSE',
+      };
+      if (isNew) {
+        row.created_at = payload.created_at || nowIso;
+        check(await sb.from('prospects').insert(row));
+        return { ok: true, action: 'inserted', prospect_id: pid };
+      }
+      // 既存更新：created_at は触らない
+      check(await sb.from('prospects').update(row).eq('prospect_id', pid));
+      return { ok: true, action: 'updated', prospect_id: pid };
+    }
+
+    if (action === 'prospect_delete') {
+      const id = String(payload.prospect_id || '').trim();
+      if (!id) fail('prospect_id required');
+      check(await sb.from('prospects').delete().eq('prospect_id', id));
+      return { ok: true, action: 'deleted', prospect_id: id };
+    }
+
+    if (action === 'prospect_archive') {
+      const id = String(payload.prospect_id || '').trim();
+      if (!id) fail('prospect_id required');
+      check(await sb.from('prospects').update({
+        status: '受注済み',
+        updated_at: nowIso,
+        updated_by: payload.updated_by || 'web',
+        archived: 'TRUE',
+      }).eq('prospect_id', id));
+      return { ok: true, action: 'archived', prospect_id: id };
+    }
+
+    if (action === 'project_status_upsert') {
+      const pid = String(payload.project_id || '').trim();
+      if (!pid) fail('project_id required');
+      const c = payload.completed;
+      let completedStr;
+      if (c === true || c === 'true' || c === 'TRUE') completedStr = 'TRUE';
+      else if (c === false || c === 'false' || c === 'FALSE') completedStr = 'FALSE';
+      else fail('completed must be true or false');
+      check(await sb.from('project_status_overrides').upsert({
+        project_id: pid,
+        completed: completedStr,
+        note: payload.note || '',
+        updated_at: nowIso,
+        updated_by: payload.updated_by || 'web',
+      }, { onConflict: 'project_id' }));
+      return { ok: true, action: 'upserted', project_id: pid, completed: completedStr };
+    }
+
+    if (action === 'project_status_delete') {
+      const pid = String(payload.project_id || '').trim();
+      if (!pid) fail('project_id required');
+      check(await sb.from('project_status_overrides').delete().eq('project_id', pid));
+      return { ok: true, action: 'deleted', project_id: pid };
+    }
+
+    throw new Error('unknown_action: ' + action);
+  },
+
+  // 編集権限（段階B）：USE_SUPABASE のときは編集ログイン済みか、従来は API設定有無で判定
+  canEdit() {
+    if (this.USE_SUPABASE) return !!this.isEditor;
+    return !!(this.OVERRIDE_API_URL && this.OVERRIDE_TOKEN);
   },
 
   async syncAll() {
@@ -921,6 +1054,32 @@ const Sync = {
     }
     this._sb = window.supabase.createClient(this.SUPABASE_URL, this.SUPABASE_ANON_KEY);
     return this._sb;
+  },
+
+  // 編集ログイン（Supabase Auth）。成功すると以後の書込が authenticated になる。
+  async loginEditor(email, password) {
+    const sb = this.getSupabase();
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message || 'ログイン失敗');
+    this.isEditor = !!(data && data.session);
+    return this.isEditor;
+  },
+
+  async logoutEditor() {
+    try { await this.getSupabase().auth.signOut(); } catch (e) { /* noop */ }
+    this.isEditor = false;
+  },
+
+  // 既存セッション（localStorage 永続）を確認して isEditor を復元
+  async refreshEditorSession() {
+    if (!this.USE_SUPABASE || !this.SUPABASE_URL) return false;
+    try {
+      const { data } = await this.getSupabase().auth.getSession();
+      this.isEditor = !!(data && data.session);
+    } catch (e) {
+      this.isEditor = false;
+    }
+    return this.isEditor;
   },
 
   // 取得済みの生テーブル（this.cache）から employees 正規化・projects/assignments 派生・

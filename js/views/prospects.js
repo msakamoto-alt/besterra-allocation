@@ -67,6 +67,10 @@ const ProspectsView = {
     // 事務所セレクトの選択肢を employees から動的生成
     this.populateDeptSelect();
 
+    // 編集モードでないとき（閲覧者）は「新規追加」ボタンを隠す
+    const addBtn = document.getElementById('prospects-add-btn');
+    if (addBtn) addBtn.classList.toggle('hidden', !Sync.canEdit());
+
     const rows = this.filteredRows();
     document.getElementById('prospects-count').textContent = rows.length;
     const tbody = document.getElementById('prospects-table-body');
@@ -85,7 +89,9 @@ const ProspectsView = {
     const period = (r.start_date || '') + (r.end_date ? ' 〜 ' + r.end_date : '');
     const amountM = this.parseAmount(r.amount);
     const amountTxt = amountM > 0 ? `¥${amountM.toFixed(1)}M` : '-';
-    const actions = isArchived
+    const actions = !Sync.canEdit()
+      ? '<span class="text-slate-300 text-xs">—</span>'
+      : isArchived
       ? `<button data-action="delete" data-id="${this.esc(r.prospect_id)}" class="text-red-600 hover:underline text-xs">削除</button>`
       : `<button data-action="edit" data-id="${this.esc(r.prospect_id)}" class="text-blue-600 hover:underline text-xs mr-2">編集</button>` +
         `<button data-action="archive" data-id="${this.esc(r.prospect_id)}" class="text-emerald-700 hover:underline text-xs mr-2" title="Salesforceで受注確認後に押す">受注済</button>` +
