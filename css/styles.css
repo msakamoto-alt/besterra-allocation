@@ -157,4 +157,7 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
 .org-dot { display: inline-block; width: 7px; height: 7px; border-radius: 9999px; flex: none; }
 .org-dot-none { background: transparent; border: 1px solid #e2e8f0; }
 .org-manual { color: #d97706; font-weight: 700; }
+.org-toggle-icon { font-size: 9px; color: #fff; margin-right: 3px; }
+.org-box-count { font-weight: 400; opacity: 0.85; margin-left: 3px; font-size: 11px; }
+.org-box-title[data-org-path]:hover { background: #475569; }
 
