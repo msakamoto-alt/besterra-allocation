@@ -67,6 +67,7 @@
       </div>
       <div class="flex items-center gap-3 text-sm">
         <span id="editor-badge" class="hidden bg-amber-400 text-amber-950 font-semibold px-2 py-1 rounded">✏️ 編集モード</span>
+        <button id="org-toggle" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition">🗂 組織図</button>
         <button id="editor-toggle" class="bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition">🔓 編集ログイン</button>
         <button id="sync-button" class="bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition">同期</button>
         <span class="text-white/80">最終同期 <span id="last-sync">未同期</span></span>
@@ -246,6 +247,19 @@
           <span class="text-sm text-slate-500" id="dash-select-count"></span>
         </div>
         <div id="dash-content"></div>
+      </section>
+
+      <!-- ========== タブ5：組織図 ========== -->
+      <section id="tab-orgchart" class="tab-panel hidden">
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <h2 class="text-xl font-bold">組織図（SmartHR名簿）</h2>
+          <div class="flex items-center gap-3 text-sm">
+            <input type="search" id="org-search" placeholder="氏名・社員番号で検索" class="border rounded px-3 py-2 w-56">
+            <span class="text-slate-500" id="org-count"></span>
+          </div>
+        </div>
+        <div class="flex items-center gap-4 mb-3 text-xs flex-wrap" id="org-legend"></div>
+        <div id="orgchart-content" class="text-sm"></div>
       </section>
 
     </main>
@@ -536,6 +550,7 @@
   <script src="js/views/dashboard.js"></script>
   <script src="js/views/prospects.js"></script>
   <script src="js/views/member_add.js"></script>
+  <script src="js/views/orgchart.js"></script>
   <script src="js/config.js" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
   <script src="js/app.js"></script>
 </body>

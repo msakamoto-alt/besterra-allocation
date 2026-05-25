@@ -17,6 +17,7 @@ const App = {
     DashboardView.init();
     ProspectsView.init();
     MemberAdd.init();
+    OrgChartView.init();
 
     if (Auth.getSession()) {
       await this.enterApp();
@@ -62,12 +63,16 @@ const App = {
     document.getElementById('editor-toggle').addEventListener('click', async () => {
       if (Sync.isEditor) {
         await Sync.logoutEditor();
+        if (this.currentTab === 'orgchart') this.activateTab('pool');  // 組織図は閲覧者には出さない
         this.updateEditorUI();
         await this.loadData();   // 編集ボタンを隠した状態で再描画
       } else {
         openModal();
       }
     });
+    // 組織図ボタン（編集者のみ表示）→ 組織図タブを開く
+    const orgBtn = document.getElementById('org-toggle');
+    if (orgBtn) orgBtn.addEventListener('click', () => this.activateTab('orgchart'));
     document.getElementById('editor-login-close').addEventListener('click', closeModal);
     document.getElementById('editor-login-cancel').addEventListener('click', closeModal);
     modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
@@ -103,6 +108,9 @@ const App = {
     // 「同期」は編集者がSheetsから参照データを取込む操作なので閲覧者には隠す
     const syncBtn = document.getElementById('sync-button');
     if (syncBtn) syncBtn.classList.toggle('hidden', !isEd);
+    // 「組織図」も編集者のみ
+    const orgBtn = document.getElementById('org-toggle');
+    if (orgBtn) orgBtn.classList.toggle('hidden', !isEd);
   },
 
   showMain() {
@@ -125,6 +133,7 @@ const App = {
     });
     if (name === 'gantt') GanttView.refresh();
     if (name === 'prospects') ProspectsView.refresh();
+    if (name === 'orgchart') OrgChartView.refresh();
   },
 
   setupLogout() {
@@ -168,6 +177,7 @@ const App = {
     try { GanttView.refresh(); } catch (e) { console.error('GanttView失敗:', e); }
     try { DashboardView.refresh(); } catch (e) { console.error('DashboardView失敗:', e); }
     try { ProspectsView.refresh(); } catch (e) { console.error('ProspectsView失敗:', e); }
+    try { OrgChartView.refresh(); } catch (e) { console.error('OrgChartView失敗:', e); }
   },
 
   updateLastSync() {

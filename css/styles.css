@@ -118,3 +118,43 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
   border-color: #b91c1c;
 }
 
+/* ===== 組織図（トップダウン・ボックス型ツリー） ===== */
+#orgchart-content { overflow-x: auto; padding-bottom: 12px; }
+.org-tree { display: inline-block; min-width: 100%; }
+.org-tree ul { display: flex; justify-content: center; padding-top: 18px; position: relative; margin: 0; list-style: none; }
+.org-tree li {
+  list-style: none; position: relative;
+  padding: 18px 6px 0 6px; text-align: center;
+  display: flex; flex-direction: column; align-items: center;
+}
+/* 親→子のコネクタ（横線＋縦線） */
+.org-tree li::before, .org-tree li::after {
+  content: ''; position: absolute; top: 0; right: 50%;
+  border-top: 1px solid #cbd5e1; width: 50%; height: 18px;
+}
+.org-tree li::after { right: auto; left: 50%; border-left: 1px solid #cbd5e1; }
+.org-tree li:only-child::before, .org-tree li:only-child::after { display: none; }
+.org-tree li:only-child { padding-top: 18px; }
+.org-tree li:first-child::before, .org-tree li:last-child::after { border: 0 none; }
+.org-tree li:last-child::before { border-right: 1px solid #cbd5e1; }
+.org-tree ul ul::before {
+  content: ''; position: absolute; top: 0; left: 50%;
+  border-left: 1px solid #cbd5e1; width: 0; height: 18px;
+}
+.org-box {
+  display: inline-block; border: 1px solid #94a3b8; border-radius: 4px;
+  background: #fff; min-width: 96px; max-width: 220px; text-align: left;
+  vertical-align: top; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.org-box-title {
+  font-weight: 700; font-size: 12px; color: #fff; background: #64748b;
+  padding: 2px 6px; border-radius: 3px 3px 0 0; text-align: center; white-space: nowrap;
+}
+.org-box-members { padding: 3px 6px; }
+.org-member { display: flex; align-items: center; gap: 3px; font-size: 11px; line-height: 1.5; white-space: nowrap; }
+.org-pos { color: #64748b; }
+.org-name { color: #1e293b; }
+.org-dot { display: inline-block; width: 7px; height: 7px; border-radius: 9999px; flex: none; }
+.org-dot-none { background: transparent; border: 1px solid #e2e8f0; }
+.org-manual { color: #d97706; font-weight: 700; }
+
