@@ -11,6 +11,13 @@
 const Sync = {
   SHEET_ID: null,
 
+  // Supabase（段階A: 読み込み移行）。config.js で設定。
+  // USE_SUPABASE=true のとき、gviz/parseCSV ではなく Supabase から取得する。
+  SUPABASE_URL: null,
+  SUPABASE_ANON_KEY: null,
+  USE_SUPABASE: false,
+  _sb: null,
+
   // シート名の候補。テンプレ命名 と Box CSV ファイル名（数字接頭辞）の両方を試す
   SHEET_CANDIDATES: {
     employees: ['employees', '01_employees'],
@@ -832,7 +839,11 @@ const Sync = {
   },
 
   async syncAll() {
-    if (this.SHEET_ID) {
+    if (this.USE_SUPABASE && this.SUPABASE_URL && this.SUPABASE_ANON_KEY) {
+      // 段階A: Supabase から各テーブルを取得（gviz/parseCSV をバイパス）
+      await this.fetchRawFromSupabase();
+      this.processRawTables();
+    } else if (this.SHEET_ID) {
       // 各シートを候補名でフォールバック取得（バリデータでヘッダ確認）
       const keys = ['employees', 'departments', 'qualifications', 'employee_qualifications', 'salesforce_imports', 'prospects', 'assignment_overrides', 'g_work_logs', 'project_status_overrides'];
       const texts = await Promise.allSettled(keys.map(k => this.fetchSheetWithValidation(k)));
@@ -850,7 +861,71 @@ const Sync = {
           console.warn(`${key} パース失敗:`, e);
         }
       });
+      this.processRawTables();
+    } else {
+      this.loadMockData();
+      console.info('SHEET_ID未設定のためモックデータで動作中');
+    }
+    this.lastSync = new Date();
+    return this.cache;
+  },
 
+  // Supabase（段階A）から6テーブルを取得し this.cache に格納する。
+  // salesforce_imports は parseSalesforceCsv 整形後の形で保存済みなのでそのまま使える。
+  // 取得後の正規化・派生は processRawTables() が Sheets 経路と共通で行う。
+  async fetchRawFromSupabase() {
+    const sb = this.getSupabase();
+    const fetchTable = async (table, orderCol) => {
+      let all = [];
+      let from = 0;
+      const page = 1000;
+      // PostgREST の1リクエスト上限に備えてページング取得（g_work_logs は数千行）
+      while (true) {
+        let q = sb.from(table).select('*').range(from, from + page - 1);
+        if (orderCol) q = q.order(orderCol, { ascending: true });
+        const { data, error } = await q;
+        if (error) {
+          console.error(`Supabase ${table} 取得失敗:`, error.message || error);
+          break;
+        }
+        all = all.concat(data || []);
+        if (!data || data.length < page) break;
+        from += page;
+      }
+      return all;
+    };
+    const [emp, sf, pro, ov, gw, ps] = await Promise.all([
+      fetchTable('employees', 'id'),
+      fetchTable('salesforce_imports', 'id'),
+      fetchTable('prospects', null),
+      fetchTable('assignment_overrides', null),
+      fetchTable('g_work_logs', 'id'),
+      fetchTable('project_status_overrides', null),
+    ]);
+    this.cache.employees = emp;
+    this.cache.salesforce_imports = sf;
+    this.cache.prospects = pro;
+    this.cache.assignment_overrides = ov;
+    this.cache.g_work_logs = gw;
+    this.cache.project_status_overrides = ps;
+    console.info('Supabaseから取得:',
+      `employees=${emp.length}`, `sf=${sf.length}`, `prospects=${pro.length}`,
+      `overrides=${ov.length}`, `glogs=${gw.length}`, `status=${ps.length}`);
+  },
+
+  // supabase-js クライアント（遅延生成）
+  getSupabase() {
+    if (this._sb) return this._sb;
+    if (!window.supabase || !window.supabase.createClient) {
+      throw new Error('supabase-js が読み込まれていません（index.html のCDN参照を確認）');
+    }
+    this._sb = window.supabase.createClient(this.SUPABASE_URL, this.SUPABASE_ANON_KEY);
+    return this._sb;
+  },
+
+  // 取得済みの生テーブル（this.cache）から employees 正規化・projects/assignments 派生・
+  // overrides/status マージを行う。Sheets 経路 / Supabase 経路で共通。
+  processRawTables() {
       // employees の正規化（仕様書テンプレ / Phase0ベース 両形式対応）
       if (this.cache.employees && this.cache.employees.length > 0) {
         try {
@@ -938,12 +1013,6 @@ const Sync = {
           console.error('project_status_overrides マージ失敗:', e);
         }
       }
-    } else {
-      this.loadMockData();
-      console.info('SHEET_ID未設定のためモックデータで動作中');
-    }
-    this.lastSync = new Date();
-    return this.cache;
   },
 
   loadMockData() {
