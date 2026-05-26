@@ -270,8 +270,8 @@ const DashboardView = {
         none: 'bg-slate-100 text-slate-700',
         unknown: 'bg-slate-100 text-slate-700',
       };
-      // 期限アラートのサマリー
-      const statuses = qualDetails.map(d => Sync.qualExpiryStatus(d.expiry));
+      // 期限アラートのサマリー（対象＝技術者・登録系の更新資格のみ。職長教育・個人系は除外）
+      const statuses = qualDetails.filter(d => Sync.isExpiryTracked(d.name)).map(d => Sync.qualExpiryStatus(d.expiry));
       const nExpired = statuses.filter(s => s.status === 'expired').length;
       const nWarn = statuses.filter(s => s.status === 'warn30' || s.status === 'warn90').length;
       let banner = '';
@@ -279,7 +279,7 @@ const DashboardView = {
         const parts = [];
         if (nExpired) parts.push(`<span class="text-red-700 font-bold">期限切れ ${nExpired}件</span>`);
         if (nWarn) parts.push(`<span class="text-amber-700 font-medium">期限間近 ${nWarn}件</span>`);
-        banner = `<div class="mb-3 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">⚠ ${parts.join(' / ')}</div>`;
+        banner = `<div class="mb-3 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">⚠ ${parts.join(' / ')}<span class="text-xs text-slate-500 ml-2">（期限管理対象資格）</span></div>`;
       }
       // 種別ごとにグループ化（資格→技能講習→特別教育→その他）
       const byType = {};
@@ -291,9 +291,16 @@ const DashboardView = {
       });
       const groups = types.map(t => {
         const items = byType[t].map(d => {
+          const tracked = Sync.isExpiryTracked(d.name);
           const st = Sync.qualExpiryStatus(d.expiry);
-          const cls = STATUS_CLS[st.status] || STATUS_CLS.none;
-          const exp = st.status === 'none' ? '' : ` <span class="text-[10px] opacity-80">(${st.status === 'expired' ? '⚠' : ''}${this.esc(st.label)})</span>`;
+          const status = tracked ? st.status : 'none';    // 非対象は色を付けない
+          const cls = STATUS_CLS[status] || STATUS_CLS.none;
+          let exp = '';
+          if (tracked && st.status !== 'none') {
+            exp = ` <span class="text-[10px] opacity-80">(${st.status === 'expired' ? '⚠' : ''}${this.esc(st.label)})</span>`;
+          } else if (d.expiry && d.expiry !== '期限なし') {
+            exp = ` <span class="text-[10px] text-slate-400">(期限 ${this.esc(d.expiry)})</span>`;
+          }
           const acq = d.acquired ? `<span class="text-[10px] text-slate-400 whitespace-nowrap">取得 ${this.esc(d.acquired)}</span>` : '';
           return `<div class="${cls} px-2 py-1 rounded text-xs flex items-center justify-between gap-2"><span>${this.esc(d.name)}${exp}</span>${acq}</div>`;
         }).join('');

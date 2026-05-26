@@ -464,17 +464,42 @@ const Sync = {
 
   // 段階Q: 保有資格名の配列から「1級/2級 施工管理技士」タグを導出。
   //   建築/土木/電気/管/造園 等の細分は畳む。技士「補」は下位資格のため除外。
+  //   1級2級を両方保有する場合は上位（1級）のみ（資格軸ガントで二重表示しない）。
   //   このタグが資格軸ガント・バッジの唯一のソース（qualifications_raw に格納）。
   deriveSekouTags(names) {
-    const tags = new Set();
+    let has1 = false, has2 = false;
     (names || []).forEach(nm => {
       const n = this._normQual(nm);
       if (n.includes('施工管理技士') && !n.includes('補')) {
-        if (n.includes('1級')) tags.add('1級 施工管理技士');
-        if (n.includes('2級')) tags.add('2級 施工管理技士');
+        if (n.includes('1級')) has1 = true;
+        else if (n.includes('2級')) has2 = true;
       }
     });
-    return [...tags];
+    if (has1) return ['1級 施工管理技士'];
+    if (has2) return ['2級 施工管理技士'];
+    return [];
+  },
+
+  // 段階Q: 表示自体を除外する資格（個人系・業務管理外）。部分一致。
+  QUAL_HIDDEN: ['運転免許'],
+  isQualHidden(name) {
+    const n = String(name || '');
+    return this.QUAL_HIDDEN.some(k => n.includes(k));
+  },
+
+  // 段階Q: 期限アラートを出す対象資格（技術者・登録系の更新制資格のみ）。部分一致。
+  //   ここに無い資格は詳細に期限日付を表示するだけでアラート（赤/橙/黄・件数）にしない。
+  //   職長・安全衛生責任者教育（再教育推奨・法的失効なし）等はあえて対象外。編集容易。
+  QUAL_EXPIRY_TRACK: [
+    '監理技術者資格者証', '監理技術者講習', '解体工事施工技士',
+    '建設キャリアアップ', '登録解体基幹技能者',
+    '舗装施工管理技術者', '舗装診断士', 'コンクリート診断士', 'コンクリート技士',
+    '非破壊試験', '宅地建物取引士', '可搬形発電設備専門技術者', '無人航空機操縦士',
+    '溶接管理技術者',
+  ],
+  isExpiryTracked(name) {
+    const n = String(name || '');
+    return this.QUAL_EXPIRY_TRACK.some(k => n.includes(k));
   },
 
   // 段階Q: 有効期限の状態判定。戻り値 {status, days, label}。
@@ -1345,6 +1370,7 @@ const Sync = {
       const name = String(q['コード'] || '').trim() || (path.includes('/') ? path.split('/').slice(1).join('/') : path);
       const type = path.includes('/') ? path.split('/')[0] : '';  // 資格 / 技能講習 / 特別教育 等
       if (!name) return;
+      if (this.isQualHidden(name)) return;   // 段階Q: 運転免許証など個人系は表示しない
       (detailsByEmp[no] = detailsByEmp[no] || []).push({
         name, type,
         acquired: String(q['取得日'] || '').trim(),
