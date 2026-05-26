@@ -57,6 +57,8 @@ const AccountsView = {
       if (st) st.textContent = `${users.length} アカウント`;
       body.querySelectorAll('select[data-uid]').forEach(sel =>
         sel.addEventListener('change', () => this.changeRole(sel.dataset.uid, sel.value)));
+      body.querySelectorAll('input[data-name]').forEach(inp =>
+        inp.addEventListener('change', () => this.changeName(inp.dataset.name, inp.value.trim())));
       body.querySelectorAll('button[data-del]').forEach(b =>
         b.addEventListener('click', () => this.deleteUser(b.dataset.del, b.dataset.email)));
       body.querySelectorAll('button[data-pw]').forEach(b =>
@@ -71,7 +73,7 @@ const AccountsView = {
       `<option value="${v}" ${u.role === v ? 'selected' : ''}>${l}</option>`).join('');
     const email = this.esc(u.email || '');
     return `<tr class="border-t">
-      <td class="px-3 py-2">${this.esc(u.display_name || '')}</td>
+      <td class="px-3 py-2"><input type="text" data-name="${u.user_id}" value="${this.esc(u.display_name || '')}" class="border rounded px-2 py-1 text-sm w-36" placeholder="氏名"></td>
       <td class="px-3 py-2 text-slate-600">${email}</td>
       <td class="px-3 py-2"><select data-uid="${u.user_id}" class="border rounded px-2 py-1 text-sm">${opts}</select></td>
       <td class="px-3 py-2 text-center whitespace-nowrap">
@@ -105,6 +107,11 @@ const AccountsView = {
   async changeRole(uid, role) {
     try { await Sync.adminSetRole(uid, role); }
     catch (e) { alert('ロール変更に失敗しました: ' + (e.message || e)); await this.refresh(); }
+  },
+
+  async changeName(uid, name) {
+    try { await Sync.adminSetName(uid, name); }
+    catch (e) { alert('氏名の変更に失敗しました: ' + (e.message || e)); await this.refresh(); }
   },
 
   async resetPw(uid, email) {

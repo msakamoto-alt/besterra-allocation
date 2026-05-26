@@ -25,4 +25,4 @@ Sync.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhY
 Sync.USE_SUPABASE = true;
 
 // 段階E1.5: アカウント管理 Edge Function の実デプロイ名（ダッシュボードが付けた名前に合わせる）
-Sync.ADMIN_FN = 'hyper-service';
+Sync.ADMIN_FN = 'admin-users';

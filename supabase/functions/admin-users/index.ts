@@ -97,6 +97,14 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
 
+    if (action === 'set_name') {
+      const { user_id, display_name } = body;
+      const { error } = await admin.from('user_roles')
+        .update({ display_name: display_name || null }).eq('user_id', user_id);
+      if (error) throw error;
+      return json({ ok: true });
+    }
+
     if (action === 'set_password') {
       const { user_id, password } = body;
       if (!password) return json({ error: 'パスワードが未指定です' }, 400);

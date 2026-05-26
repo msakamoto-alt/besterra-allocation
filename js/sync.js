@@ -1234,6 +1234,7 @@ const Sync = {
     return this._invokeAdmin({ action: 'create', email, password, display_name, role });
   },
   async adminSetRole(user_id, role) { return this._invokeAdmin({ action: 'set_role', user_id, role }); },
+  async adminSetName(user_id, display_name) { return this._invokeAdmin({ action: 'set_name', user_id, display_name }); },
   async adminSetPassword(user_id, password) { return this._invokeAdmin({ action: 'set_password', user_id, password }); },
   async adminDeleteUser(user_id) { return this._invokeAdmin({ action: 'delete', user_id }); },
 
