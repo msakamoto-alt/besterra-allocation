@@ -23,3 +23,6 @@ Sync.OVERRIDE_TOKEN = 'oyh0oYNq5w7jaK7ssaIiTbXFhAJQ6Scb';
 Sync.SUPABASE_URL = 'https://pajmsowweswaxowrbiwr.supabase.co';
 Sync.SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBham1zb3d3ZXN3YXhvd3JiaXdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyNTYxMDksImV4cCI6MjA5NDgzMjEwOX0.I9yFO1GXwUR8i4ScnZdduk812LulAVAtOcy2n_lOpz8';
 Sync.USE_SUPABASE = true;
+
+// 段階E1.5: アカウント管理 Edge Function の実デプロイ名（ダッシュボードが付けた名前に合わせる）
+Sync.ADMIN_FN = 'hyper-service';

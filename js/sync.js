@@ -19,6 +19,7 @@ const Sync = {
   _sb: null,
   isEditor: false,   // 段階B: 編集ログイン済みか（Supabase Auth authenticated）。段階E1以降は role から導出
   role: null,        // 段階E1: ログインユーザーのロール（admin/editor/executive/manager/viewer）
+  ADMIN_FN: 'admin-users',  // 段階E1.5: アカウント管理 Edge Function 名（config.js で実デプロイ名に上書き可）
 
   // シート名の候補。テンプレ命名 と Box CSV ファイル名（数字接頭辞）の両方を試す
   SHEET_CANDIDATES: {
@@ -1218,7 +1219,7 @@ const Sync = {
   // ===== 段階E1.5: アカウント管理（Edge Function「admin-users」経由）=====
   // service_role はサーバー側のみ。ここからは admin の JWT を付けて呼ぶ（functions.invoke が自動付与）。
   async _invokeAdmin(body) {
-    const { data, error } = await this.getSupabase().functions.invoke('admin-users', { body });
+    const { data, error } = await this.getSupabase().functions.invoke(this.ADMIN_FN, { body });
     if (error) {
       // HTTP非2xxでも error。レスポンス本文の error メッセージを優先的に拾う
       let msg = error.message || 'リクエストに失敗しました';
