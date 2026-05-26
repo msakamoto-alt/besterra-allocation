@@ -7,7 +7,7 @@ const App = {
 
   async init() {
     this.setupAuth();
-    this.setupEditorAuth();
+    this.setupOrgButton();
     this.setupTabs();
     this.setupSync();
     this.setupLogout();
@@ -19,98 +19,61 @@ const App = {
     MemberAdd.init();
     OrgChartView.init();
 
-    if (Auth.getSession()) {
+    // 段階E1: 既存ログインセッションがあれば復元してそのまま入る
+    if (await Sync.refreshSession()) {
       await this.enterApp();
     }
   },
 
-  // 閲覧ログイン（HTMLパスワード）通過後の共通処理：
-  // 編集セッション復元 → 編集UI更新 → データ読込
+  // ログイン成功後の共通処理：ロールUI反映 → データ読込
   async enterApp() {
     this.showMain();
-    await Sync.refreshEditorSession();
-    this.updateEditorUI();
+    this.updateRoleUI();
     await this.loadData();
   },
 
+  // 段階E1: 個人アカウント（Supabase Auth）でログイン。ロールが取れて初めて入室。
   setupAuth() {
     document.getElementById('auth-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      const email = document.getElementById('auth-email').value.trim();
       const password = document.getElementById('password').value;
       const errorEl = document.getElementById('auth-error');
-      if (await Auth.verify(password)) {
-        Auth.saveSession(password);
-        errorEl.classList.add('hidden');
+      const btn = e.target.querySelector('button[type="submit"]');
+      errorEl.classList.add('hidden');
+      if (btn) { btn.disabled = true; btn.textContent = 'ログイン中…'; }
+      try {
+        await Sync.login(email, password);
+        if (!Sync.role) {
+          // ログインはできたがロール未割当（権限なし）→ 入れない
+          await Sync.logout();
+          throw new Error('このアカウントには権限が割り当てられていません。管理者にご連絡ください。');
+        }
         await this.enterApp();
-      } else {
+      } catch (err) {
+        errorEl.textContent = '× ' + (err.message || 'ログインに失敗しました');
         errorEl.classList.remove('hidden');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'ログイン'; }
       }
     });
   },
 
-  // 編集ログイン（Supabase Auth）。閲覧=anon、編集=authenticated。
-  setupEditorAuth() {
-    const modal = document.getElementById('editor-login-modal');
-    if (!modal) return;
-    const closeModal = () => modal.classList.add('hidden');
-    const openModal = () => {
-      document.getElementById('editor-login-error').classList.add('hidden');
-      document.getElementById('editor-login-form').reset();
-      modal.classList.remove('hidden');
-      document.getElementById('editor-email').focus();
-    };
-
-    document.getElementById('editor-toggle').addEventListener('click', async () => {
-      if (Sync.isEditor) {
-        await Sync.logoutEditor();
-        if (this.currentTab === 'orgchart') this.activateTab('pool');  // 組織図は閲覧者には出さない
-        this.updateEditorUI();
-        await this.loadData();   // 編集ボタンを隠した状態で再描画
-      } else {
-        openModal();
-      }
-    });
-    // 組織図ボタン（編集者のみ表示）→ 組織図タブを開く
+  // 組織図ボタン（admin のみ表示）→ 組織図タブを開く
+  setupOrgButton() {
     const orgBtn = document.getElementById('org-toggle');
     if (orgBtn) orgBtn.addEventListener('click', () => this.activateTab('orgchart'));
-    document.getElementById('editor-login-close').addEventListener('click', closeModal);
-    document.getElementById('editor-login-cancel').addEventListener('click', closeModal);
-    modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
-
-    document.getElementById('editor-login-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const email = document.getElementById('editor-email').value.trim();
-      const password = document.getElementById('editor-password').value;
-      const errEl = document.getElementById('editor-login-error');
-      const btn = document.getElementById('editor-login-submit');
-      errEl.classList.add('hidden');
-      btn.disabled = true; btn.textContent = 'ログイン中…';
-      try {
-        await Sync.loginEditor(email, password);
-        closeModal();
-        this.updateEditorUI();
-        await this.loadData();   // 編集ボタンが出る状態で再描画
-      } catch (err) {
-        errEl.textContent = '× ' + (err.message || 'ログイン失敗');
-        errEl.classList.remove('hidden');
-      } finally {
-        btn.disabled = false; btn.textContent = 'ログイン';
-      }
-    });
   },
 
-  updateEditorUI() {
-    const isEd = !!Sync.isEditor;
-    const badge = document.getElementById('editor-badge');
-    const toggle = document.getElementById('editor-toggle');
-    if (badge) badge.classList.toggle('hidden', !isEd);
-    if (toggle) toggle.textContent = isEd ? '🔒 編集を終了' : '🔓 編集ログイン';
-    // 「同期」は編集者がSheetsから参照データを取込む操作なので閲覧者には隠す
+  updateRoleUI() {
+    const badge = document.getElementById('role-badge');
+    if (badge) { badge.textContent = Sync.roleLabel(); badge.classList.remove('hidden'); }
+    // 同期（参照データ取込）・組織図（階層判定）は admin のみ
+    const adminOnly = Sync.isAdmin();
     const syncBtn = document.getElementById('sync-button');
-    if (syncBtn) syncBtn.classList.toggle('hidden', !isEd);
-    // 「組織図」も編集者のみ
+    if (syncBtn) syncBtn.classList.toggle('hidden', !adminOnly);
     const orgBtn = document.getElementById('org-toggle');
-    if (orgBtn) orgBtn.classList.toggle('hidden', !isEd);
+    if (orgBtn) orgBtn.classList.toggle('hidden', !adminOnly);
   },
 
   showMain() {
@@ -137,8 +100,8 @@ const App = {
   },
 
   setupLogout() {
-    document.getElementById('logout-button').addEventListener('click', () => {
-      Auth.clearSession();
+    document.getElementById('logout-button').addEventListener('click', async () => {
+      await Sync.logout();
       location.reload();
     });
   },

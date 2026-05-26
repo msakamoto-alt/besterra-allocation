@@ -17,7 +17,8 @@ const Sync = {
   SUPABASE_ANON_KEY: null,
   USE_SUPABASE: false,
   _sb: null,
-  isEditor: false,   // 段階B: 編集ログイン済みか（Supabase Auth authenticated）
+  isEditor: false,   // 段階B: 編集ログイン済みか（Supabase Auth authenticated）。段階E1以降は role から導出
+  role: null,        // 段階E1: ログインユーザーのロール（admin/editor/executive/manager/viewer）
 
   // シート名の候補。テンプレ命名 と Box CSV ファイル名（数字接頭辞）の両方を試す
   SHEET_CANDIDATES: {
@@ -967,7 +968,7 @@ const Sync = {
 
   // 編集権限（段階B）：USE_SUPABASE のときは編集ログイン済みか、従来は API設定有無で判定
   canEdit() {
-    if (this.USE_SUPABASE) return !!this.isEditor;
+    if (this.USE_SUPABASE) return this.role === 'admin' || this.role === 'editor';
     return !!(this.OVERRIDE_API_URL && this.OVERRIDE_TOKEN);
   },
 
@@ -1160,31 +1161,59 @@ const Sync = {
     return this._sb;
   },
 
-  // 編集ログイン（Supabase Auth）。成功すると以後の書込が authenticated になる。
-  async loginEditor(email, password) {
+  // 段階E1: ログイン（Supabase Auth・全ユーザー個人アカウント）+ ロール取得。
+  async login(email, password) {
     const sb = this.getSupabase();
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message || 'ログイン失敗');
-    this.isEditor = !!(data && data.session);
-    return this.isEditor;
+    if (error) throw new Error(error.message || 'ログインに失敗しました');
+    await this.fetchRole();
+    return !!(data && data.session);
   },
 
-  async logoutEditor() {
+  async logout() {
     try { await this.getSupabase().auth.signOut(); } catch (e) { /* noop */ }
+    this.role = null;
     this.isEditor = false;
   },
 
-  // 既存セッション（localStorage 永続）を確認して isEditor を復元
-  async refreshEditorSession() {
+  // 既存セッション（localStorage 永続）を復元し、ロールを取得。ログイン中なら true。
+  async refreshSession() {
     if (!this.USE_SUPABASE || !this.SUPABASE_URL) return false;
     try {
       const { data } = await this.getSupabase().auth.getSession();
-      this.isEditor = !!(data && data.session);
-    } catch (e) {
-      this.isEditor = false;
-    }
-    return this.isEditor;
+      if (data && data.session) { await this.fetchRole(); return true; }
+    } catch (e) { /* noop */ }
+    this.role = null; this.isEditor = false;
+    return false;
   },
+
+  // user_roles から自分のロールを取得（ur_read_self ポリシーで本人行を直接読む）。
+  async fetchRole() {
+    try {
+      const sb = this.getSupabase();
+      const { data: u } = await sb.auth.getUser();
+      const uid = u && u.user && u.user.id;
+      if (!uid) {
+        this.role = null;
+      } else {
+        const { data, error } = await sb.from('user_roles').select('role').eq('user_id', uid).maybeSingle();
+        if (error) throw error;
+        this.role = (data && data.role) || null;
+      }
+    } catch (e) {
+      console.error('ロール取得失敗:', e);
+      this.role = null;
+    }
+    this.isEditor = (this.role === 'admin' || this.role === 'editor');  // 後方互換
+    return this.role;
+  },
+
+  isLoggedIn() { return !!this.role; },
+  isAdmin() { return this.role === 'admin'; },
+
+  // ロールの日本語表示名
+  ROLE_LABELS: { admin: '管理者', editor: '編集者', executive: '経営者', manager: '役職者', viewer: '閲覧者' },
+  roleLabel() { return this.ROLE_LABELS[this.role] || this.role || '—'; },
 
   // tier（監督職/準監督職/広義監督職/対象外）→ 画面が使う category（現場監督/準現場監督/監督サポート/対象外）
   TIER_TO_CATEGORY: {
