@@ -455,6 +455,45 @@ const Sync = {
     return { qualifications: quals, employee_qualifications: eqs };
   },
 
+  // 段階Q: 資格名を正規化（全角→半角：１級→1級／一級・二級→1級・2級）
+  _normQual(s) {
+    let t = String(s || '');
+    try { t = t.normalize('NFKC'); } catch (e) { /* noop */ }
+    return t.replace(/一級/g, '1級').replace(/二級/g, '2級');
+  },
+
+  // 段階Q: 保有資格名の配列から「1級/2級 施工管理技士」タグを導出。
+  //   建築/土木/電気/管/造園 等の細分は畳む。技士「補」は下位資格のため除外。
+  //   このタグが資格軸ガント・バッジの唯一のソース（qualifications_raw に格納）。
+  deriveSekouTags(names) {
+    const tags = new Set();
+    (names || []).forEach(nm => {
+      const n = this._normQual(nm);
+      if (n.includes('施工管理技士') && !n.includes('補')) {
+        if (n.includes('1級')) tags.add('1級 施工管理技士');
+        if (n.includes('2級')) tags.add('2級 施工管理技士');
+      }
+    });
+    return [...tags];
+  },
+
+  // 段階Q: 有効期限の状態判定。戻り値 {status, days, label}。
+  //   status: none(期限なし) / expired / warn30 / warn90 / ok / unknown
+  qualExpiryStatus(expiry) {
+    const e = String(expiry || '').trim();
+    if (e === '' || e === '期限なし' || e === '無期限') return { status: 'none', days: null, label: '期限なし' };
+    const m = e.replace(/-/g, '/').split('/');
+    if (m.length !== 3) return { status: 'unknown', days: null, label: e };
+    const dt = new Date(+m[0], +m[1] - 1, +m[2]);
+    if (isNaN(dt.getTime())) return { status: 'unknown', days: null, label: e };
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const days = Math.round((dt - today) / 86400000);
+    if (days < 0) return { status: 'expired', days, label: `期限切れ（${-days}日経過）` };
+    if (days <= 30) return { status: 'warn30', days, label: `残${days}日` };
+    if (days <= 90) return { status: 'warn90', days, label: `残${days}日` };
+    return { status: 'ok', days, label: `残${days}日` };
+  },
+
   // Salesforce の工事部員絵文字から employee_qualifications を派生
   // 既存の employee_qualifications にマージ（同一 emp_id × qual_id は重複なし）
   deriveQualificationsFromSalesforce(sfRows, employees, existingEqs) {
@@ -981,8 +1020,9 @@ const Sync = {
     salesforce_imports: ['department', 'emp_name', 'emp_name_raw', 'role', 'role_detail', 'contract_type', 'project_id', 'project_name', 'start', 'end', 'total_revenue', 'order_amount', 'status'],
     // 段階D: SmartHR名簿(01_organization)の整形後スキーマ
     organization: ['emp_no', 'last_name', 'first_name', 'kana_last', 'kana_first', 'email', 'business', 'hire_date', 'depts', 'positions'],
-    // 段階D5: 資格マスタ(02_employees タブ)。将来 SmartHR 資格で列が増える前提（増えたらここに追記）。
-    employee_quals: ['社員番号', '名前', '資格'],
+    // 段階Q: 資格マスタ(02_employees タブ＝SmartHR「従業員の資格一覧」エクスポートを貼付)。
+    //   1行=1人×1資格。必要6列のみ取込（部署/点数/資格番号/証明書の写し等は無視）。
+    employee_quals: ['社員番号', '氏名', 'コード', '保有資格', '取得日', '有効期限'],
   },
 
   // 段階D: SmartHR名簿(01_organization)の生行 → organization テーブル形式に整形。
@@ -1295,12 +1335,21 @@ const Sync = {
       const no = String(t.emp_no || '').trim();
       if (no) tierByEmp[no] = String(t.tier || '').trim();
     });
-    // 資格：社員番号→資格文字列。段階D5で employee_quals(02_employees タブ由来) を正とする。
-    // （旧 employees テーブルの F列依存は廃止。employee_quals も 社員番号/資格 列を持つ）
-    const qualByEmp = {};
-    (qualSource || []).forEach(e => {
-      const no = String(e['社員番号'] || e.emp_no || '').trim();
-      if (no) qualByEmp[no] = String(e['資格'] || e.qualifications_raw || '').trim();
+    // 段階Q: employee_quals は SmartHR「従業員の資格一覧」(1行=1人×1資格)。社員番号でグルーピングし、
+    //   詳細配列(qual_details: 監督ダッシュボード用)と簡易タグ(資格軸/バッジ用)を作る。
+    const detailsByEmp = {};
+    (qualSource || []).forEach(q => {
+      const no = String(q['社員番号'] || q.emp_no || '').trim();
+      if (!no) return;
+      const path = String(q['保有資格'] || '').trim();          // "種別/資格名"
+      const name = String(q['コード'] || '').trim() || (path.includes('/') ? path.split('/').slice(1).join('/') : path);
+      const type = path.includes('/') ? path.split('/')[0] : '';  // 資格 / 技能講習 / 特別教育 等
+      if (!name) return;
+      (detailsByEmp[no] = detailsByEmp[no] || []).push({
+        name, type,
+        acquired: String(q['取得日'] || '').trim(),
+        expiry: String(q['有効期限'] || '').trim(),
+      });
     });
     const toArr = (v) => Array.isArray(v) ? v : (typeof v === 'string' && v ? (() => { try { return JSON.parse(v); } catch (e) { return []; } })() : []);
     return (orgRows || []).map(r => {
@@ -1314,7 +1363,8 @@ const Sync = {
         department: primary ? String(primary).split('/').pop() : '',
         role: positions[0] || '',
         role_title: positions[0] || '',
-        qualifications_raw: qualByEmp[empNo] || '',
+        qualifications_raw: this.deriveSekouTags((detailsByEmp[empNo] || []).map(d => d.name)).join('、'),
+        qual_details: detailsByEmp[empNo] || [],
         category: this.judgeCategory(empNo, depts, tierByEmp),
         status: 'active',
         rank: '',

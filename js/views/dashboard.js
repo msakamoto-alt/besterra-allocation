@@ -110,12 +110,9 @@ const DashboardView = {
     const [prevY, prevM] = prevYm.split('-');
     const prevMonthLabel = `${Number(prevY)}年${Number(prevM)}月`;
 
-    // 保有資格
-    const myQuals = (Sync.cache.employee_qualifications || []).filter(eq => eq.emp_id === empId);
-    const qualMap = {};
-    (Sync.cache.qualifications || []).forEach(q => qualMap[q.id] = q);
+    // 保有資格（段階Q: SmartHR詳細 emp.qual_details を種別ごとに表示＋期限アラート）
+    const qualDetails = (emp.qual_details || []);
     const now = new Date();
-    const in90Days = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
 
     const canEdit = Sync.canEdit();
     // projects マップ（現在配置・過去配置の両方で参照）
@@ -262,23 +259,47 @@ const DashboardView = {
     }
 
     let qualHtml = '';
-    if (myQuals.length === 0) {
+    if (qualDetails.length === 0) {
       qualHtml = '<p class="text-slate-400 text-sm">保有資格データなし</p>';
     } else {
-      qualHtml = '<div class="flex flex-wrap gap-2">';
-      myQuals.forEach(eq => {
-        const q = qualMap[eq.qual_id];
-        if (!q) return;
-        let badge = 'bg-emerald-100 text-emerald-800';
-        let suffix = '';
-        if (eq.expiry) {
-          const exp = new Date(eq.expiry);
-          if (exp < now) { badge = 'bg-red-100 text-red-800 font-bold'; suffix = ` (期限切れ ${eq.expiry})`; }
-          else if (exp <= in90Days) { badge = 'bg-amber-100 text-amber-800 font-medium'; suffix = ` (〜${eq.expiry})`; }
-        }
-        qualHtml += `<span class="${badge} px-2 py-1 rounded text-xs">${this.esc(q.name)}${suffix}</span>`;
+      const STATUS_CLS = {
+        expired: 'bg-red-100 text-red-800 font-bold',
+        warn30: 'bg-orange-100 text-orange-800 font-medium',
+        warn90: 'bg-amber-100 text-amber-800',
+        ok: 'bg-emerald-50 text-emerald-800',
+        none: 'bg-slate-100 text-slate-700',
+        unknown: 'bg-slate-100 text-slate-700',
+      };
+      // 期限アラートのサマリー
+      const statuses = qualDetails.map(d => Sync.qualExpiryStatus(d.expiry));
+      const nExpired = statuses.filter(s => s.status === 'expired').length;
+      const nWarn = statuses.filter(s => s.status === 'warn30' || s.status === 'warn90').length;
+      let banner = '';
+      if (nExpired || nWarn) {
+        const parts = [];
+        if (nExpired) parts.push(`<span class="text-red-700 font-bold">期限切れ ${nExpired}件</span>`);
+        if (nWarn) parts.push(`<span class="text-amber-700 font-medium">期限間近 ${nWarn}件</span>`);
+        banner = `<div class="mb-3 text-sm bg-red-50 border border-red-200 rounded px-3 py-2">⚠ ${parts.join(' / ')}</div>`;
+      }
+      // 種別ごとにグループ化（資格→技能講習→特別教育→その他）
+      const byType = {};
+      qualDetails.forEach(d => { (byType[d.type || 'その他'] = byType[d.type || 'その他'] || []).push(d); });
+      const order = ['資格', '技能講習', '特別教育', 'その他'];
+      const types = Object.keys(byType).sort((a, b) => {
+        const ia = order.indexOf(a), ib = order.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, 'ja');
       });
-      qualHtml += '</div>';
+      const groups = types.map(t => {
+        const items = byType[t].map(d => {
+          const st = Sync.qualExpiryStatus(d.expiry);
+          const cls = STATUS_CLS[st.status] || STATUS_CLS.none;
+          const exp = st.status === 'none' ? '' : ` <span class="text-[10px] opacity-80">(${st.status === 'expired' ? '⚠' : ''}${this.esc(st.label)})</span>`;
+          const acq = d.acquired ? `<span class="text-[10px] text-slate-400 whitespace-nowrap">取得 ${this.esc(d.acquired)}</span>` : '';
+          return `<div class="${cls} px-2 py-1 rounded text-xs flex items-center justify-between gap-2"><span>${this.esc(d.name)}${exp}</span>${acq}</div>`;
+        }).join('');
+        return `<div class="mb-3"><div class="text-xs font-semibold text-slate-500 mb-1">${this.esc(t)} <span class="text-slate-400">（${byType[t].length}）</span></div><div class="grid md:grid-cols-2 gap-1.5">${items}</div></div>`;
+      }).join('');
+      qualHtml = banner + groups;
     }
 
     document.getElementById('dash-content').innerHTML =
