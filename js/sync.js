@@ -1215,6 +1215,27 @@ const Sync = {
   ROLE_LABELS: { admin: '管理者', editor: '編集者', executive: '経営者', manager: '役職者', viewer: '閲覧者' },
   roleLabel() { return this.ROLE_LABELS[this.role] || this.role || '—'; },
 
+  // ===== 段階E1.5: アカウント管理（Edge Function「admin-users」経由）=====
+  // service_role はサーバー側のみ。ここからは admin の JWT を付けて呼ぶ（functions.invoke が自動付与）。
+  async _invokeAdmin(body) {
+    const { data, error } = await this.getSupabase().functions.invoke('admin-users', { body });
+    if (error) {
+      // HTTP非2xxでも error。レスポンス本文の error メッセージを優先的に拾う
+      let msg = error.message || 'リクエストに失敗しました';
+      try { const ctx = await error.context?.json?.(); if (ctx?.error) msg = ctx.error; } catch (_) { /* noop */ }
+      throw new Error(msg);
+    }
+    if (data && data.error) throw new Error(data.error);
+    return data;
+  },
+  async adminListUsers() { const d = await this._invokeAdmin({ action: 'list' }); return (d && d.users) || []; },
+  async adminCreateUser({ email, password, display_name, role }) {
+    return this._invokeAdmin({ action: 'create', email, password, display_name, role });
+  },
+  async adminSetRole(user_id, role) { return this._invokeAdmin({ action: 'set_role', user_id, role }); },
+  async adminSetPassword(user_id, password) { return this._invokeAdmin({ action: 'set_password', user_id, password }); },
+  async adminDeleteUser(user_id) { return this._invokeAdmin({ action: 'delete', user_id }); },
+
   // tier（監督職/準監督職/広義監督職/対象外）→ 画面が使う category（現場監督/準現場監督/監督サポート/対象外）
   TIER_TO_CATEGORY: {
     '監督職': '現場監督',

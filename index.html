@@ -73,6 +73,7 @@
       <div class="flex items-center gap-3 text-sm">
         <span id="role-badge" class="hidden bg-white/20 text-white font-semibold px-2.5 py-1 rounded">—</span>
         <button id="org-toggle" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg>組織図</button>
+        <button id="account-toggle" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition">👥 アカウント</button>
         <button id="sync-button" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition">同期</button>
         <span class="text-white/80">最終同期 <span id="last-sync">未同期</span></span>
         <button id="logout-button" class="text-white/85 hover:text-white underline">ログアウト</button>
@@ -522,6 +523,54 @@
       </div>
     </div>
 
+    <!-- ========== アカウント管理モーダル（段階E1.5: admin専用）========== -->
+    <div id="account-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div class="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 p-6">
+        <div class="flex justify-between items-start mb-4">
+          <h3 class="text-lg font-bold text-slate-900">アカウント管理</h3>
+          <button id="account-modal-close" class="text-slate-400 hover:text-slate-700 text-2xl leading-none">×</button>
+        </div>
+
+        <!-- 新規追加 -->
+        <div class="bg-slate-50 border border-slate-200 rounded p-3 mb-4">
+          <div class="text-sm font-semibold text-slate-700 mb-2">新規アカウント追加</div>
+          <div class="grid grid-cols-2 gap-2">
+            <input id="acc-email" type="email" placeholder="メールアドレス" class="border rounded px-2 py-1.5 text-sm">
+            <input id="acc-name" type="text" placeholder="氏名（表示名）" class="border rounded px-2 py-1.5 text-sm">
+            <select id="acc-role" class="border rounded px-2 py-1.5 text-sm">
+              <option value="viewer">閲覧者</option>
+              <option value="manager">役職者</option>
+              <option value="executive">経営者</option>
+              <option value="editor">編集者</option>
+              <option value="admin">管理者</option>
+            </select>
+            <input id="acc-password" type="text" placeholder="初期パスワード（8文字以上）" class="border rounded px-2 py-1.5 text-sm font-mono">
+          </div>
+          <div class="flex items-center justify-between mt-2">
+            <button id="acc-gen-pw" type="button" class="text-xs text-blue-600 hover:underline">パスワード自動生成</button>
+            <button id="acc-add-btn" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded text-sm font-medium">追加</button>
+          </div>
+          <div id="acc-add-status" class="text-xs mt-1 min-h-[16px]"></div>
+        </div>
+
+        <!-- 一覧 -->
+        <div class="overflow-auto max-h-[360px] border rounded">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100 sticky top-0">
+              <tr>
+                <th class="px-3 py-2 text-left">氏名</th>
+                <th class="px-3 py-2 text-left">メール</th>
+                <th class="px-3 py-2 text-left">ロール</th>
+                <th class="px-3 py-2 text-center w-40">操作</th>
+              </tr>
+            </thead>
+            <tbody id="account-table-body"></tbody>
+          </table>
+        </div>
+        <div id="account-list-status" class="text-xs mt-2 text-slate-500"></div>
+      </div>
+    </div>
+
     <footer class="text-center text-xs text-slate-500 py-6 border-t">
       人員配置管理ツール v0.8 / Supabase 連携
       （閲覧は公開・編集はログイン制／参照データはSheets編集→同期）
@@ -559,6 +608,7 @@
   <script src="js/views/prospects.js"></script>
   <script src="js/views/member_add.js"></script>
   <script src="js/views/orgchart.js"></script>
+  <script src="js/views/accounts.js"></script>
   <script src="js/config.js" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
   <script src="js/app.js"></script>
 </body>

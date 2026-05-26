@@ -18,6 +18,7 @@ const App = {
     ProspectsView.init();
     MemberAdd.init();
     OrgChartView.init();
+    AccountsView.init();
 
     // 段階E1: 既存ログインセッションがあれば復元してそのまま入る
     if (await Sync.refreshSession()) {
@@ -59,10 +60,12 @@ const App = {
     });
   },
 
-  // 組織図ボタン（admin のみ表示）→ 組織図タブを開く
+  // ヘッダーの admin 専用ボタン（組織図・アカウント管理）を配線
   setupOrgButton() {
     const orgBtn = document.getElementById('org-toggle');
     if (orgBtn) orgBtn.addEventListener('click', () => this.activateTab('orgchart'));
+    const accBtn = document.getElementById('account-toggle');
+    if (accBtn) accBtn.addEventListener('click', () => AccountsView.open());
   },
 
   updateRoleUI() {
@@ -74,6 +77,8 @@ const App = {
     if (syncBtn) syncBtn.classList.toggle('hidden', !adminOnly);
     const orgBtn = document.getElementById('org-toggle');
     if (orgBtn) orgBtn.classList.toggle('hidden', !adminOnly);
+    const accBtn = document.getElementById('account-toggle');
+    if (accBtn) accBtn.classList.toggle('hidden', !adminOnly);
   },
 
   showMain() {
