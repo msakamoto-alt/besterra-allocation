@@ -5,6 +5,19 @@
 const App = {
   currentTab: 'pool',
 
+  // 段階E2: ロール別に閲覧できるタブ（編集可否は別途 Sync.canEdit で制御）
+  TAB_ROLES: {
+    pool:      ['admin', 'editor', 'executive', 'manager'],
+    gantt:     ['admin', 'editor', 'executive', 'manager', 'viewer'],
+    dash:      ['admin', 'editor', 'executive', 'manager'],
+    prospects: ['admin', 'editor', 'executive'],
+    orgchart:  ['admin'],
+  },
+  canViewTab(tab) {
+    const allow = this.TAB_ROLES[tab];
+    return !!(Sync.role && allow && allow.includes(Sync.role));
+  },
+
   async init() {
     this.setupAuth();
     this.setupOrgButton();
@@ -30,6 +43,7 @@ const App = {
   async enterApp() {
     this.showMain();
     this.updateRoleUI();
+    this.applyTabVisibility();
     await this.loadData();
   },
 
@@ -94,6 +108,7 @@ const App = {
   },
 
   activateTab(name) {
+    if (!this.canViewTab(name)) return;  // 段階E2: 許可されていないタブは無視
     this.currentTab = name;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('tab-active', b.dataset.tab === name));
     document.querySelectorAll('.tab-panel').forEach(p => {
@@ -102,6 +117,23 @@ const App = {
     if (name === 'gantt') GanttView.refresh();
     if (name === 'prospects') ProspectsView.refresh();
     if (name === 'orgchart') OrgChartView.refresh();
+  },
+
+  // 段階E2: ロールに応じてタブの表示/非表示を切り替え、見られる最初のタブを開く
+  applyTabVisibility() {
+    let firstAllowed = null;
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      const ok = this.canViewTab(btn.dataset.tab);
+      btn.classList.toggle('hidden', !ok);
+      if (ok && !firstAllowed) firstAllowed = btn.dataset.tab;
+    });
+    // 現在のタブが見られなければ最初の許可タブへ。view.refresh は直後の loadData が行うので
+    // ここでは activateTab を呼ばず（データ未取得での描画を避ける）クラスだけ切り替える。
+    const target = this.canViewTab(this.currentTab) ? this.currentTab : firstAllowed;
+    if (!target) return;
+    this.currentTab = target;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('tab-active', b.dataset.tab === target));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.id !== 'tab-' + target));
   },
 
   setupLogout() {
