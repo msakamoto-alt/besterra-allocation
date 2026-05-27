@@ -201,8 +201,9 @@ const GanttView = {
 
   AXIS_DESC: {
     project: '縦軸＝現場、横軸＝配置期間（join〜leave）。配置監督ごとに個別バー表示。色は役割。',
+    office: '縦軸＝事務所（CL営業管轄）ごとの管轄工事、横軸＝工期。各工事に配置監督のバーを表示。色は役割。',
     person: '縦軸＝現場監督（準現場監督含む）、横軸＝配置現場の期間。色は配置現場での役割。複数現場の配置はバー縦積み。',
-    department: '縦軸＝事務所配下の個人、横軸＝配置現場の期間。色は役割。事務所別キャパが個人別に分かる。',
+    department: '縦軸＝事務所配下の監督（現場監督・準現場監督）、横軸＝配置現場の期間。色は役割。事務所別キャパが個人別に分かる。',
     qualification: '縦軸＝資格別の保有者、横軸＝配置現場の期間。色は役割。同一人複数資格は各グループに繰り返し表示。',
   },
 
@@ -397,6 +398,7 @@ const GanttView = {
     try {
       switch (this.currentAxis) {
         case 'project': container.innerHTML = this.renderProjectAxis(); break;
+        case 'office': container.innerHTML = this.renderOfficeAxis(); break;
         case 'person': container.innerHTML = this.renderPersonAxis(); break;
         case 'department': container.innerHTML = this.renderDepartmentAxis(); break;
         case 'qualification': container.innerHTML = this.renderQualificationGantt(); break;
@@ -1067,67 +1069,131 @@ const GanttView = {
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     visibleProjects.forEach(p => {
-      const projAsgs = assignments.filter(a => a.project_id === p.project_id);
-      const rowH = Math.max(64, 16 + Math.max(1, projAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
-
-      // 配置未定・不足・派遣社員はバー内にのみ表示し、ラベル列はサマリー化（重複表示回避）
-      const placeholderCount = projAsgs.filter(a => this.isPlaceholderName(a.emp_name)).length;
-      const dispatchCount = projAsgs.filter(a => this.isDispatchName(a.emp_name)).length;
-      const labelMembers = projAsgs
-        .filter(a => !this.isPlaceholderName(a.emp_name) && !this.isDispatchName(a.emp_name))
-        .map(a => `<span class="inline-block mr-2 font-medium">${this.esc(a.emp_name)}</span>`)
-        .join('');
-      const dispatchNote = dispatchCount > 0
-        ? `<span class="inline-block mr-2" style="color:#a16207">派遣社員 ×${dispatchCount}</span>`
-        : '';
-      const placeholderNote = placeholderCount > 0
-        ? `<span class="inline-block mr-2 text-slate-500">配置未定・不足 ×${placeholderCount}</span>`
-        : '';
-
-      const canEdit = Sync.canEdit();
-      const addBtn = canEdit
-        ? `<button class="text-xs text-emerald-700 hover:underline mt-1 gantt-add-member" data-project-id="${this.esc(p.project_id)}">+ メンバー追加</button>`
-        : '';
-      // 状態変更ボタン（completed フラグの手動上書き）
-      // override 適用中なら「★」マーク付き
-      const statusBtn = canEdit
-        ? `<button class="text-xs text-slate-600 hover:text-slate-900 hover:underline ml-2 mt-1 gantt-status-edit" data-project-id="${this.esc(p.project_id)}">${p._status_overridden ? '★ 状態を変更' : '状態を変更'}</button>`
-        : '';
-      // 状態バッジ（完成 or 進行中）：オーバーライド適用中は色付け
-      const isCompleted = !!p.completed;
-      const statusBadge = p._status_overridden
-        ? `<span class="inline-block ${isCompleted ? 'bg-slate-200 text-slate-700' : 'bg-blue-100 text-blue-700'} px-1.5 py-0 rounded text-[10px] font-medium ml-1" title="手動で状態を上書き中">${isCompleted ? '完成' : '進行中'}</span>`
-        : (isCompleted ? '<span class="inline-block bg-slate-100 text-slate-500 px-1.5 py-0 rounded text-[10px] ml-1">完成</span>' : '');
-      html += '<tr class="border-t">' +
-        `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
-          `<div class="font-medium text-sm">${this.esc(p.name)}${this.contractBadge(p.contract_type)}${statusBadge}</div>` +
-          `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
-          `<div class="text-xs mt-1">${(labelMembers || dispatchNote || placeholderNote) ? (labelMembers + dispatchNote + placeholderNote) : '<span class="text-slate-400">配置未定・不足</span>'}</div>` +
-          addBtn + statusBtn +
-        '</td>' +
-        `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
-          this.gridDivs(cells) +
-          todayMarkerHtml;
-
-      if (projAsgs.length === 0) {
-        const start = this.parseDate(p.start);
-        const end = this.parseDate(p.end);
-        html += this.renderBar(start, end, cells, this.PLACEHOLDER_COLOR, '配置未定・不足', 8, `${p.name}（${p.start}〜${p.end}）配置未定・不足`, true);
-      } else {
-        projAsgs.forEach((a, idx) => {
-          const start = this.parseDate(a.join);
-          const end = this.parseDate(a.planned_end || p.end);
-          const style = this.resolveBarStyle(a, p);
-          const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          const titleTag = a.prospect ? '【見込み】' : '';
-          html += this.prepBarHtml(a, cells, style.color, top);
-          html += this.renderBar(start, end, cells, style.color, style.label, top, `${style.label}（${style.role}） ${a.join}〜${a.planned_end || p.end}${titleTag}`, style.dashed, a.assignment_id);
-        });
-      }
-      html += '</td></tr>';
+      html += this.projectRowHtml(p, assignments, cells, colCount, todayMarkerHtml);
     });
     html += '</tbody></table>';
 
+    html += this.legendRole();
+    return html;
+  },
+
+  // 現場1件分の行HTML（現場軸・事務所軸で共通利用）。ラベル列＋配置監督のバー（準備期間バー含む）。
+  projectRowHtml(p, assignments, cells, colCount, todayMarkerHtml) {
+    const projAsgs = assignments.filter(a => a.project_id === p.project_id);
+    const rowH = Math.max(64, 16 + Math.max(1, projAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
+
+    // 配置未定・不足・派遣社員はバー内にのみ表示し、ラベル列はサマリー化（重複表示回避）
+    const placeholderCount = projAsgs.filter(a => this.isPlaceholderName(a.emp_name)).length;
+    const dispatchCount = projAsgs.filter(a => this.isDispatchName(a.emp_name)).length;
+    const labelMembers = projAsgs
+      .filter(a => !this.isPlaceholderName(a.emp_name) && !this.isDispatchName(a.emp_name))
+      .map(a => `<span class="inline-block mr-2 font-medium">${this.esc(a.emp_name)}</span>`)
+      .join('');
+    const dispatchNote = dispatchCount > 0
+      ? `<span class="inline-block mr-2" style="color:#a16207">派遣社員 ×${dispatchCount}</span>`
+      : '';
+    const placeholderNote = placeholderCount > 0
+      ? `<span class="inline-block mr-2 text-slate-500">配置未定・不足 ×${placeholderCount}</span>`
+      : '';
+
+    const canEdit = Sync.canEdit();
+    const addBtn = canEdit
+      ? `<button class="text-xs text-emerald-700 hover:underline mt-1 gantt-add-member" data-project-id="${this.esc(p.project_id)}">+ メンバー追加</button>`
+      : '';
+    // 状態変更ボタン（completed フラグの手動上書き）。override 適用中なら「★」マーク付き
+    const statusBtn = canEdit
+      ? `<button class="text-xs text-slate-600 hover:text-slate-900 hover:underline ml-2 mt-1 gantt-status-edit" data-project-id="${this.esc(p.project_id)}">${p._status_overridden ? '★ 状態を変更' : '状態を変更'}</button>`
+      : '';
+    // 状態バッジ（完成 or 進行中）：オーバーライド適用中は色付け
+    const isCompleted = !!p.completed;
+    const statusBadge = p._status_overridden
+      ? `<span class="inline-block ${isCompleted ? 'bg-slate-200 text-slate-700' : 'bg-blue-100 text-blue-700'} px-1.5 py-0 rounded text-[10px] font-medium ml-1" title="手動で状態を上書き中">${isCompleted ? '完成' : '進行中'}</span>`
+      : (isCompleted ? '<span class="inline-block bg-slate-100 text-slate-500 px-1.5 py-0 rounded text-[10px] ml-1">完成</span>' : '');
+    let html = '<tr class="border-t">' +
+      `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+        `<div class="font-medium text-sm">${this.esc(p.name)}${this.contractBadge(p.contract_type)}${statusBadge}</div>` +
+        `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
+        `<div class="text-xs mt-1">${(labelMembers || dispatchNote || placeholderNote) ? (labelMembers + dispatchNote + placeholderNote) : '<span class="text-slate-400">配置未定・不足</span>'}</div>` +
+        addBtn + statusBtn +
+      '</td>' +
+      `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
+        this.gridDivs(cells) +
+        todayMarkerHtml;
+
+    if (projAsgs.length === 0) {
+      const start = this.parseDate(p.start);
+      const end = this.parseDate(p.end);
+      html += this.renderBar(start, end, cells, this.PLACEHOLDER_COLOR, '配置未定・不足', 8, `${p.name}（${p.start}〜${p.end}）配置未定・不足`, true);
+    } else {
+      projAsgs.forEach((a, idx) => {
+        const start = this.parseDate(a.join);
+        const end = this.parseDate(a.planned_end || p.end);
+        const style = this.resolveBarStyle(a, p);
+        const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
+        const titleTag = a.prospect ? '【見込み】' : '';
+        html += this.prepBarHtml(a, cells, style.color, top);
+        html += this.renderBar(start, end, cells, style.color, style.label, top, `${style.label}（${style.role}） ${a.join}〜${a.planned_end || p.end}${titleTag}`, style.dashed, a.assignment_id);
+      });
+    }
+    html += '</td></tr>';
+    return html;
+  },
+
+  // ===== 1b. 事務所軸（事務所ごとの管轄工事） =====
+
+  renderOfficeAxis() {
+    const projects = Sync.cache.projects || [];
+    const assignments = Sync.cache.assignments || [];
+    const cells = this.buildCells();
+    if (cells.length === 0) return '<p class="p-4 text-slate-500">表示範囲のデータがありません</p>';
+    const colCount = cells.length;
+    const todayMarkerHtml = this.todayMarker(cells);
+
+    // 表示範囲・完成/見込みトグルでフィルタ（現場軸と同条件）
+    const visible = projects.filter(p => {
+      if (p.completed && !this.showCompleted) return false;
+      if (p.prospect && !this.showProspects) return false;
+      return this.clipRange(this.parseDate(p.start), this.parseDate(p.end), cells);
+    });
+
+    // 事務所（p.dept＝CL営業管轄）でグルーピング
+    const byOffice = {};
+    visible.forEach(p => {
+      const office = String(p.dept || '').trim() || '（事務所未設定）';
+      (byOffice[office] = byOffice[office] || []).push(p);
+    });
+    // 事務所の表示順（現場軸ソート「事務所別」と同じ：東日本→本社→千葉→京浜→西日本→倉敷→九州）
+    const OFFICE_ORDER = ['東日本', '本社', '千葉', '京浜', '西日本', '倉敷', '九州'];
+    const officeIdx = (d) => { const s = String(d || ''); for (let i = 0; i < OFFICE_ORDER.length; i++) { if (s.includes(OFFICE_ORDER[i])) return i; } return OFFICE_ORDER.length; };
+    const offices = Object.keys(byOffice).sort((a, b) => {
+      const ai = officeIdx(a), bi = officeIdx(b);
+      if (ai !== bi) return ai - bi;
+      return String(a).localeCompare(String(b), 'ja');
+    });
+
+    // 実員（プレースホルダ以外＝当社社員/派遣）が1人もいない工事＝配置未定・不足。グループ内で下に沈める。
+    const isUnstaffed = (p) => !assignments.some(a => a.project_id === p.project_id && !this.isPlaceholderName(a.emp_name));
+
+    let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
+    offices.forEach(office => {
+      // 事務所内：実員ありを先に、配置未定・不足を後ろに。各群の中は着工日昇順（タイブレーク＝工事番号）
+      const projs = byOffice[office].slice().sort((a, b) => {
+        const au = isUnstaffed(a) ? 1 : 0, bu = isUnstaffed(b) ? 1 : 0;
+        if (au !== bu) return au - bu;
+        const d = String(a.start || '').localeCompare(String(b.start || ''));
+        return d !== 0 ? d : String(a.project_id || '').localeCompare(String(b.project_id || ''));
+      });
+      const amount = projs.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      html += '<tr class="bg-slate-800 text-white">' +
+        `<td class="p-2 sticky left-0 bg-slate-800 border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+          `<div class="font-bold text-sm">${this.esc(office)}</div>` +
+          `<div class="text-xs text-slate-300">管轄工事 ${projs.length}件 / ¥${(amount / 1e6).toFixed(1)}M</div>` +
+        '</td>' +
+        `<td colspan="${colCount}" style="height:36px; padding:0; background:#1e293b"></td>` +
+      '</tr>';
+      projs.forEach(p => { html += this.projectRowHtml(p, assignments, cells, colCount, todayMarkerHtml); });
+    });
+    html += '</tbody></table>';
     html += this.legendRole();
     return html;
   },
