@@ -476,6 +476,11 @@
         <!-- 編集フォーム（初期は hidden） -->
         <div id="gantt-modal-edit" class="hidden mt-4 pt-4 border-t border-slate-200 space-y-3">
           <div class="text-sm font-semibold text-slate-700">配属内容を変更</div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">準備期間開始日（任意）</label>
+            <input type="date" id="edit-prep-start" class="border border-slate-300 rounded w-full px-2 py-1.5 text-sm">
+            <p class="text-xs text-slate-400 mt-1">入力すると、この日から配属開始日までを「準備期間」として、配属バーの左に斜線で表示します。空欄で準備期間なし。</p>
+          </div>
           <div class="grid grid-cols-3 gap-3">
             <div>
               <label class="block text-xs text-slate-500 mb-1">開始日</label>

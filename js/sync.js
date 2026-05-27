@@ -814,6 +814,8 @@ const Sync = {
       if (o.join_date) next.join = this.normalizeDate(o.join_date);
       if (o.planned_end) next.planned_end = this.normalizeDate(o.planned_end);
       if (o.role) next.role = o.role;
+      // 準備期間開始日（空文字なら準備期間なしとしてクリア）
+      next.prep_start = o.prep_start ? this.normalizeDate(o.prep_start) : '';
       next.overridden = true;
       next.override_note = o.note || '';
       next.override_updated_at = o.updated_at || '';
@@ -871,6 +873,7 @@ const Sync = {
         join: this.normalizeDate(o.join_date),
         leave: null,
         planned_end: this.normalizeDate(o.planned_end),
+        prep_start: o.prep_start ? this.normalizeDate(o.prep_start) : '',
         role: o.role || '派遣',
         role_sf: '',
         confirmed: false,
@@ -937,6 +940,7 @@ const Sync = {
         project_id: payload.project_id || '',
         join_date: payload.join_date || '',
         planned_end: payload.planned_end || '',
+        prep_start: payload.prep_start || '',  // 準備期間開始日（準備期間 = prep_start〜join_date）
         role: payload.role || '',
         note: payload.note || '',
         updated_at: nowIso,

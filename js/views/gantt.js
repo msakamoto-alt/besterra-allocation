@@ -579,6 +579,30 @@ const GanttView = {
     return `rgba(${r}, ${g}, ${b}, 0.12)`;
   },
 
+  // 準備期間バーの背景：役割色のベタ塗りを下地に、白の斜線を重ねる。
+  // （下地を確保することで白抜き文字が読める／斜線で配属バーと一目で区別できる）
+  prepStripe(hex) {
+    const base = /^#([0-9a-f]{6})$/i.test(String(hex)) ? hex : '#94a3b8';
+    return `background-color:${base};background-image:repeating-linear-gradient(45deg, rgba(255,255,255,0) 0 5px, rgba(255,255,255,0.32) 5px 10px);`;
+  },
+
+  // 準備期間バー（prep_start 〜 join）。配属バーの左に同系色の斜線で描画。
+  // dateToPx(join) が配属バーの左端と一致するため、prep バー右端は配属バー左端にぴったり隣接する。
+  prepBarHtml(a, cells, color, top) {
+    if (!a || !a.prep_start || !a.join) return '';
+    const ps = this.parseDate(a.prep_start);
+    const je = this.parseDate(a.join);
+    if (isNaN(ps) || isNaN(je) || ps >= je) return '';
+    const clip = this.clipRange(ps, je, cells);
+    if (!clip) return '';
+    const left = this.dateToPx(clip.start, cells);
+    const right = this.dateToPx(clip.end, cells);
+    const width = Math.max(6, right - left - 2);
+    const label = width >= 44 ? '準備' : '';
+    const title = `準備期間 ${a.prep_start}〜${a.join}`;
+    return `<div class="gantt-bar gantt-prep-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;height:${this.BAR_HEIGHT}px;${this.prepStripe(color)}color:#fff;font-weight:700;font-size:10px;text-shadow:0 1px 1px rgba(0,0,0,0.45);cursor:pointer;" title="${this.esc(title)}" data-asg-id="${this.esc(a.assignment_id)}">${label}</div>`;
+  },
+
   // 現在モーダル表示中の assignment（編集対象）
   currentAssignment: null,
 
@@ -633,6 +657,7 @@ const GanttView = {
       `<div class="col-span-2">${this.esc(proj.dept || '-')}</div>` +
       `<div class="text-slate-500">配属期間</div>` +
       `<div class="col-span-2 font-bold">${fmt(start)} 〜 ${fmt(end)}${periodDays ? ` <span class="text-xs text-slate-500">（${periodDays}日）</span>` : ''}${overrideBadge}</div>` +
+      (a.prep_start ? `<div class="text-slate-500">準備期間</div><div class="col-span-2">${this.esc(a.prep_start)} 〜 ${this.esc(a.join || '-')}<span class="text-xs text-slate-500 ml-1">（配属開始まで・斜線表示）</span></div>` : '') +
       `<div class="text-slate-500">状態</div>` +
       `<div class="col-span-2">${stateBadge}</div>` +
       (a.override_note ? `<div class="text-slate-500">変更メモ</div><div class="col-span-2 text-slate-600">${this.esc(a.override_note)}</div>` : '') +
@@ -677,6 +702,7 @@ const GanttView = {
     if (!a) return;
     document.getElementById('edit-join').value = this.toIsoDate(a.join);
     document.getElementById('edit-end').value = this.toIsoDate(a.planned_end);
+    document.getElementById('edit-prep-start').value = this.toIsoDate(a.prep_start);
     const normRole = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
     const roleSel = document.getElementById('edit-role');
 
@@ -712,6 +738,8 @@ const GanttView = {
     document.getElementById('gantt-modal-edit-btn').classList.add('hidden');
     document.getElementById('gantt-modal-save-btn').classList.remove('hidden');
     document.getElementById('gantt-modal-cancel-btn').classList.remove('hidden');
+    // 「元値に戻す」は表示モード専用 → 編集モードでは隠す（キャンセル/配属解除に集約）
+    document.getElementById('gantt-modal-reset-btn').classList.add('hidden');
     // 解除ボタンも表示（API利用可なら）
     if (Sync.canEdit()) {
       document.getElementById('gantt-modal-remove-btn').classList.remove('hidden');
@@ -727,6 +755,9 @@ const GanttView = {
     if (Sync.canEdit()) {
       document.getElementById('gantt-modal-edit-btn').classList.remove('hidden');
     }
+    // 表示モードに戻ったら、変更済みのときだけ「元値に戻す」を再表示
+    const a = this.currentAssignment;
+    document.getElementById('gantt-modal-reset-btn').classList.toggle('hidden', !(Sync.canEdit() && a && a.overridden));
   },
 
   // 保存（GAS へ upsert POST）
@@ -737,6 +768,7 @@ const GanttView = {
     const end = document.getElementById('edit-end').value;
     const role = document.getElementById('edit-role').value;
     const note = document.getElementById('edit-note').value;
+    const prep = document.getElementById('edit-prep-start').value;
     const statusEl = document.getElementById('edit-status');
 
     if (!join && !end) {
@@ -746,6 +778,16 @@ const GanttView = {
     }
     if (join && end && join > end) {
       statusEl.textContent = '⚠ 終了日は開始日より後にしてください';
+      statusEl.className = 'text-xs text-red-600';
+      return;
+    }
+    if (prep && !join) {
+      statusEl.textContent = '⚠ 準備期間を使うには配属開始日を入力してください';
+      statusEl.className = 'text-xs text-red-600';
+      return;
+    }
+    if (prep && join && prep >= join) {
+      statusEl.textContent = '⚠ 準備期間開始日は配属開始日より前にしてください';
       statusEl.className = 'text-xs text-red-600';
       return;
     }
@@ -759,6 +801,7 @@ const GanttView = {
     const toSlash = s => s ? String(s).replace(/-/g, '/') : '';
     const joinSlash = toSlash(join);
     const endSlash = toSlash(end);
+    const prepSlash = toSlash(prep);  // 空欄なら '' ＝ 準備期間クリア
 
     // op 判定：source=override_add だった場合は add のまま、そうでなければ update
     const op = (a.source === 'override_add' || a.override_op === 'add') ? 'add' : 'update';
@@ -774,6 +817,7 @@ const GanttView = {
         project_id: a.project_id,
         join_date: joinSlash,
         planned_end: endSlash,
+        prep_start: prepSlash,
         role: role || a.role || '',
         note: note,
         updated_by: 'web',
@@ -784,6 +828,7 @@ const GanttView = {
       if (joinSlash) a.join = joinSlash;
       if (endSlash) a.planned_end = endSlash;
       if (role) a.role = role;
+      a.prep_start = prepSlash;  // 空欄なら準備期間クリア
       a.overridden = true;
       a.override_note = note;
       a.override_op = op;
@@ -796,6 +841,7 @@ const GanttView = {
         project_id: a.project_id,
         join_date: joinSlash,
         planned_end: endSlash,
+        prep_start: prepSlash,
         role: a.role || '',
         note: note,
         updated_at: new Date().toISOString(),
@@ -1084,6 +1130,7 @@ const GanttView = {
           const style = this.resolveBarStyle(a, p);
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
           const titleTag = a.prospect ? '【見込み】' : '';
+          html += this.prepBarHtml(a, cells, style.color, top);
           html += this.renderBar(start, end, cells, style.color, style.label, top, `${style.label}（${style.role}） ${a.join}〜${a.planned_end || p.end}${titleTag}`, style.dashed, a.assignment_id);
         });
       }
@@ -1137,6 +1184,7 @@ const GanttView = {
         const style = this.resolveBarStyle(a, proj);
         const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
         const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
+        html += this.prepBarHtml(a, cells, style.color, top);
         html += this.renderBar(start, end, cells, style.color, projLabel, top, `${a.project_name}（${style.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, style.dashed, a.assignment_id);
       });
       html += '</td></tr>';
@@ -1226,6 +1274,7 @@ const GanttView = {
           const style = this.resolveBarStyle(a, proj);
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
           const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
+          html += this.prepBarHtml(a, cells, style.color, top);
           html += this.renderBar(start, end, cells, style.color, projLabel, top, `${a.project_name}（${style.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, style.dashed, a.assignment_id);
         });
         html += '</td></tr>';
@@ -1315,6 +1364,7 @@ const GanttView = {
           const style = this.resolveBarStyle(a, proj);
           const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
           const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
+          html += this.prepBarHtml(a, cells, style.color, top);
           html += this.renderBar(start, end, cells, style.color, projLabel, top, `${a.project_name}（${style.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, style.dashed, a.assignment_id);
         });
         if (myAsgs.length === 0) {
