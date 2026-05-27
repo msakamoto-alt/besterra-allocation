@@ -1458,6 +1458,23 @@ const Sync = {
     return { ok: true };
   },
 
+  // 一括 upsert（CSVインポート用・admin のみ）。rows は upsertQuizQuestion と同じ形の配列。
+  async bulkUpsertQuizQuestions(rows) {
+    const sb = this.getSupabase();
+    const now = new Date().toISOString();
+    const payload = rows.map(q => ({
+      qid: String(q.qid || '').trim(),
+      unit: q.unit, sub: q.sub || null, difficulty: q.difficulty || null,
+      question: q.question, choice_a: q.choice_a, choice_b: q.choice_b,
+      choice_c: q.choice_c, choice_d: q.choice_d, correct: q.correct,
+      explanation: q.explanation || null, source: q.source || null,
+      active: q.active !== false, updated_at: now,
+    }));
+    const res = await sb.from('quiz_questions').upsert(payload, { onConflict: 'qid' });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true, count: payload.length };
+  },
+
   async setQuizActive(id, active) {
     const sb = this.getSupabase();
     const res = await sb.from('quiz_questions').update({ active: !!active, updated_at: new Date().toISOString() }).eq('id', id);

@@ -64,6 +64,7 @@ const ELearningView = {
     const body = document.getElementById('elearn-body');
     if (!body) return;
     if (this.screen === 'manage') return body.innerHTML = this.htmlManage();
+    if (this.screen === 'import') return body.innerHTML = this.htmlImport();
     if (this.screen === 'edit') return body.innerHTML = this.htmlEdit();
     if (this.screen === 'quiz') return body.innerHTML = this.htmlQuiz();
     if (this.screen === 'summary') return body.innerHTML = this.htmlSummary();
@@ -250,6 +251,7 @@ const ELearningView = {
     <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
       <div class="text-sm text-slate-600">登録 <b>${this.allQuestions.length}</b> 問（公開 ${this.questions.length}）</div>
       <div class="flex gap-2 items-center">
+        <button data-act="import" class="bg-slate-700 hover:bg-slate-800 text-white px-4 py-1.5 rounded text-sm font-medium">⬆ 一括インポート</button>
         <button data-act="add" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded text-sm font-medium">+ 問題を追加</button>
         ${this.modeToggle()}
       </div>
@@ -341,6 +343,113 @@ const ELearningView = {
     }
   },
 
+  // ===== 一括インポート（admin・CSV）=====
+  _impRows: null,   // 解析済みの取込候補
+  _impMsg: '',
+
+  htmlImport() {
+    const cols = 'qid, unit, sub, difficulty, question, choice_a, choice_b, choice_c, choice_d, correct, explanation, source, active';
+    const preview = this._impRows ? `
+      <div class="mt-3 text-sm text-emerald-700">解析OK：<b>${this._impRows.length}</b> 問を取込みます（既存IDは上書き）。</div>
+      <div class="mt-2 max-h-48 overflow-auto border rounded text-xs">
+        <table class="w-full"><thead class="bg-slate-100"><tr><th class="px-2 py-1 text-left">ID</th><th class="px-2 py-1 text-left">単元</th><th class="px-2 py-1 text-left">問題（冒頭）</th><th class="px-2 py-1">正解</th></tr></thead>
+        <tbody>${this._impRows.slice(0, 50).map(r => `<tr class="border-t border-slate-100"><td class="px-2 py-1">${this.esc(r.qid)}</td><td class="px-2 py-1">${this.esc(r.unit)}</td><td class="px-2 py-1">${this.esc((r.question || '').slice(0, 30))}…</td><td class="px-2 py-1 text-center font-bold">${this.esc(r.correct)}</td></tr>`).join('')}</tbody></table>
+      </div>` : '';
+    return `
+    <div class="bg-white rounded-lg shadow p-6 max-w-2xl mx-auto">
+      <div class="text-lg font-bold mb-1">問題の一括インポート（CSV）</div>
+      <div class="text-xs text-slate-500 mb-4">1行目はヘッダ。列：<code class="bg-slate-100 px-1 rounded">${cols}</code><br>
+        active は空/1/true/公開 で公開、0/false/非公開 で非公開。既存IDは上書き（差替）されます。</div>
+      <label class="block text-xs text-slate-500 mb-1">CSVファイルを選択</label>
+      <input type="file" id="eq-imp-file" accept=".csv,text/csv" class="block w-full text-sm mb-3">
+      <label class="block text-xs text-slate-500 mb-1">またはCSVを貼り付け</label>
+      <textarea id="eq-imp-text" rows="5" class="border rounded w-full px-2 py-1.5 text-xs font-mono" placeholder="qid,unit,sub,...（ヘッダ行から貼り付け）"></textarea>
+      <div id="eq-imp-status" class="text-xs min-h-[16px] mt-2 ${this._impMsg.startsWith('×') ? 'text-red-600' : 'text-slate-500'}">${this.esc(this._impMsg)}</div>
+      ${preview}
+      <div class="flex gap-3 mt-4">
+        <button data-act="imp-parse" class="px-4 py-2 rounded-lg font-medium text-white bg-slate-700 hover:bg-slate-800">解析プレビュー</button>
+        <button data-act="imp-run" ${this._impRows && this._impRows.length ? '' : 'disabled'} class="px-4 py-2 rounded-lg font-bold text-white ${this._impRows && this._impRows.length ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-300 cursor-not-allowed'}">取込実行</button>
+        <button data-act="imp-cancel" class="px-4 py-2 rounded-lg font-medium text-slate-700 bg-white border border-slate-300">キャンセル</button>
+      </div>
+    </div>`;
+  },
+
+  // RFC4180 風 CSV パーサ（引用符・カンマ・改行・"" エスケープに対応）
+  parseCSV(text) {
+    const rows = []; let row = []; let f = ''; let q = false;
+    const s = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (q) {
+        if (c === '"') { if (s[i + 1] === '"') { f += '"'; i++; } else q = false; }
+        else f += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(f); f = ''; }
+      else if (c === '\n') { row.push(f); rows.push(row); row = []; f = ''; }
+      else f += c;
+    }
+    if (f.length || row.length) { row.push(f); rows.push(row); }
+    return rows.filter(r => r.length && !(r.length === 1 && r[0].trim() === ''));
+  },
+
+  rowsToQuestions(rows) {
+    if (!rows.length) throw new Error('データがありません');
+    const header = rows[0].map(h => h.trim().toLowerCase());
+    const need = ['qid', 'unit', 'question', 'choice_a', 'choice_b', 'choice_c', 'choice_d', 'correct'];
+    const miss = need.filter(k => !header.includes(k));
+    if (miss.length) throw new Error('必要な列が不足：' + miss.join(', '));
+    const idx = {}; header.forEach((h, i) => idx[h] = i);
+    const get = (r, k) => (idx[k] != null && r[idx[k]] != null) ? String(r[idx[k]]).trim() : '';
+    const out = [];
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const qid = get(r, 'qid');
+      if (!qid) continue;
+      const correct = get(r, 'correct').toUpperCase();
+      if (!['A', 'B', 'C', 'D'].includes(correct)) throw new Error(`${qid}: 正解は A/B/C/D（現在 "${correct}"）`);
+      const activeRaw = get(r, 'active').toLowerCase();
+      const active = !(activeRaw === '0' || activeRaw === 'false' || activeRaw === '非公開' || activeRaw === 'no');
+      out.push({
+        qid, unit: get(r, 'unit'), sub: get(r, 'sub'), difficulty: get(r, 'difficulty'),
+        question: get(r, 'question'), choice_a: get(r, 'choice_a'), choice_b: get(r, 'choice_b'),
+        choice_c: get(r, 'choice_c'), choice_d: get(r, 'choice_d'), correct,
+        explanation: get(r, 'explanation'), source: get(r, 'source'), active,
+      });
+    }
+    if (!out.length) throw new Error('取込める行がありません');
+    return out;
+  },
+
+  async impParse() {
+    this._impRows = null; this._impMsg = '解析中…';
+    const fileInput = document.getElementById('eq-imp-file');
+    const text = (document.getElementById('eq-imp-text') || {}).value || '';
+    try {
+      let raw = text.trim();
+      if (!raw && fileInput && fileInput.files && fileInput.files[0]) raw = await fileInput.files[0].text();
+      if (!raw) { this._impMsg = '× CSVファイルを選ぶか、貼り付けてください'; return this.render(); }
+      this._impRows = this.rowsToQuestions(this.parseCSV(raw));
+      this._impMsg = '';
+    } catch (e) {
+      this._impRows = null; this._impMsg = '× ' + (e.message || e);
+    }
+    this.render();
+  },
+
+  async impRun() {
+    if (!this._impRows || !this._impRows.length) return;
+    this._impMsg = '取込中…'; this.render();
+    try {
+      const res = await Sync.bulkUpsertQuizQuestions(this._impRows);
+      this._impRows = null; this._impMsg = '';
+      this.screen = 'manage';
+      await this.refresh();
+      alert(`${res.count}問を取込みました。`);
+    } catch (e) {
+      this._impMsg = '× ' + (e.message || e); this.render();
+    }
+  },
+
   // ===== クリック委譲 =====
   onClick(e) {
     const t = e.target.closest('[data-act]');
@@ -356,6 +465,10 @@ const ELearningView = {
     if (act === 'learn') { this.screen = 'start'; return this.render(); }
     if (act === 'manage') { if (!this.isAdmin()) return; this.screen = 'manage'; return this.render(); }
     if (act === 'add') { if (!this.isAdmin()) return; this._editing = {}; this.screen = 'edit'; return this.render(); }
+    if (act === 'import') { if (!this.isAdmin()) return; this._impRows = null; this._impMsg = ''; this.screen = 'import'; return this.render(); }
+    if (act === 'imp-parse') return this.impParse();
+    if (act === 'imp-run') return this.impRun();
+    if (act === 'imp-cancel') { this._impRows = null; this._impMsg = ''; this.screen = 'manage'; return this.render(); }
     if (act === 'edit') {
       if (!this.isAdmin()) return;
       this._editing = this.allQuestions.find(x => String(x.id) === t.dataset.id) || {};
