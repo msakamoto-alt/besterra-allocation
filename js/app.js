@@ -14,6 +14,7 @@ const App = {
     dash:       ['admin', 'editor', 'executive', 'manager'],
     prospects:  ['admin', 'editor', 'executive'],
     management: ['admin', 'executive'],   // 段階E3: 経営機密。閲覧は管理者・経営者のみ（RLSでも強制）
+    elearning:  ['admin', 'editor', 'executive', 'manager', 'viewer'],  // 段階E4a: 安全学習はログイン者全員
     orgchart:   ['admin'],
   },
   canViewTab(tab) {
@@ -36,6 +37,7 @@ const App = {
     OrgChartView.init();
     AccountsView.init();
     ManagementView.init();
+    ELearningView.init();
 
     // 段階E1: 既存ログインセッションがあれば復元してそのまま入る
     if (await Sync.refreshSession()) {
@@ -122,6 +124,7 @@ const App = {
     if (name === 'prospects') ProspectsView.refresh();
     if (name === 'orgchart') OrgChartView.refresh();
     if (name === 'management') ManagementView.refresh();
+    if (name === 'elearning') ELearningView.refresh();
   },
 
   // 段階E2: ロールに応じてタブの表示/非表示を切り替え、見られる最初のタブを開く
@@ -184,6 +187,7 @@ const App = {
     try { ProspectsView.refresh(); } catch (e) { console.error('ProspectsView失敗:', e); }
     try { OrgChartView.refresh(); } catch (e) { console.error('OrgChartView失敗:', e); }
     try { ManagementView.refresh(); } catch (e) { console.error('ManagementView失敗:', e); }
+    try { ELearningView.refresh(); } catch (e) { console.error('ELearningView失敗:', e); }
   },
 
   updateLastSync() {

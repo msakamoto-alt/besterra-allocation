@@ -88,6 +88,7 @@
         <button class="tab-btn px-5 py-3 font-medium" data-tab="gantt">現場人員配置</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="dash">監督ダッシュボード</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="prospects">見込み案件</button>
+        <button class="tab-btn px-5 py-3 font-medium" data-tab="elearning">安全学習</button>
       </div>
     </nav>
 
@@ -305,6 +306,15 @@
         <div class="bg-white rounded-lg shadow overflow-hidden">
           <div id="mgmt-viewer"></div>
         </div>
+      </section>
+
+      <!-- ========== 安全学習（段階E4a: 安全Eラーニング）========== -->
+      <section id="tab-elearning" class="tab-panel hidden">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h2 class="text-xl font-bold">安全学習</h2>
+          <span class="text-xs text-slate-400">毎日の積み重ねが記録されます</span>
+        </div>
+        <div id="elearn-body"></div>
       </section>
 
     </main>
@@ -689,6 +699,7 @@
   <script src="js/views/orgchart.js"></script>
   <script src="js/views/accounts.js"></script>
   <script src="js/views/management.js"></script>
+  <script src="js/views/elearning.js"></script>
   <script src="js/config.js" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
   <script src="js/app.js"></script>
 </body>

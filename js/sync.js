@@ -1273,6 +1273,7 @@ const Sync = {
       const sb = this.getSupabase();
       const { data: u } = await sb.auth.getUser();
       const uid = u && u.user && u.user.id;
+      this.userId = uid || null;            // 段階E4: 自分の学習ログ絞り込み用
       if (!uid) {
         this.role = null;
       } else {
@@ -1283,6 +1284,7 @@ const Sync = {
     } catch (e) {
       console.error('ロール取得失敗:', e);
       this.role = null;
+      this.userId = null;
     }
     this.isEditor = (this.role === 'admin' || this.role === 'editor');  // 後方互換
     return this.role;
@@ -1395,6 +1397,77 @@ const Sync = {
   async deleteManagementReport(id) {
     const sb = this.getSupabase();
     const res = await sb.from('management_reports').delete().eq('id', id);
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
+  // ===== 段階E4a: 安全Eラーニング（quiz_questions / quiz_answers）=====
+  // 出題は RLS で「公開問題は全員・非公開は admin のみ」。解答ログは本人INSERT・本人/管理職SELECT。
+
+  // 出題一覧。activeOnly=true なら公開問題のみ（学習用）。admin の精査では false で非公開も取得。
+  async listQuizQuestions(activeOnly) {
+    const sb = this.getSupabase();
+    let q = sb.from('quiz_questions')
+      .select('id, qid, unit, sub, difficulty, question, choice_a, choice_b, choice_c, choice_d, correct, explanation, source, active')
+      .order('qid', { ascending: true });
+    if (activeOnly) q = q.eq('active', true);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message || JSON.stringify(error));
+    return data || [];
+  },
+
+  // 解答を1件記録（user_id は default auth.uid()・answered_at は default now()）。fire-and-forget 用途。
+  async recordQuizAnswer({ question_id, qid, unit, choice, is_correct }) {
+    const sb = this.getSupabase();
+    const res = await sb.from('quiz_answers').insert({
+      question_id: question_id != null ? question_id : null,
+      qid: qid || null,
+      unit: unit || null,
+      choice: choice || null,
+      is_correct: !!is_correct,
+    });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
+  // 自分の学習カウント（今日 / 通算 の解答数）。ヘッダ表示用の軽量集計。
+  async myQuizCounts() {
+    const sb = this.getSupabase();
+    const uid = this.userId;
+    if (!uid) return { today: 0, total: 0 };
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const total = await sb.from('quiz_answers').select('id', { count: 'exact', head: true }).eq('user_id', uid);
+    const today = await sb.from('quiz_answers').select('id', { count: 'exact', head: true })
+      .eq('user_id', uid).gte('answered_at', start.toISOString());
+    return { today: today.count || 0, total: total.count || 0 };
+  },
+
+  // ----- 出題管理（admin のみ・RLSで強制）-----
+  async upsertQuizQuestion(q) {
+    const sb = this.getSupabase();
+    const row = {
+      qid: String(q.qid || '').trim(),
+      unit: q.unit, sub: q.sub || null, difficulty: q.difficulty || null,
+      question: q.question, choice_a: q.choice_a, choice_b: q.choice_b,
+      choice_c: q.choice_c, choice_d: q.choice_d, correct: q.correct,
+      explanation: q.explanation || null, source: q.source || null,
+      active: q.active !== false, updated_at: new Date().toISOString(),
+    };
+    const res = await sb.from('quiz_questions').upsert(row, { onConflict: 'qid' });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
+  async setQuizActive(id, active) {
+    const sb = this.getSupabase();
+    const res = await sb.from('quiz_questions').update({ active: !!active, updated_at: new Date().toISOString() }).eq('id', id);
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
+  async deleteQuizQuestion(id) {
+    const sb = this.getSupabase();
+    const res = await sb.from('quiz_questions').delete().eq('id', id);
     if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
     return { ok: true };
   },
