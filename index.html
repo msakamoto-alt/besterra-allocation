@@ -521,7 +521,7 @@
     <div id="project-status-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
         <div class="flex justify-between items-start mb-4">
-          <h3 class="text-lg font-bold text-slate-900">現場の状態を変更</h3>
+          <h3 class="text-lg font-bold text-slate-900">案件の修正</h3>
           <button id="project-status-modal-close" class="text-slate-400 hover:text-slate-700 text-2xl leading-none">×</button>
         </div>
         <div class="text-sm space-y-3">
@@ -546,8 +546,15 @@
             </label>
             <label class="flex items-center gap-2 cursor-pointer">
               <input type="radio" name="project-status-radio" value="auto" class="border-slate-400">
-              <span class="text-slate-600">自動判定に戻す<span class="text-xs text-slate-500 ml-1">（オーバーライドを削除）</span></span>
+              <span class="text-slate-600">自動判定に戻す<span class="text-xs text-slate-500 ml-1">（状態の上書きを解除）</span></span>
             </label>
+          </div>
+          <div class="border-t pt-3">
+            <div class="text-xs text-slate-500 mb-2">管轄事務所</div>
+            <select id="project-status-dept" class="border rounded w-full px-2 py-1.5 text-sm">
+              <option value="">自動（Salesforce元値）</option>
+            </select>
+            <p class="text-xs text-slate-400 mt-1">事務所軸でこの工事が所属する事務所。誤った管轄を正しい事務所へ付け替えできます。</p>
           </div>
           <div id="project-status-error" class="hidden text-sm text-red-600"></div>
         </div>

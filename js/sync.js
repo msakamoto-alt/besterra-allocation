@@ -773,18 +773,21 @@ const Sync = {
       const pid = String(r.project_id || '').trim();
       if (!pid) return;
       const raw = String(r.completed || '').trim().toLowerCase();
-      if (raw === 'true') map.set(pid, true);
-      else if (raw === 'false') map.set(pid, false);
-      // それ以外は無視（明示値のみ反映）
+      let completed = null;
+      if (raw === 'true') completed = true;
+      else if (raw === 'false') completed = false;
+      // 状態は明示値(true/false)のみ反映。dept は非空なら管轄事務所を上書き
+      const dept = String(r.dept || '').trim();
+      map.set(pid, { completed, dept });
     });
     if (map.size === 0) return projects;
     return projects.map(p => {
-      if (!map.has(p.project_id)) return p;
-      // override 値で completed を上書き（_status_overridden フラグも立てる）
-      return Object.assign({}, p, {
-        completed: map.get(p.project_id),
-        _status_overridden: true,
-      });
+      const ov = map.get(p.project_id);
+      if (!ov) return p;
+      const next = Object.assign({}, p);
+      if (ov.completed !== null) { next.completed = ov.completed; next._status_overridden = true; }
+      if (ov.dept) { next.dept = ov.dept; next._dept_overridden = true; }
+      return next;
     });
   },
 
@@ -1018,13 +1021,13 @@ const Sync = {
       const pid = String(payload.project_id || '').trim();
       if (!pid) fail('project_id required');
       const c = payload.completed;
-      let completedStr;
+      let completedStr = '';   // '' = 状態は自動（上書きしない）。管轄事務所だけ上書きするケースを許容
       if (c === true || c === 'true' || c === 'TRUE') completedStr = 'TRUE';
       else if (c === false || c === 'false' || c === 'FALSE') completedStr = 'FALSE';
-      else fail('completed must be true or false');
       check(await sb.from('project_status_overrides').upsert({
         project_id: pid,
         completed: completedStr,
+        dept: payload.dept || '',   // '' = 管轄事務所は自動（Salesforce元値）
         note: payload.note || '',
         updated_at: nowIso,
         updated_by: payload.updated_by || 'web',

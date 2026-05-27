@@ -986,16 +986,28 @@ const GanttView = {
     const overrideNote = proj._status_overridden ? '（手動で上書き中）' : '（自動判定）';
     document.getElementById('project-status-current').textContent = `${currentLabel} ${overrideNote}`;
 
-    // ラジオの初期選択：現在の状態（override がなければ自動判定そのもの）
+    // ラジオの初期選択：状態 override 中はその値、未 override は「自動判定」を選択
     const radios = document.getElementsByName('project-status-radio');
     radios.forEach(r => {
       if (proj._status_overridden) {
         r.checked = (r.value === (proj.completed ? 'completed' : 'in_progress'));
       } else {
-        // 未 override 時は「自動判定に戻す」を選択肢として明示しないため未選択
-        r.checked = false;
+        r.checked = (r.value === 'auto');
       }
     });
+
+    // 管轄事務所セレクタ：既存の全事務所（工事の管轄＋監督の所属）から選択肢を生成
+    const deptSel = document.getElementById('project-status-dept');
+    if (deptSel) {
+      const offices = new Set();
+      (Sync.cache.projects || []).forEach(p => { const d = String(p.dept || '').trim(); if (d) offices.add(d); });
+      (Sync.cache.employees || []).forEach(e => { const d = String(e.department || '').trim(); if (d) offices.add(d); });
+      const sorted = Array.from(offices).sort((a, b) => a.localeCompare(b, 'ja'));
+      deptSel.innerHTML = '<option value="">自動（Salesforce元値）</option>' +
+        sorted.map(d => `<option value="${this.esc(d)}">${this.esc(d)}</option>`).join('');
+      // 事務所 override 中はその値を選択、未 override は「自動」
+      deptSel.value = proj._dept_overridden ? (proj.dept || '') : '';
+    }
 
     const errEl = document.getElementById('project-status-error');
     if (errEl) { errEl.classList.add('hidden'); errEl.textContent = ''; }
@@ -1007,25 +1019,29 @@ const GanttView = {
     const pid = this._editingStatusProjectId;
     if (!pid) return;
     const radios = document.getElementsByName('project-status-radio');
-    let value = null;
+    let value = 'auto';
     radios.forEach(r => { if (r.checked) value = r.value; });
+    const deptSel = document.getElementById('project-status-dept');
+    const dept = deptSel ? deptSel.value : '';
     const errEl = document.getElementById('project-status-error');
     const showErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.classList.remove('hidden'); } };
 
-    if (!value) { showErr('変更後の状態を選択してください'); return; }
+    // 状態を文字列に（auto＝状態は上書きしない）
+    const completed = value === 'completed' ? 'true' : value === 'in_progress' ? 'false' : '';
 
     const saveBtn = document.getElementById('project-status-save');
     saveBtn.disabled = true;
     saveBtn.textContent = '保存中...';
     try {
-      if (value === 'auto') {
+      if (completed === '' && dept === '') {
+        // 状態も事務所も自動 → override 行を削除
         await Sync.postOverride({ action: 'project_status_delete', project_id: pid });
       } else {
-        const completed = (value === 'completed');
         await Sync.postOverride({
           action: 'project_status_upsert',
           project_id: pid,
-          completed: completed ? 'true' : 'false',
+          completed: completed,   // '' なら状態は自動
+          dept: dept,             // '' なら管轄事務所は自動
           updated_by: 'web',
         });
       }
@@ -1078,8 +1094,25 @@ const GanttView = {
   },
 
   // 現場1件分の行HTML（現場軸・事務所軸で共通利用）。ラベル列＋配置監督のバー（準備期間バー含む）。
+  // 縦積み順＝役割優先（主任技術者→副監督→派遣）→ 同役割は配属期間の長い順（上）→短い順（下）。
+  //   期間を短く修正すると、その人が自動で下に下がる。タイブレーク＝着工日→氏名。
   projectRowHtml(p, assignments, cells, colCount, todayMarkerHtml) {
-    const projAsgs = assignments.filter(a => a.project_id === p.project_id);
+    const rolePriority = (a) => {
+      const r = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
+      return r === '主任技術者' ? 0 : r === '副監督' ? 1 : r === '派遣' ? 2 : 3;
+    };
+    const durationMs = (a) => {
+      const s = this.parseDate(a.join), e = this.parseDate(a.planned_end || p.end);
+      return (isNaN(s) || isNaN(e)) ? -1 : (e - s);
+    };
+    const projAsgs = assignments.filter(a => a.project_id === p.project_id).sort((x, y) => {
+      const pr = rolePriority(x) - rolePriority(y);
+      if (pr !== 0) return pr;
+      const dd = durationMs(y) - durationMs(x);   // 期間の長い順（降順）
+      if (dd !== 0) return dd;
+      const sd = String(x.join || '').localeCompare(String(y.join || ''));
+      return sd !== 0 ? sd : String(x.emp_name || '').localeCompare(String(y.emp_name || ''), 'ja');
+    });
     const rowH = Math.max(64, 16 + Math.max(1, projAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
 
     // 配置未定・不足・派遣社員はバー内にのみ表示し、ラベル列はサマリー化（重複表示回避）
@@ -1100,9 +1133,10 @@ const GanttView = {
     const addBtn = canEdit
       ? `<button class="text-xs text-emerald-700 hover:underline mt-1 gantt-add-member" data-project-id="${this.esc(p.project_id)}">+ メンバー追加</button>`
       : '';
-    // 状態変更ボタン（completed フラグの手動上書き）。override 適用中なら「★」マーク付き
+    // 案件の修正ボタン（状態・管轄事務所の手動上書き）。いずれか上書き中なら「★」マーク付き
+    const projEdited = p._status_overridden || p._dept_overridden;
     const statusBtn = canEdit
-      ? `<button class="text-xs text-slate-600 hover:text-slate-900 hover:underline ml-2 mt-1 gantt-status-edit" data-project-id="${this.esc(p.project_id)}">${p._status_overridden ? '★ 状態を変更' : '状態を変更'}</button>`
+      ? `<button class="text-xs text-slate-600 hover:text-slate-900 hover:underline ml-2 mt-1 gantt-status-edit" data-project-id="${this.esc(p.project_id)}">${projEdited ? '★ 案件の修正' : '案件の修正'}</button>`
       : '';
     // 状態バッジ（完成 or 進行中）：オーバーライド適用中は色付け
     const isCompleted = !!p.completed;

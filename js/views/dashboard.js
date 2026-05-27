@@ -136,7 +136,7 @@ const DashboardView = {
           ? `<span class="ml-2 ${proj.completed ? 'bg-slate-200 text-slate-700' : 'bg-blue-100 text-blue-700'} px-1.5 py-0.5 rounded text-[10px]" title="手動で状態を上書き中">${proj.completed ? '完成' : '進行中'}</span>`
           : (proj.completed ? '<span class="ml-2 bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded text-[10px]">完成</span>' : '');
         const statusEditLink = canEdit
-          ? `<button class="dash-status-edit ml-2 text-slate-500 hover:text-slate-900 text-[11px] underline" data-project-id="${this.esc(a.project_id)}" title="現場の状態（完成/進行中）を変更">状態</button>`
+          ? `<button class="dash-status-edit ml-2 text-slate-500 hover:text-slate-900 text-[11px] underline" data-project-id="${this.esc(a.project_id)}" title="案件の修正（状態・管轄事務所）">修正</button>`
           : '';
         const editLink = canEdit
           ? '<td class="p-2 text-center"><span class="text-blue-600 text-xs underline">期間を変更</span></td>'
@@ -222,7 +222,7 @@ const DashboardView = {
           ? `<span class="ml-1 ${proj.completed ? 'bg-slate-200 text-slate-700' : 'bg-blue-100 text-blue-700'} px-1 py-0 rounded text-[10px]" title="手動で状態を上書き中">${proj.completed ? '完成' : '進行中'}</span>`
           : '';
         const statusEditLink = canEdit
-          ? `<button class="dash-status-edit ml-1 text-slate-500 hover:text-slate-900 text-[10px] underline" data-project-id="${this.esc(a.project_id)}" title="現場の状態（完成/進行中）を変更">状態</button>`
+          ? `<button class="dash-status-edit ml-1 text-slate-500 hover:text-slate-900 text-[10px] underline" data-project-id="${this.esc(a.project_id)}" title="案件の修正（状態・管轄事務所）">修正</button>`
           : '';
         const rowClass = canEdit
           ? 'border-t hover:bg-blue-50 cursor-pointer'
