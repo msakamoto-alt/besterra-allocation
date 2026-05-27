@@ -26,6 +26,9 @@ const GanttView = {
   currentProjectSort: 'start',
   currentProjectSortReversed: false,
 
+  // 資格軸の区分フィルタ（複数選択可・既定は全表示＝従来どおり）
+  qualCategoryFilter: new Set(['現場監督', '準現場監督', '監督サポート']),
+
   MONTH_WIDTH: 70,
   DAY_WIDTH: 26,
   LABEL_WIDTH: 300,
@@ -42,6 +45,9 @@ const GanttView = {
 
   // 配置未定・不足のバー色（点線描画）
   PLACEHOLDER_COLOR: '#cbd5e1',
+
+  // 区分の色（資格軸の区分トグル・監督リストの階層カードと統一）
+  CAT_COLOR: { '現場監督': '#0d9488', '準現場監督': '#d97706', '監督サポート': '#ea580c' },
 
   // 建設業法上、元請×下請外注合計5,000万円以上で監理技術者が必要。
   // 当システムは下請外注合計を持たないため、工事金額 ≥ 5,000万円 を proxy として使う
@@ -167,6 +173,22 @@ const GanttView = {
       reverseBtn.textContent = this.effectiveProjectSortDir() === 'asc' ? '↑' : '↓';
       reverseBtn.title = `現在: ${this.effectiveProjectSortDir() === 'asc' ? '昇順' : '降順'}（クリックで反転）`;
     }
+  },
+
+  // 資格軸の区分トグル：資格軸のときのみ表示し、選択状態を色で反映
+  updateQualFilterToolbar() {
+    const wrap = document.getElementById('gantt-qual-filter-wrap');
+    if (wrap) wrap.style.display = (this.currentAxis === 'qualification') ? '' : 'none';
+    document.querySelectorAll('.gantt-qual-cat-btn').forEach(btn => {
+      const cat = btn.dataset.cat;
+      const on = this.qualCategoryFilter.has(cat);
+      const color = this.CAT_COLOR[cat] || '#64748b';
+      btn.style.background = on ? color : '#ffffff';
+      btn.style.color = on ? '#ffffff' : '#475569';
+      btn.style.borderColor = on ? color : '#cbd5e1';
+      btn.style.fontWeight = on ? '600' : '400';
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
   },
 
   // 元請/下請 バッジHTML
@@ -330,6 +352,17 @@ const GanttView = {
       });
     }
 
+    // 資格軸 区分フィルタ（複数選択トグル：単一表示も複数表示も可）
+    document.querySelectorAll('.gantt-qual-cat-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cat = btn.dataset.cat;
+        if (this.qualCategoryFilter.has(cat)) this.qualCategoryFilter.delete(cat);
+        else this.qualCategoryFilter.add(cat);
+        this.updateQualFilterToolbar();
+        this.refresh();
+      });
+    });
+
     // プロジェクト状態モーダル
     const statusModal = document.getElementById('project-status-modal');
     if (statusModal) {
@@ -357,6 +390,7 @@ const GanttView = {
     const descEl = document.getElementById('gantt-description');
     if (descEl) descEl.textContent = this.AXIS_DESC[this.currentAxis] || '';
     this.updateProjectSortToolbar();
+    this.updateQualFilterToolbar();
 
     const container = document.getElementById('gantt-container');
     if (!container) return;
@@ -1215,6 +1249,9 @@ const GanttView = {
     if (quals.length === 0 || eqs.length === 0) {
       return '<p class="p-4 text-slate-500">資格データがありません</p>';
     }
+    if (this.qualCategoryFilter.size === 0) {
+      return '<p class="p-4 text-slate-500">表示する区分を1つ以上選択してください。</p>';
+    }
 
     const empMap = {};
     employees.forEach(e => empMap[e.id] = e);
@@ -1223,13 +1260,21 @@ const GanttView = {
     const colCount = cells.length;
     const todayMarkerHtml = this.todayMarker(cells);
 
+    // 資格グループは 1級 → 2級 → その他 の順に表示（同順位は名前順）
+    const qualRank = (n) => { const s = String(n || ''); return s.includes('1級') ? 0 : s.includes('2級') ? 1 : 2; };
+    const sortedQuals = quals.slice().sort((a, b) => {
+      const d = qualRank(a.name) - qualRank(b.name);
+      return d !== 0 ? d : String(a.name || '').localeCompare(String(b.name || ''), 'ja');
+    });
+
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
 
-    quals.forEach(q => {
+    sortedQuals.forEach(q => {
+      // 区分トグルで選択中の区分の保有者のみ（単一/複数選択に対応）
       const holders = eqs
         .filter(eq => eq.qual_id === q.id)
         .map(eq => ({ emp: empMap[eq.emp_id], eq }))
-        .filter(x => x.emp);
+        .filter(x => x.emp && this.qualCategoryFilter.has(x.emp.category));
       if (holders.length === 0) return;
 
       html += '<tr class="bg-blue-900 text-white">' +
@@ -1281,7 +1326,7 @@ const GanttView = {
     html += '</tbody></table>';
 
     html += this.legendRole();
-    html += '<p class="text-xs text-slate-500 p-3 border-t">※ 縦軸は資格別グループ。同一人が複数資格を保有する場合、各資格グループに重複表示されます。期限詳細は「4.資格管理」タブを参照。</p>';
+    html += '<p class="text-xs text-slate-500 p-3 border-t">※ 縦軸は資格別グループ（1級→2級→その他の順）。区分ボタンで現場監督／準現場監督／監督サポートの表示を切替できます。同一人が複数資格を保有する場合は各グループに重複表示。資格の取得日・有効期限の詳細は「監督ダッシュボード」を参照。</p>';
     return html;
   },
 

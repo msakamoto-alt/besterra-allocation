@@ -180,6 +180,12 @@
             </select>
             <button id="gantt-project-sort-reverse" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-2 py-1 rounded text-sm" title="昇降反転">↓</button>
           </span>
+          <span id="gantt-qual-filter-wrap" class="ml-2 inline-flex items-center gap-1.5" style="display:none">
+            <span class="text-sm text-slate-600">区分:</span>
+            <button class="gantt-qual-cat-btn px-2.5 py-1 rounded text-sm border transition" data-cat="現場監督">現場監督</button>
+            <button class="gantt-qual-cat-btn px-2.5 py-1 rounded text-sm border transition" data-cat="準現場監督">準現場監督</button>
+            <button class="gantt-qual-cat-btn px-2.5 py-1 rounded text-sm border transition" data-cat="監督サポート">監督サポート</button>
+          </span>
           <label class="ml-3 inline-flex items-center gap-1 text-sm text-slate-700 cursor-pointer">
             <input type="checkbox" id="gantt-show-completed" class="rounded border-slate-400">
             完成工事も表示
