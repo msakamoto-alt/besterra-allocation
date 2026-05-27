@@ -309,13 +309,21 @@ const DashboardView = {
       qualHtml = banner + groups;
     }
 
+    // 施工管理技士タグ（qualifications_raw＝1級/2級 施工管理技士）を区分バッジの横に表示。
+    // 1級＝インディゴ（上位）／2級＝スカイ（下位）で等級を色分け。
+    const sekouClass = (t) => t.includes('1級')
+      ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+      : 'bg-sky-100 text-sky-700 border-sky-300';
+    const sekouBadges = String(emp.qualifications_raw || '').split('、').map(s => s.trim()).filter(Boolean)
+      .map(t => `<span class="${sekouClass(t)} border px-2 py-0.5 rounded text-xs font-medium">${this.esc(t)}</span>`).join('');
+
     document.getElementById('dash-content').innerHTML =
       '<div class="grid grid-cols-2 gap-4 mb-4">' +
         '<div class="bg-white rounded-lg shadow p-4">' +
           '<div class="text-sm text-slate-600">監督名</div>' +
           `<div class="text-xl font-bold mt-1">${this.esc(emp.name)}</div>` +
           `<div class="text-xs text-slate-500 mt-1">${this.esc(emp.department || '-')} / ${this.esc(emp.role || '一般')}</div>` +
-          `<div class="mt-2">${PoolView.categoryBadge(emp.category)}</div>` +
+          `<div class="mt-2 flex flex-wrap items-center gap-1.5">${PoolView.categoryBadge(emp.category)}${sekouBadges}</div>` +
         '</div>' +
         '<div class="bg-white rounded-lg shadow p-4">' +
           '<div class="text-sm text-slate-600">配置状況</div>' +

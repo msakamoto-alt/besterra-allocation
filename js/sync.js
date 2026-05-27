@@ -462,6 +462,13 @@ const Sync = {
     return t.replace(/一級/g, '1級').replace(/二級/g, '2級');
   },
 
+  // 実務経験で施工管理技士の要件を満たす監督の補完（SmartHRに証書データが無いケース）。
+  //   キー=社員番号（同姓回避のため番号で指定）／値=deriveSekouTags が解釈できる資格名。
+  //   ここに足すと qualifications_raw 経由で資格軸ガント・ダッシュボードのバッジ両方に反映される。
+  EXPERIENCE_SEKOU: {
+    '2007': '1級施工管理技士',  // 竹内信広：実務経験で1級施工管理技士の要件を満たす
+  },
+
   // 段階Q: 保有資格名の配列から「1級/2級 施工管理技士」タグを導出。
   //   建築/土木/電気/管/造園 等の細分は畳む。技士「補」は下位資格のため除外。
   //   1級2級を両方保有する場合は上位（1級）のみ（資格軸ガントで二重表示しない）。
@@ -1441,7 +1448,10 @@ const Sync = {
         department: primary ? String(primary).split('/').pop() : '',
         role: positions[0] || '',
         role_title: positions[0] || '',
-        qualifications_raw: this.deriveSekouTags((detailsByEmp[empNo] || []).map(d => d.name)).join('、'),
+        qualifications_raw: this.deriveSekouTags(
+          (detailsByEmp[empNo] || []).map(d => d.name)
+            .concat(this.EXPERIENCE_SEKOU[empNo] ? [this.EXPERIENCE_SEKOU[empNo]] : [])
+        ).join('、'),
         qual_details: detailsByEmp[empNo] || [],
         category: this.judgeCategory(empNo, depts, tierByEmp),
         status: 'active',
