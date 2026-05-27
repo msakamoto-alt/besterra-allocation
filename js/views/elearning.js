@@ -178,6 +178,9 @@ const ELearningView = {
 
     const pct = this.sCount ? Math.round(this.sCorrect / this.sCount * 100) : 0;
     return `
+    <div class="max-w-2xl mx-auto mb-2">
+      <button data-act="home" class="text-sm text-slate-500 hover:text-slate-800">← 中断してホームへ</button>
+    </div>
     <div class="bg-white rounded-lg shadow p-5 max-w-2xl mx-auto">
       <div class="flex items-center justify-between text-xs text-slate-500 mb-3">
         <span>${this.esc(q.unit)}${q.sub ? ' / ' + this.esc(q.sub) : ''} <span class="text-amber-500">${this.esc(q.difficulty || '')}</span></span>
