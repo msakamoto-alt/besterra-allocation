@@ -1337,6 +1337,54 @@ const Sync = {
     return { ok: true };
   },
 
+  // ===== 段階E3: 経営ドッキング（management_reports）=====
+  // 経営機密。RLS で SELECT=admin/executive・書込=admin に制限済み（phaseE3_management_reports.sql）。
+  // html_content は重い（1本約75KB）ので、一覧はメタのみ取得し、本文は選択時に個別取得する。
+
+  // レポート一覧（メタのみ・html_content を含めない）。admin/executive 以外は RLS で 0 件。
+  async listManagementReports() {
+    const sb = this.getSupabase();
+    const { data, error } = await sb.from('management_reports')
+      .select('id, report_type, year_month, title, uploaded_at, uploaded_by')
+      .order('year_month', { ascending: false });
+    if (error) throw new Error(error.message || JSON.stringify(error));
+    return data || [];
+  },
+
+  // 指定レポートの HTML 本文を取得（選択時に遅延ロード）。
+  async fetchManagementReportHtml(id) {
+    const sb = this.getSupabase();
+    const { data, error } = await sb.from('management_reports')
+      .select('html_content').eq('id', id).maybeSingle();
+    if (error) throw new Error(error.message || JSON.stringify(error));
+    return (data && data.html_content) || '';
+  },
+
+  // レポートのアップロード/差替（admin のみ・(report_type, year_month) で upsert）。
+  async upsertManagementReport({ report_type, year_month, title, html_content }) {
+    const sb = this.getSupabase();
+    const { data: u } = await sb.auth.getUser();
+    const email = (u && u.user && u.user.email) || 'admin';
+    const res = await sb.from('management_reports').upsert({
+      report_type,
+      year_month: String(year_month).trim(),
+      title: title || null,
+      html_content,
+      uploaded_at: new Date().toISOString(),
+      uploaded_by: email,
+    }, { onConflict: 'report_type,year_month' });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
+  // レポート削除（admin のみ）。
+  async deleteManagementReport(id) {
+    const sb = this.getSupabase();
+    const res = await sb.from('management_reports').delete().eq('id', id);
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
   // 段階D: 階層の自動判定（階層1のみ自動・階層2/3は手動）。
   //   - employee_tiers に手動判定があれば最優先
   //   - 自動：所属が「工事部配下の事務所/作業所」のみ（単独所属）→ 監督職（現場監督）

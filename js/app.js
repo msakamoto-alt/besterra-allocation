@@ -7,11 +7,12 @@ const App = {
 
   // 段階E2: ロール別に閲覧できるタブ（編集可否は別途 Sync.canEdit で制御）
   TAB_ROLES: {
-    pool:      ['admin', 'editor', 'executive', 'manager'],
-    gantt:     ['admin', 'editor', 'executive', 'manager', 'viewer'],
-    dash:      ['admin', 'editor', 'executive', 'manager'],
-    prospects: ['admin', 'editor', 'executive'],
-    orgchart:  ['admin'],
+    pool:       ['admin', 'editor', 'executive', 'manager'],
+    gantt:      ['admin', 'editor', 'executive', 'manager', 'viewer'],
+    dash:       ['admin', 'editor', 'executive', 'manager'],
+    prospects:  ['admin', 'editor', 'executive'],
+    management: ['admin', 'executive'],   // 段階E3: 経営機密。閲覧は管理者・経営者のみ（RLSでも強制）
+    orgchart:   ['admin'],
   },
   canViewTab(tab) {
     const allow = this.TAB_ROLES[tab];
@@ -32,6 +33,7 @@ const App = {
     MemberAdd.init();
     OrgChartView.init();
     AccountsView.init();
+    ManagementView.init();
 
     // 段階E1: 既存ログインセッションがあれば復元してそのまま入る
     if (await Sync.refreshSession()) {
@@ -117,6 +119,7 @@ const App = {
     if (name === 'gantt') GanttView.refresh();
     if (name === 'prospects') ProspectsView.refresh();
     if (name === 'orgchart') OrgChartView.refresh();
+    if (name === 'management') ManagementView.refresh();
   },
 
   // 段階E2: ロールに応じてタブの表示/非表示を切り替え、見られる最初のタブを開く

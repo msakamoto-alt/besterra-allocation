@@ -87,6 +87,7 @@
         <button class="tab-btn px-5 py-3 font-medium" data-tab="gantt">現場人員配置</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="dash">監督ダッシュボード</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="prospects">見込み案件</button>
+        <button class="tab-btn px-5 py-3 font-medium" data-tab="management">経営レポート</button>
       </div>
     </nav>
 
@@ -275,6 +276,28 @@
         </div>
         <div class="flex items-center gap-4 mb-3 text-xs flex-wrap" id="org-legend"></div>
         <div id="orgchart-content" class="text-sm"></div>
+      </section>
+
+      <!-- ========== タブ6：経営レポート（段階E3: admin/executive限定） ========== -->
+      <section id="tab-management" class="tab-panel hidden">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h2 class="text-xl font-bold">経営レポート</h2>
+          <div class="flex items-center gap-2">
+            <button id="mgmt-delete-btn" class="mgmt-admin-only hidden bg-red-100 hover:bg-red-200 text-red-700 border border-red-300 px-3 py-1.5 rounded text-sm">表示中を削除</button>
+            <button id="mgmt-upload-btn" class="mgmt-admin-only hidden bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded text-sm font-medium">+ レポートを追加・差替</button>
+          </div>
+        </div>
+        <div class="bg-white rounded-lg shadow px-4 py-3 mb-3 flex items-center gap-3 flex-wrap">
+          <span class="text-sm font-medium text-slate-700 mr-1">種類:</span>
+          <button class="mgmt-type-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-type="analysis">月次経営分析</button>
+          <button class="mgmt-type-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-type="rf">ローリングフォーキャスト</button>
+          <span class="text-sm font-medium text-slate-700 ml-3">対象月:</span>
+          <select id="mgmt-month" class="border rounded px-3 py-1.5 text-sm bg-white min-w-[180px]"></select>
+          <span class="text-xs text-slate-400 ml-auto">🔒 管理者・経営者のみ閲覧</span>
+        </div>
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+          <div id="mgmt-viewer"></div>
+        </div>
       </section>
 
     </main>
@@ -571,6 +594,43 @@
       </div>
     </div>
 
+    <!-- ========== 経営レポート アップロードモーダル（段階E3: admin専用）========== -->
+    <div id="mgmt-upload-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+        <div class="flex justify-between items-start mb-4">
+          <h3 class="text-lg font-bold text-slate-900">レポートを追加・差替</h3>
+          <button id="mgmt-upload-close" class="text-slate-400 hover:text-slate-700 text-2xl leading-none">×</button>
+        </div>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">種類 <span class="text-red-500">*</span></label>
+            <select id="mgmt-up-type" class="border rounded w-full px-2 py-1.5 text-sm">
+              <option value="analysis">月次経営分析レポート</option>
+              <option value="rf">ローリングフォーキャスト分析資料</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">対象月 <span class="text-red-500">*</span></label>
+            <input type="month" id="mgmt-up-month" class="border rounded w-full px-2 py-1.5 text-sm">
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">タイトル（任意）</label>
+            <input type="text" id="mgmt-up-title" class="border rounded w-full px-2 py-1.5 text-sm" placeholder="例：Phase A v7">
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">HTMLファイル <span class="text-red-500">*</span></label>
+            <input type="file" id="mgmt-up-file" accept=".html,.htm,text/html" class="border rounded w-full px-2 py-1.5 text-sm">
+            <p class="text-xs text-slate-400 mt-1">生成済みの月次経営分析／R/F分析資料の .html を選択。同じ種類・同じ月は上書きされます。</p>
+          </div>
+          <div id="mgmt-up-status" class="text-xs min-h-[16px]"></div>
+        </div>
+        <div class="mt-5 flex justify-end gap-2">
+          <button id="mgmt-upload-cancel" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm">キャンセル</button>
+          <button id="mgmt-upload-save" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded text-sm font-medium">保存</button>
+        </div>
+      </div>
+    </div>
+
     <footer class="text-center text-xs text-slate-500 py-6 border-t">
       統合管理ツール v0.8 / Supabase 連携
       （閲覧は公開・編集はログイン制／参照データはSheets編集→同期）
@@ -609,6 +669,7 @@
   <script src="js/views/member_add.js"></script>
   <script src="js/views/orgchart.js"></script>
   <script src="js/views/accounts.js"></script>
+  <script src="js/views/management.js"></script>
   <script src="js/config.js" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
   <script src="js/app.js"></script>
 </body>
