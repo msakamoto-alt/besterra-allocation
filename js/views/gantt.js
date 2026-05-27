@@ -665,23 +665,12 @@ const GanttView = {
 
     document.getElementById('gantt-modal-body').innerHTML = body;
 
-    // 編集ボタンの表示制御（API設定がある場合のみ有効化）
+    // 編集ボタンの活性化（API設定がある場合）。表示モードの各ボタンの表示/非表示は
+    // exitEditMode に集約（表示モード＝配属解除＋編集する／編集モード＝元値に戻す＋保存）。
     const editBtn = document.getElementById('gantt-modal-edit-btn');
-    const resetBtn = document.getElementById('gantt-modal-reset-btn');
-    const apiAvailable = Sync.canEdit();
-    if (apiAvailable) {
-      editBtn.classList.remove('hidden');
-      editBtn.disabled = false;
-      editBtn.title = '';
-      // 変更済みの場合のみ「元に戻す」表示
-      if (a.overridden) resetBtn.classList.remove('hidden');
-      else resetBtn.classList.add('hidden');
-    } else {
-      editBtn.classList.add('hidden');
-      resetBtn.classList.add('hidden');
-    }
+    if (Sync.canEdit()) { editBtn.disabled = false; editBtn.title = ''; }
 
-    this.exitEditMode();  // 編集フォームは閉じた状態で開く
+    this.exitEditMode();  // 編集フォームは閉じた状態で開く（表示モードのボタン状態に整える）
     document.getElementById('gantt-modal').classList.remove('hidden');
   },
 
@@ -738,12 +727,11 @@ const GanttView = {
     document.getElementById('gantt-modal-edit-btn').classList.add('hidden');
     document.getElementById('gantt-modal-save-btn').classList.remove('hidden');
     document.getElementById('gantt-modal-cancel-btn').classList.remove('hidden');
-    // 「元値に戻す」は表示モード専用 → 編集モードでは隠す（キャンセル/配属解除に集約）
-    document.getElementById('gantt-modal-reset-btn').classList.add('hidden');
-    // 解除ボタンも表示（API利用可なら）
-    if (Sync.canEdit()) {
-      document.getElementById('gantt-modal-remove-btn').classList.remove('hidden');
-    }
+    // 配属解除は表示モード専用 → 編集モードでは隠す
+    document.getElementById('gantt-modal-remove-btn').classList.add('hidden');
+    // 「元値に戻す」は編集モードに置く（保存の隣・変更済みのときのみ）
+    document.getElementById('gantt-modal-reset-btn').classList.toggle('hidden',
+      !(Sync.canEdit() && this.currentAssignment && this.currentAssignment.overridden));
   },
 
   // 表示モードに戻す
@@ -751,13 +739,15 @@ const GanttView = {
     document.getElementById('gantt-modal-edit').classList.add('hidden');
     document.getElementById('gantt-modal-save-btn').classList.add('hidden');
     document.getElementById('gantt-modal-cancel-btn').classList.add('hidden');
-    document.getElementById('gantt-modal-remove-btn').classList.add('hidden');
+    // 「元値に戻す」は編集モード専用 → 表示モードでは隠す
+    document.getElementById('gantt-modal-reset-btn').classList.add('hidden');
     if (Sync.canEdit()) {
       document.getElementById('gantt-modal-edit-btn').classList.remove('hidden');
+      // 配属解除は表示モードに置く（編集するの隣）
+      document.getElementById('gantt-modal-remove-btn').classList.remove('hidden');
+    } else {
+      document.getElementById('gantt-modal-remove-btn').classList.add('hidden');
     }
-    // 表示モードに戻ったら、変更済みのときだけ「元値に戻す」を再表示
-    const a = this.currentAssignment;
-    document.getElementById('gantt-modal-reset-btn').classList.toggle('hidden', !(Sync.canEdit() && a && a.overridden));
   },
 
   // 保存（GAS へ upsert POST）
