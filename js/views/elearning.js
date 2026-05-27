@@ -15,7 +15,7 @@ const ELearningView = {
   allQuestions: [],                    // admin は非公開も含む全件
   questions: [],                       // 公開問題（学習対象）
   counts: { today: 0, total: 0 },
-  screen: 'start',                     // start | quiz | summary | manage | edit
+  screen: 'progress',                  // progress(ホーム) | quiz | summary | manage | edit | import
   unit: 'all',                         // 選択中の単元（学習）
   n: 10,                               // 出題数
   queue: [],
@@ -55,8 +55,8 @@ const ELearningView = {
       console.error('出題取得失敗:', e);
     }
     try { this.counts = await Sync.myQuizCounts(); } catch (e) { /* noop */ }
-    // クイズ/編集/インポート/進捗の最中は再描画しない（進行中の状態・自前ロードを保護）
-    if (['quiz', 'edit', 'import', 'progress'].includes(this.screen)) return;
+    // クイズ/編集/インポートの最中は再描画しない（進行中の状態を保護）。ホーム(progress)は描画する。
+    if (['quiz', 'edit', 'import'].includes(this.screen)) return;
     this.render();
   },
 
@@ -68,8 +68,9 @@ const ELearningView = {
     if (this.screen === 'edit') return body.innerHTML = this.htmlEdit();
     if (this.screen === 'quiz') return body.innerHTML = this.htmlQuiz();
     if (this.screen === 'summary') return body.innerHTML = this.htmlSummary();
-    if (this.screen === 'progress') return body.innerHTML = this.htmlProgress();
-    return body.innerHTML = this.htmlStart();
+    // 既定はホーム（進捗）。未取得なら遅延ロード（多重起動はフラグで防止）
+    if (this._stats === null && !this._loadingProgress) this.loadProgressData();
+    return body.innerHTML = this.htmlProgress();
   },
 
   // ===== 共通パーツ =====
@@ -80,9 +81,8 @@ const ELearningView = {
     </div>`;
   },
   navBar() {
-    const cur = (this.screen === 'manage' || this.screen === 'edit' || this.screen === 'import') ? 'manage'
-      : this.screen === 'progress' ? 'progress' : 'learn';
-    const items = [['learn', '学習'], ['progress', '進捗']];
+    const cur = (this.screen === 'manage' || this.screen === 'edit' || this.screen === 'import') ? 'manage' : 'home';
+    const items = [['home', 'ホーム']];
     if (this.isAdmin()) items.push(['manage', '出題管理']);
     const btn = ([act, label]) => {
       const on = cur === act;
@@ -92,15 +92,15 @@ const ELearningView = {
     return `<div class="flex gap-2">${items.map(btn).join('')}</div>`;
   },
 
-  // ===== 学習: スタート =====
-  htmlStart() {
+  // ===== 学習をはじめる カード（進捗ホームに内蔵）=====
+  startCard() {
     const byUnit = {};
     this.questions.forEach(q => { byUnit[q.unit] = (byUnit[q.unit] || 0) + 1; });
     const total = this.questions.length;
     const chip = (val, label, cnt) => {
       const on = this.unit === val;
       return `<button data-act="unit" data-unit="${this.esc(val)}"
-        class="px-4 py-2 rounded-lg text-sm font-medium border-2 ${on
+        class="px-3 py-1.5 rounded-lg text-sm font-medium border-2 ${on
           ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-700 border-slate-300 hover:border-red-300'}">
         ${this.esc(label)} <span class="opacity-70">(${cnt})</span></button>`;
     };
@@ -118,21 +118,17 @@ const ELearningView = {
     const avail = this.unit === 'all' ? total : (byUnit[this.unit] || 0);
     const canStart = avail > 0;
     return `
-    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-      ${this.countsBar()}
-      ${this.navBar()}
-    </div>
-    <div class="bg-white rounded-lg shadow p-6 max-w-2xl mx-auto">
-      <div class="text-center mb-1 text-lg font-bold text-slate-800">毎朝、現場に入る前の安全クイズ</div>
-      <div class="text-center text-sm text-slate-500 mb-5">分野と問題数を選んで「はじめる」</div>
-      <div class="mb-4"><div class="text-xs text-slate-500 mb-2">分野</div>${unitChips}</div>
-      <div class="mb-6"><div class="text-xs text-slate-500 mb-2">問題数</div>
-        <div class="flex gap-2">${this.COUNT_OPTIONS.map(nBtn).join('')}</div></div>
+    <div class="bg-white rounded-xl border border-slate-200 p-5 mb-4">
+      <div class="text-base font-bold text-slate-800 mb-3">学習をはじめる</div>
+      <div class="grid sm:grid-cols-[auto_1fr] gap-x-4 gap-y-2 items-center mb-4">
+        <div class="text-xs text-slate-500">分野</div><div>${unitChips}</div>
+        <div class="text-xs text-slate-500">問題数</div><div class="flex gap-2">${this.COUNT_OPTIONS.map(nBtn).join('')}</div>
+      </div>
       <button data-act="start" ${canStart ? '' : 'disabled'}
         class="w-full py-3 rounded-lg font-bold text-white ${canStart
           ? 'bg-red-600 hover:bg-red-700' : 'bg-slate-300 cursor-not-allowed'}">
-        はじめる（${avail}問から${this.n === 0 ? '全部' : Math.min(this.n, avail) + '問'}）</button>
-      ${total === 0 ? '<div class="text-center text-sm text-slate-400 mt-4">公開中の問題がまだありません。</div>' : ''}
+        ▶ はじめる（${avail ? (this.n === 0 ? '全' + avail : Math.min(this.n, avail)) + '問' : '0問'}）</button>
+      ${total === 0 ? '<div class="text-center text-sm text-slate-400 mt-3">公開中の問題がまだありません。</div>' : ''}
     </div>`;
   },
 
@@ -226,7 +222,7 @@ const ELearningView = {
       <div class="text-sm text-slate-500 mb-6">${this.sCount}問中 ${this.sCorrect}問 正解</div>
       <div class="flex gap-3 justify-center">
         <button data-act="again" class="px-5 py-2.5 rounded-lg font-bold text-white bg-red-600 hover:bg-red-700">もう一度</button>
-        <button data-act="pick" class="px-5 py-2.5 rounded-lg font-medium text-slate-700 bg-white border border-slate-300">分野を選ぶ</button>
+        <button data-act="home" class="px-5 py-2.5 rounded-lg font-medium text-slate-700 bg-white border border-slate-300">ホームへ</button>
       </div>
     </div>`;
   },
@@ -357,9 +353,15 @@ const ELearningView = {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   },
 
-  async showProgress() {
+  // ホーム（進捗）へ。stats を捨てて再取得させる（render の遅延ロードが拾う）。
+  showProgress() {
     this.screen = 'progress'; this._stats = null; this._editGoals = false;
     this.render();
+  },
+
+  // 進捗データの取得（render から遅延起動・多重起動はフラグで防止）
+  async loadProgressData() {
+    this._loadingProgress = true;
     try {
       const [ans, goals] = await Promise.all([Sync.fetchMyAnswers(), Sync.getMyGoals()]);
       this._goals = goals || this._goals;
@@ -368,7 +370,8 @@ const ELearningView = {
       console.error('進捗取得失敗:', e);
       this._stats = { error: String(e.message || e) };
     }
-    if (this.screen === 'progress') this.render();
+    this._loadingProgress = false;
+    this.render();
   },
 
   computeStats(answers) {
@@ -418,8 +421,14 @@ const ELearningView = {
   },
 
   htmlProgress() {
-    const top = `<div class="flex items-center justify-between mb-4 flex-wrap gap-2">${this.countsBar()}${this.navBar()}</div>`;
-    if (!this._stats) return top + '<div class="flex items-center justify-center h-48 text-slate-400 text-sm">読み込み中…</div>';
+    const name = Sync.displayName || (Sync.email || '').split('@')[0] || '';
+    const top = `<div class="flex items-start justify-between mb-4 flex-wrap gap-2">
+      <div>
+        <div class="text-xl font-bold text-slate-800">${this.esc(name)} さんの学習</div>
+        <div class="text-xs text-slate-400 mt-0.5">今日 ${this.counts.today} 問 ・ 通算 ${this.counts.total} 問</div>
+      </div>
+      ${this.navBar()}</div>`;
+    if (!this._stats) return top + this.startCard() + '<div class="flex items-center justify-center h-32 text-slate-400 text-sm">進捗を読み込み中…</div>';
     if (this._stats.error) return top + `<div class="flex items-center justify-center h-48 text-red-600 text-sm text-center px-4">進捗の取得に失敗しました。<br>SQL（phaseE4_elearning.sql / phaseE4b_goals.sql）が未実行の可能性があります。<br><span class="text-xs text-slate-400">${this.esc(this._stats.error)}</span></div>`;
     const s = this._stats, g = this._goals;
     const UNIT_COLORS = { '安全のしおり': '#2563eb', '規程類': '#d97706', 'ベステラスタンダード': '#dc2626', '過去事例': '#7c3aed', 'その他': '#64748b' };
@@ -488,7 +497,7 @@ const ELearningView = {
       }).join('')}</div></div>`
       : '<div class="bg-white rounded-xl border border-slate-200 p-4 text-center text-sm text-slate-400">まだ解答がありません。学習を始めましょう。</div>';
 
-    return top + cards + weekly + daily + totals + rings;
+    return top + cards + this.startCard() + weekly + daily + totals + rings;
   },
 
   async saveGoals() {
@@ -621,9 +630,7 @@ const ELearningView = {
     if (act === 'choose') return this.choose(t.dataset.letter);
     if (act === 'next') return this.next();
     if (act === 'again') return this.startSession();
-    if (act === 'pick') { this.screen = 'start'; return this.render(); }
-    if (act === 'learn') { this.screen = 'start'; return this.render(); }
-    if (act === 'progress') return this.showProgress();
+    if (act === 'home' || act === 'pick' || act === 'learn' || act === 'progress') return this.showProgress();
     if (act === 'editgoals') { this._editGoals = true; return this.render(); }
     if (act === 'cancelgoals') { this._editGoals = false; return this.render(); }
     if (act === 'savegoals') return this.saveGoals();

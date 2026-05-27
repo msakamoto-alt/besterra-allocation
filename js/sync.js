@@ -1277,14 +1277,17 @@ const Sync = {
       if (!uid) {
         this.role = null;
       } else {
-        const { data, error } = await sb.from('user_roles').select('role').eq('user_id', uid).maybeSingle();
+        const { data, error } = await sb.from('user_roles').select('role, display_name, email').eq('user_id', uid).maybeSingle();
         if (error) throw error;
         this.role = (data && data.role) || null;
+        this.displayName = (data && data.display_name) || null;   // 段階E4b: 進捗ホームの氏名表示
+        this.email = (data && data.email) || (u && u.user && u.user.email) || null;
       }
     } catch (e) {
       console.error('ロール取得失敗:', e);
       this.role = null;
       this.userId = null;
+      this.displayName = null;
     }
     this.isEditor = (this.role === 'admin' || this.role === 'editor');  // 後方互換
     return this.role;
