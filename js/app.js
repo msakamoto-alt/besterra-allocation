@@ -3,7 +3,9 @@
  */
 
 const App = {
-  currentTab: 'pool',
+  // ログイン時は applyTabVisibility が「先頭の閲覧可能タブ」を選ぶ。
+  // null 始まりにすることで、admin/executive は先頭の経営レポートに着地する。
+  currentTab: null,
 
   // 段階E2: ロール別に閲覧できるタブ（編集可否は別途 Sync.canEdit で制御）
   TAB_ROLES: {
@@ -106,7 +108,7 @@ const App = {
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => this.activateTab(btn.dataset.tab));
     });
-    this.activateTab('pool');
+    // 着地タブはログイン後に applyTabVisibility が決める（先頭の閲覧可能タブ）。
   },
 
   activateTab(name) {
@@ -181,6 +183,7 @@ const App = {
     try { DashboardView.refresh(); } catch (e) { console.error('DashboardView失敗:', e); }
     try { ProspectsView.refresh(); } catch (e) { console.error('ProspectsView失敗:', e); }
     try { OrgChartView.refresh(); } catch (e) { console.error('OrgChartView失敗:', e); }
+    try { ManagementView.refresh(); } catch (e) { console.error('ManagementView失敗:', e); }
   },
 
   updateLastSync() {
