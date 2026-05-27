@@ -1442,6 +1442,39 @@ const Sync = {
     return { today: today.count || 0, total: total.count || 0 };
   },
 
+  // 自分の解答ログ（進捗集計用）。直近 limit 件（既定3000）を新しい順で取得。
+  async fetchMyAnswers(limit) {
+    const sb = this.getSupabase();
+    const uid = this.userId;
+    if (!uid) return [];
+    const { data, error } = await sb.from('quiz_answers')
+      .select('unit, is_correct, answered_at')
+      .eq('user_id', uid)
+      .order('answered_at', { ascending: false })
+      .limit(limit || 3000);
+    if (error) throw new Error(error.message || JSON.stringify(error));
+    return data || [];
+  },
+
+  // 学習目標（今日/今週のノルマ）。未設定は既定値。
+  async getMyGoals() {
+    const sb = this.getSupabase();
+    const uid = this.userId;
+    if (!uid) return { daily_goal: 10, weekly_goal: 70 };
+    const { data, error } = await sb.from('learning_goals')
+      .select('daily_goal, weekly_goal').eq('user_id', uid).maybeSingle();
+    if (error) throw new Error(error.message || JSON.stringify(error));
+    return data || { daily_goal: 10, weekly_goal: 70 };
+  },
+
+  async setMyGoals(daily_goal, weekly_goal) {
+    const sb = this.getSupabase();
+    const res = await sb.from('learning_goals').upsert(
+      { daily_goal, weekly_goal, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
   // ----- 出題管理（admin のみ・RLSで強制）-----
   async upsertQuizQuestion(q) {
     const sb = this.getSupabase();

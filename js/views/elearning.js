@@ -55,8 +55,8 @@ const ELearningView = {
       console.error('出題取得失敗:', e);
     }
     try { this.counts = await Sync.myQuizCounts(); } catch (e) { /* noop */ }
-    // クイズ/編集の最中は再描画しない（進行中の状態を保護）
-    if (this.screen === 'quiz' || this.screen === 'edit') return;
+    // クイズ/編集/インポート/進捗の最中は再描画しない（進行中の状態・自前ロードを保護）
+    if (['quiz', 'edit', 'import', 'progress'].includes(this.screen)) return;
     this.render();
   },
 
@@ -68,6 +68,7 @@ const ELearningView = {
     if (this.screen === 'edit') return body.innerHTML = this.htmlEdit();
     if (this.screen === 'quiz') return body.innerHTML = this.htmlQuiz();
     if (this.screen === 'summary') return body.innerHTML = this.htmlSummary();
+    if (this.screen === 'progress') return body.innerHTML = this.htmlProgress();
     return body.innerHTML = this.htmlStart();
   },
 
@@ -78,13 +79,17 @@ const ELearningView = {
       <span>通算 <b class="text-slate-900 text-base">${this.counts.total}</b> 問</span>
     </div>`;
   },
-  modeToggle() {
-    if (!this.isAdmin()) return '';
-    const learnActive = this.screen !== 'manage' && this.screen !== 'edit';
-    const btn = (act, label, on) =>
-      `<button data-act="${act}" class="px-3 py-1.5 rounded text-sm font-medium border ${on
+  navBar() {
+    const cur = (this.screen === 'manage' || this.screen === 'edit' || this.screen === 'import') ? 'manage'
+      : this.screen === 'progress' ? 'progress' : 'learn';
+    const items = [['learn', '学習'], ['progress', '進捗']];
+    if (this.isAdmin()) items.push(['manage', '出題管理']);
+    const btn = ([act, label]) => {
+      const on = cur === act;
+      return `<button data-act="${act}" class="px-3 py-1.5 rounded text-sm font-medium border ${on
         ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-700 border-slate-300'}">${label}</button>`;
-    return `<div class="flex gap-2">${btn('learn', '学習する', learnActive)}${btn('manage', '出題管理', !learnActive)}</div>`;
+    };
+    return `<div class="flex gap-2">${items.map(btn).join('')}</div>`;
   },
 
   // ===== 学習: スタート =====
@@ -115,7 +120,7 @@ const ELearningView = {
     return `
     <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
       ${this.countsBar()}
-      ${this.modeToggle()}
+      ${this.navBar()}
     </div>
     <div class="bg-white rounded-lg shadow p-6 max-w-2xl mx-auto">
       <div class="text-center mb-1 text-lg font-bold text-slate-800">毎朝、現場に入る前の安全クイズ</div>
@@ -214,7 +219,7 @@ const ELearningView = {
   htmlSummary() {
     const pct = this.sCount ? Math.round(this.sCorrect / this.sCount * 100) : 0;
     return `
-    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">${this.countsBar()}${this.modeToggle()}</div>
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">${this.countsBar()}${this.navBar()}</div>
     <div class="bg-white rounded-lg shadow p-8 max-w-lg mx-auto text-center">
       <div class="text-lg font-bold text-slate-800 mb-4">おつかれさまでした</div>
       <div class="text-5xl font-extrabold text-red-600 mb-1">${pct}<span class="text-2xl">%</span></div>
@@ -253,7 +258,7 @@ const ELearningView = {
       <div class="flex gap-2 items-center">
         <button data-act="import" class="bg-slate-700 hover:bg-slate-800 text-white px-4 py-1.5 rounded text-sm font-medium">⬆ 一括インポート</button>
         <button data-act="add" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded text-sm font-medium">+ 問題を追加</button>
-        ${this.modeToggle()}
+        ${this.navBar()}
       </div>
     </div>
     <div class="bg-white rounded-lg shadow overflow-x-auto">
@@ -341,6 +346,161 @@ const ELearningView = {
     } catch (e) {
       st.textContent = '× ' + (e.message || e); st.className = 'text-xs text-red-600 min-h-[16px] mb-2';
     }
+  },
+
+  // ===== 個人の学習進捗（E4b）=====
+  _stats: null,
+  _goals: { daily_goal: 10, weekly_goal: 70 },
+  _editGoals: false,
+
+  dateKey(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  },
+
+  async showProgress() {
+    this.screen = 'progress'; this._stats = null; this._editGoals = false;
+    this.render();
+    try {
+      const [ans, goals] = await Promise.all([Sync.fetchMyAnswers(), Sync.getMyGoals()]);
+      this._goals = goals || this._goals;
+      this._stats = this.computeStats(ans);
+    } catch (e) {
+      console.error('進捗取得失敗:', e);
+      this._stats = { error: String(e.message || e) };
+    }
+    if (this.screen === 'progress') this.render();
+  },
+
+  computeStats(answers) {
+    const dayCount = {}, perUnit = {};
+    answers.forEach(a => {
+      const k = this.dateKey(new Date(a.answered_at));
+      dayCount[k] = (dayCount[k] || 0) + 1;
+      const u = a.unit || 'その他';
+      if (!perUnit[u]) perUnit[u] = { n: 0, c: 0 };
+      perUnit[u].n++; if (a.is_correct) perUnit[u].c++;
+    });
+    const dates = Object.keys(dayCount).sort();
+    const total = answers.length;
+    const studyDays = dates.length;
+    const maxPerDay = dates.reduce((m, k) => Math.max(m, dayCount[k]), 0);
+    // 現在の連続日数（今日未実施なら昨日起点）
+    let streak = 0; { const d = new Date(); d.setHours(0, 0, 0, 0);
+      if (!dayCount[this.dateKey(d)]) d.setDate(d.getDate() - 1);
+      while (dayCount[this.dateKey(d)]) { streak++; d.setDate(d.getDate() - 1); } }
+    // 最高連続日数
+    let maxStreak = 0, run = 0, prev = null;
+    dates.forEach(k => {
+      const cur = new Date(k + 'T00:00:00');
+      run = (prev && (cur - prev) === 86400000) ? run + 1 : 1;
+      if (run > maxStreak) maxStreak = run; prev = cur;
+    });
+    const todayCount = dayCount[this.dateKey(new Date())] || 0;
+    // 週（月曜起点）
+    const ws = new Date(); ws.setHours(0, 0, 0, 0); ws.setDate(ws.getDate() - ((ws.getDay() + 6) % 7));
+    const week = []; let weekCount = 0;
+    for (let i = 0; i < 7; i++) { const dd = new Date(ws); dd.setDate(ws.getDate() + i);
+      const c = dayCount[this.dateKey(dd)] || 0; weekCount += c; week.push({ date: dd, count: c }); }
+    // 直近7日（バー用・古→新）
+    const last7 = []; for (let i = 6; i >= 0; i--) { const dd = new Date(); dd.setHours(0, 0, 0, 0); dd.setDate(dd.getDate() - i);
+      last7.push({ date: dd, count: dayCount[this.dateKey(dd)] || 0 }); }
+    return { total, studyDays, maxPerDay, streak, maxStreak, todayCount, weekCount, week, last7, perUnit };
+  },
+
+  // SVGドーナツ（中央に数値）
+  ring(pct, center, color) {
+    const r = 26, c = 2 * Math.PI * r, off = c * (1 - Math.max(0, Math.min(100, pct)) / 100);
+    return `<svg viewBox="0 0 64 64" class="w-16 h-16">
+      <circle cx="32" cy="32" r="${r}" fill="none" stroke="#e9e4d8" stroke-width="6"/>
+      <circle cx="32" cy="32" r="${r}" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round"
+        stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 32 32)"/>
+      <text x="32" y="37" text-anchor="middle" font-size="16" font-weight="700" fill="#475569">${center}</text></svg>`;
+  },
+
+  htmlProgress() {
+    const top = `<div class="flex items-center justify-between mb-4 flex-wrap gap-2">${this.countsBar()}${this.navBar()}</div>`;
+    if (!this._stats) return top + '<div class="flex items-center justify-center h-48 text-slate-400 text-sm">読み込み中…</div>';
+    if (this._stats.error) return top + `<div class="flex items-center justify-center h-48 text-red-600 text-sm text-center px-4">進捗の取得に失敗しました。<br>SQL（phaseE4_elearning.sql / phaseE4b_goals.sql）が未実行の可能性があります。<br><span class="text-xs text-slate-400">${this.esc(this._stats.error)}</span></div>`;
+    const s = this._stats, g = this._goals;
+    const UNIT_COLORS = { '安全のしおり': '#2563eb', '規程類': '#d97706', 'ベステラスタンダード': '#dc2626', '過去事例': '#7c3aed', 'その他': '#64748b' };
+
+    // 上段カード（今日/今週/連続）
+    const card = (val, sub, unit) => `<div class="bg-white rounded-xl border border-slate-200 p-4">
+      <div class="flex items-end gap-1"><span class="text-3xl font-extrabold text-slate-800">${val}</span>${unit ? `<span class="text-sm text-slate-400 mb-1">${unit}</span>` : ''}</div>
+      <div class="text-xs text-slate-500 mt-1">${sub}</div></div>`;
+    const cards = `<div class="grid grid-cols-3 gap-3 mb-4">
+      ${card(s.todayCount, '今日', `/ ${g.daily_goal}`)}
+      ${card(s.weekCount, '今週', `/ ${g.weekly_goal}`)}
+      ${card(s.streak, '連続学習日数', '日')}</div>`;
+
+    // 週次達成率＋目標変更
+    const wpct = g.weekly_goal ? Math.min(100, Math.round(s.weekCount / g.weekly_goal * 100)) : 0;
+    const goalEdit = this._editGoals
+      ? `<div class="flex items-center gap-2 flex-wrap">
+          <label class="text-xs text-slate-500">今日 <input id="eq-goal-daily" type="number" min="1" value="${g.daily_goal}" class="border rounded w-16 px-2 py-1 text-sm"></label>
+          <label class="text-xs text-slate-500">今週 <input id="eq-goal-weekly" type="number" min="1" value="${g.weekly_goal}" class="border rounded w-16 px-2 py-1 text-sm"></label>
+          <button data-act="savegoals" class="bg-emerald-600 text-white px-3 py-1 rounded text-sm">保存</button>
+          <button data-act="cancelgoals" class="text-slate-500 px-2 py-1 text-sm">取消</button></div>`
+      : `<button data-act="editgoals" class="bg-slate-800 text-white px-4 py-1.5 rounded-full text-sm font-medium">目標変更</button>`;
+    const weekly = `<div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+      <div class="flex items-center justify-between mb-2"><span class="text-sm font-medium text-slate-600">今週の達成率（${wpct}%）</span>${goalEdit}</div>
+      <div class="h-3 rounded-full bg-slate-100 overflow-hidden"><div class="h-full bg-slate-800" style="width:${wpct}%"></div></div>
+      <div class="flex justify-between mt-3">${s.week.map((d, i) => {
+        const wd = ['月', '火', '水', '木', '金', '土', '日'][i];
+        const done = g.daily_goal && d.count >= g.daily_goal;
+        const isToday = this.dateKey(d.date) === this.dateKey(new Date());
+        const pct = g.daily_goal ? Math.min(100, d.count / g.daily_goal * 100) : (d.count ? 100 : 0);
+        const inner = done
+          ? `<div class="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center text-sm">✓</div>`
+          : `<div class="w-8 h-8 rounded-full" style="background:conic-gradient(#475569 ${pct * 3.6}deg,#e9e4d8 0)"><div class="w-6 h-6 m-1 rounded-full bg-white"></div></div>`;
+        return `<div class="flex flex-col items-center gap-1 ${isToday ? 'font-bold' : ''}">
+          <span class="text-[11px] text-slate-400">${wd}</span><span class="text-xs text-slate-600">${d.date.getDate()}</span>${inner}</div>`;
+      }).join('')}</div></div>`;
+
+    // 直近7日バー
+    const maxC = Math.max(1, ...s.last7.map(x => x.count));
+    const bars = s.last7.map(x => {
+      const hpx = 8 + Math.round(x.count / maxC * 80);
+      return `<div class="flex flex-col items-center justify-end flex-1">
+        <div class="text-[10px] text-slate-500 mb-0.5">${x.count || ''}</div>
+        <div class="w-5 rounded-t" style="height:${x.count ? hpx : 3}px;background:${x.count ? '#ef6b6b' : '#e9e4d8'}"></div>
+        <div class="text-[10px] text-slate-400 mt-1">${x.date.getMonth() + 1}/${x.date.getDate()}</div></div>`;
+    }).join('');
+    const daily = `<div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
+      <div class="text-sm font-medium text-slate-600 mb-3">直近7日の学習量</div>
+      <div class="flex items-end gap-2 h-28">${bars}</div></div>`;
+
+    // 通算カード
+    const stat = (v, label) => `<div class="bg-white rounded-xl border border-slate-200 p-4 text-center">
+      <div class="text-2xl font-extrabold text-slate-800">${v}</div><div class="text-xs text-slate-500 mt-1">${label}</div></div>`;
+    const totals = `<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+      ${stat(s.total, '通算問題数')}${stat(s.maxStreak, '最高連続学習日数')}${stat(s.studyDays, '通算学習日数')}${stat(s.maxPerDay, '1日の最高問題数')}</div>`;
+
+    // 単元別習得度リング
+    const units = this.UNITS.filter(u => s.perUnit[u]);
+    const rings = units.length ? `<div class="bg-white rounded-xl border border-slate-200 p-4">
+      <div class="text-sm font-medium text-slate-600 mb-3">単元別 習得度（正答率）</div>
+      <div class="flex flex-wrap gap-5 justify-center">${units.map(u => {
+        const p = Math.round(s.perUnit[u].c / s.perUnit[u].n * 100);
+        return `<div class="flex flex-col items-center">${this.ring(p, p, UNIT_COLORS[u] || '#64748b')}
+          <div class="text-xs text-slate-600 mt-1 text-center max-w-[88px]">${this.esc(u)}</div>
+          <div class="text-[10px] text-slate-400">${s.perUnit[u].n}問</div></div>`;
+      }).join('')}</div></div>`
+      : '<div class="bg-white rounded-xl border border-slate-200 p-4 text-center text-sm text-slate-400">まだ解答がありません。学習を始めましょう。</div>';
+
+    return top + cards + weekly + daily + totals + rings;
+  },
+
+  async saveGoals() {
+    const d = parseInt(this.val('eq-goal-daily'), 10);
+    const w = parseInt(this.val('eq-goal-weekly'), 10);
+    if (!(d > 0) || !(w > 0)) { alert('1以上の数値を入力してください'); return; }
+    try {
+      await Sync.setMyGoals(d, w);
+      this._goals = { daily_goal: d, weekly_goal: w };
+      this._editGoals = false;
+      this.render();
+    } catch (e) { alert('目標の保存に失敗しました: ' + (e.message || e)); }
   },
 
   // ===== 一括インポート（admin・CSV）=====
@@ -463,6 +623,10 @@ const ELearningView = {
     if (act === 'again') return this.startSession();
     if (act === 'pick') { this.screen = 'start'; return this.render(); }
     if (act === 'learn') { this.screen = 'start'; return this.render(); }
+    if (act === 'progress') return this.showProgress();
+    if (act === 'editgoals') { this._editGoals = true; return this.render(); }
+    if (act === 'cancelgoals') { this._editGoals = false; return this.render(); }
+    if (act === 'savegoals') return this.saveGoals();
     if (act === 'manage') { if (!this.isAdmin()) return; this.screen = 'manage'; return this.render(); }
     if (act === 'add') { if (!this.isAdmin()) return; this._editing = {}; this.screen = 'edit'; return this.render(); }
     if (act === 'import') { if (!this.isAdmin()) return; this._impRows = null; this._impMsg = ''; this.screen = 'import'; return this.render(); }
