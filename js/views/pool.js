@@ -95,7 +95,7 @@ const PoolView = {
         '<td class="px-3 py-2 font-mono text-xs">' + e.id + '</td>' +
         '<td class="px-3 py-2 font-medium">' + this.escape(e.name) + '</td>' +
         '<td class="px-3 py-2">' + this.escape(e.department || '') + '</td>' +
-        '<td class="px-3 py-2">' + this.categoryBadge(e.category) + '</td>' +
+        '<td class="px-3 py-2"><span class="inline-flex flex-wrap items-center gap-1">' + this.categoryBadge(e.category) + this.workModeBadge(e.work_mode) + '</span></td>' +
         '<td class="px-3 py-2 text-xs">' + asgStr + '</td>' +
         '</tr>';
     }).join('');
@@ -121,6 +121,13 @@ const PoolView = {
       '対象外': 'badge-out',
     }[cat] || '';
     return '<span class="' + klass + ' px-2 py-0.5 rounded text-xs">' + this.escape(cat || '') + '</span>';
+  },
+
+  // 稼働形態バッジ（監督派遣/事務所専従/構内専従）。通常/未設定は何も出さない。
+  workModeBadge(mode) {
+    const wm = (typeof Sync !== 'undefined' && Sync.WORK_MODES) ? Sync.WORK_MODES[mode] : null;
+    if (!wm) return '';
+    return '<span class="' + wm.badge + ' px-1.5 py-0.5 rounded text-[10px] font-medium">' + this.escape(wm.short) + '</span>';
   },
 
   escape(text) {

@@ -40,7 +40,7 @@ const GanttView = {
     '主任技術者': '#1e40af',
     '監理技術者': '#dc2626',  // 元請の主任技術者は赤（建設業法上の監理技術者）
     '副監督': '#0891b2',
-    '派遣': '#a16207',  // 派遣社員の役割（旧「応援」「支援」「視察」を統合）
+    '派遣': '#ca8a04',  // 受け入れ派遣社員の役割（旧「応援」「支援」「視察」を統合）。視認性のため明るめの黄土色
   },
 
   // 配置未定・不足のバー色（点線描画）
@@ -63,7 +63,7 @@ const GanttView = {
     if (isPrime && amount >= this.KANRI_AMOUNT_THRESHOLD && baseRole === '主任技術者') {
       return { role: '監理技術者', color: this.ROLE_COLOR['監理技術者'] };
     }
-    return { role: baseRole, color: this.ROLE_COLOR[baseRole] || '#a16207' };
+    return { role: baseRole, color: this.ROLE_COLOR[baseRole] || '#ca8a04' };
   },
 
   // 派遣社員 / 配置未定 の判定
@@ -529,12 +529,14 @@ const GanttView = {
     return '<thead>' + row1 + row2 + '</thead>';
   },
 
-  gridDivs(cells) {
+  // lineColor 省略時は標準の薄灰。稼働形態バンド行では背景色に埋もれないよう濃いめの線色を渡す。
+  gridDivs(cells, lineColor) {
+    const line = lineColor || '#e5e7eb';
     let html = '';
     let px = 0;
     cells.forEach(c => {
       const bg = c.type === 'day' ? 'background:#fffbeb;' : '';
-      html += `<div style="position:absolute;left:${px}px;width:${c.width}px;top:0;bottom:0;border-right:1px solid #e5e7eb;${bg}"></div>`;
+      html += `<div style="position:absolute;left:${px}px;width:${c.width}px;top:0;bottom:0;border-right:1px solid ${line};${bg}"></div>`;
       px += c.width;
     });
     return html;
@@ -551,7 +553,7 @@ const GanttView = {
 
   // バー描画（左切れ・右切れの矢印付き・dashed は点線枠で区別・assignment id 紐付け）
   // dashed: true で点線描画（見込み案件・配置未定 共通）
-  renderBar(start, end, cells, color, label, top, title, dashed = false, asgId = null) {
+  renderBar(start, end, cells, color, label, top, title, dashed = false, asgId = null, accent = null) {
     const clip = this.clipRange(start, end, cells);
     if (!clip) return '';
     const left = this.dateToPx(clip.start, cells);
@@ -565,10 +567,12 @@ const GanttView = {
     const dashedStyle = dashed
       ? `border:2px dashed ${color};color:#475569;font-weight:600;`
       : '';
+    // 稼働形態アクセント：バー左に色帯（inset shadow＝レイアウト・幅に影響しない）。現場/事務所軸用。
+    const accentStyle = accent ? `box-shadow: inset 5px 0 0 ${accent};` : '';
     const dashedIcon = dashed ? '⊘ ' : '';
     const dataAttr = asgId !== null && asgId !== undefined ? ` data-asg-id="${this.esc(asgId)}"` : '';
     const cursorStyle = asgId !== null && asgId !== undefined ? 'cursor:pointer;' : '';
-    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${bg};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}${dashedStyle}${cursorStyle}" title="${this.esc(title || '')}"${dataAttr}>${dashedIcon}${this.esc(label || '')}</div>`;
+    return `<div class="gantt-bar" style="left:${left + 1}px;width:${width}px;top:${top}px;background:${bg};height:${this.BAR_HEIGHT}px;${truncLeft}${truncRight}${dashedStyle}${accentStyle}${cursorStyle}" title="${this.esc(title || '')}"${dataAttr}>${dashedIcon}${this.esc(label || '')}</div>`;
   },
 
   // 色を薄く（見込み案件のバー背景用）
@@ -1090,6 +1094,7 @@ const GanttView = {
     html += '</tbody></table>';
 
     html += this.legendRole();
+    html += this.legendWorkMode();
     return html;
   },
 
@@ -1123,7 +1128,7 @@ const GanttView = {
       .map(a => `<span class="inline-block mr-2 font-medium">${this.esc(a.emp_name)}</span>`)
       .join('');
     const dispatchNote = dispatchCount > 0
-      ? `<span class="inline-block mr-2" style="color:#a16207">派遣社員 ×${dispatchCount}</span>`
+      ? `<span class="inline-block mr-2" style="color:#ca8a04">派遣社員 ×${dispatchCount}</span>`
       : '';
     const placeholderNote = placeholderCount > 0
       ? `<span class="inline-block mr-2 text-slate-500">配置未定・不足 ×${placeholderCount}</span>`
@@ -1159,14 +1164,19 @@ const GanttView = {
       const end = this.parseDate(p.end);
       html += this.renderBar(start, end, cells, this.PLACEHOLDER_COLOR, '配置未定・不足', 8, `${p.name}（${p.start}〜${p.end}）配置未定・不足`, true);
     } else {
+      const empById = this.empByIdMap();
       projAsgs.forEach((a, idx) => {
         const start = this.parseDate(a.join);
         const end = this.parseDate(a.planned_end || p.end);
         const style = this.resolveBarStyle(a, p);
         const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
         const titleTag = a.prospect ? '【見込み】' : '';
+        // 稼働形態（監督派遣/専従）の社員はバー左に色帯を付与（案件がある＝バーがある時のみ）
+        const emp = empById[a.emp_id];
+        const wmAccent = (emp && Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(emp.work_mode)) ? this.workModeAccent(emp.work_mode) : null;
+        const wmTag = wmAccent ? `【${Sync.WORK_MODES[emp.work_mode].label}】` : '';
         html += this.prepBarHtml(a, cells, style.color, top);
-        html += this.renderBar(start, end, cells, style.color, style.label, top, `${style.label}（${style.role}） ${a.join}〜${a.planned_end || p.end}${titleTag}`, style.dashed, a.assignment_id);
+        html += this.renderBar(start, end, cells, style.color, style.label, top, `${style.label}（${style.role}）${wmTag} ${a.join}〜${a.planned_end || p.end}${titleTag}`, style.dashed, a.assignment_id, wmAccent);
       });
     }
     html += '</td></tr>';
@@ -1229,6 +1239,64 @@ const GanttView = {
     });
     html += '</tbody></table>';
     html += this.legendRole();
+    html += this.legendWorkMode();
+    return html;
+  },
+
+  // ===== 稼働形態（監督派遣/事務所専従/構内専従）の個人行表現 =====
+  // 行全体を淡い背景色＋左アクセントのバンドで表示し「どの稼働区分か」を示す。
+  // ★案件バーは常に表示する（派遣・専従でも当社現場に立つため）。バーが無い行のみ中央ラベルを出す。
+  // 配色は Sync.WORK_MODES で一元管理（あとで調整しやすい）。
+
+  // ラベル列に付ける小バッジ（区分バッジの隣）
+  workModeBadge(mode) {
+    const wm = Sync.WORK_MODES && Sync.WORK_MODES[mode];
+    if (!wm) return '';
+    return `<span class="${wm.badge} px-1.5 py-0.5 rounded text-[10px] font-medium">${this.esc(wm.short)}</span>`;
+  },
+
+  // 行の背景色（ラベル列・タイムライン列に共通で当てる inline style 断片）。通常は空文字。
+  workModeBg(mode) {
+    const wm = Sync.WORK_MODES && Sync.WORK_MODES[mode];
+    return wm ? `background:${wm.bg}` : '';
+  },
+  // タイムライン列の追加 style（背景＋左アクセント）。通常は空文字。
+  workModeTimelineStyle(mode) {
+    const wm = Sync.WORK_MODES && Sync.WORK_MODES[mode];
+    return wm ? `background:${wm.bg}; border-left:4px solid ${wm.accent};` : '';
+  },
+  // バンド行の縦線色（背景に埋もれないよう濃いめ）。通常は null＝標準の薄灰。
+  workModeLine(mode) {
+    const wm = Sync.WORK_MODES && Sync.WORK_MODES[mode];
+    return wm ? (wm.line || '#cbd5e1') : null;
+  },
+  // バー左帯のアクセント色（現場軸・事務所軸でバーに付ける稼働形態の色）。通常は null。
+  workModeAccent(mode) {
+    const wm = Sync.WORK_MODES && Sync.WORK_MODES[mode];
+    return wm ? wm.accent : null;
+  },
+
+  // emp.id → emp のマップ（employees 配列の参照が変わった時だけ再構築＝同期後のみ）
+  empByIdMap() {
+    const emps = Sync.cache.employees || [];
+    if (this._empByIdCache && this._empByIdSrc === emps) return this._empByIdCache;
+    const m = {};
+    emps.forEach(e => { m[e.id] = e; });
+    this._empByIdSrc = emps;
+    this._empByIdCache = m;
+    return m;
+  },
+
+  // 稼働形態の凡例
+  legendWorkMode() {
+    if (!Sync.WORK_MODES) return '';
+    let html = '<div class="px-3 pb-3 bg-slate-50 text-xs flex flex-wrap gap-3 items-center">' +
+      '<span class="font-semibold text-slate-700">稼働形態:</span>';
+    Object.values(Sync.WORK_MODES).forEach(wm => {
+      html += `<span class="inline-flex items-center gap-1"><span style="display:inline-block;width:14px;height:14px;background:${wm.bg};border-left:3px solid ${wm.accent};border-radius:2px"></span>${this.esc(wm.label)}</span>`;
+    });
+    html += '<span class="text-slate-400 ml-1">（行の背景色／現場・事務所軸ではバーの左帯。監督ダッシュボードで設定）</span>';
+    html += '</div>';
     return html;
   },
 
@@ -1253,17 +1321,20 @@ const GanttView = {
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     sorted.forEach(e => {
+      const special = Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(e.work_mode);
       const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect));
       const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
+      const labelBg = special ? `;${this.workModeBg(e.work_mode)}` : '';
+      const tlStyle = special ? ` ${this.workModeTimelineStyle(e.work_mode)}` : '';
 
       html += '<tr class="border-t">' +
-        `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+        `<td class="p-2 sticky left-0 ${special ? '' : 'bg-white'} border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px${labelBg}">` +
           `<div class="font-medium text-sm">${this.esc(e.name)}</div>` +
           `<div class="text-xs text-slate-500">${this.esc(e.department || '')}</div>` +
-          `<div class="mt-1">${PoolView.categoryBadge(e.category)}</div>` +
+          `<div class="mt-1 flex flex-wrap items-center gap-1">${PoolView.categoryBadge(e.category)}${special ? this.workModeBadge(e.work_mode) : ''}</div>` +
         '</td>' +
-        `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
-          this.gridDivs(cells) +
+        `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
+          this.gridDivs(cells, special ? this.workModeLine(e.work_mode) : null) +
           todayMarkerHtml;
 
       myAsgs.forEach((a, idx) => {
@@ -1282,6 +1353,7 @@ const GanttView = {
     html += '</tbody></table>';
 
     html += this.legendRole();
+    html += this.legendWorkMode();
     return html;
   },
 
@@ -1334,7 +1406,7 @@ const GanttView = {
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     depts.forEach(dept => {
       const emps = empByDept[dept];
-      const assignedInDept = emps.filter(e => assignments.some(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect))).length;
+      const assignedInDept = emps.filter(e => !(Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(e.work_mode)) && assignments.some(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect))).length;
 
       html += '<tr class="bg-slate-800 text-white">' +
         `<td class="p-2 sticky left-0 bg-slate-800 border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
@@ -1345,16 +1417,19 @@ const GanttView = {
       '</tr>';
 
       emps.forEach(e => {
+        const special = Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(e.work_mode);
         const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect));
         const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
+        const labelBg = special ? `;${this.workModeBg(e.work_mode)}` : '';
+        const tlStyle = special ? ` ${this.workModeTimelineStyle(e.work_mode)}` : '';
 
         html += '<tr class="border-t">' +
-          `<td class="p-2 sticky left-0 bg-white border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+          `<td class="p-2 sticky left-0 ${special ? '' : 'bg-white'} border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px${labelBg}">` +
             `<div class="text-sm font-medium">${this.esc(e.name)}</div>` +
-            `<div class="text-xs text-slate-500 mt-1">${PoolView.categoryBadge(e.category)}</div>` +
+            `<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1">${PoolView.categoryBadge(e.category)}${special ? this.workModeBadge(e.work_mode) : ''}</div>` +
           '</td>' +
-          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
-            this.gridDivs(cells) +
+          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
+            this.gridDivs(cells, special ? this.workModeLine(e.work_mode) : null) +
             todayMarkerHtml;
         myAsgs.forEach((a, idx) => {
           const proj = projects.find(p => p.project_id === a.project_id);
@@ -1373,6 +1448,7 @@ const GanttView = {
     html += '</tbody></table>';
 
     html += this.legendRole();
+    html += this.legendWorkMode();
     return html;
   },
 
@@ -1427,6 +1503,9 @@ const GanttView = {
       holders.forEach(({ emp, eq }) => {
         const myAsgs = assignments.filter(a => a.emp_id === emp.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect));
         const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
+        const special = Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(emp.work_mode);
+        const labelBg = special ? `;${this.workModeBg(emp.work_mode)}` : '';
+        const tlStyle = special ? ` ${this.workModeTimelineStyle(emp.work_mode)}` : '';
 
         let expWarn = '';
         if (eq.expiry) {
@@ -1438,12 +1517,12 @@ const GanttView = {
         }
 
         html += '<tr class="border-t">' +
-          `<td class="p-2 sticky left-0 bg-white border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
+          `<td class="p-2 sticky left-0 ${special ? '' : 'bg-white'} border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px${labelBg}">` +
             `<div class="text-sm font-medium">${this.esc(emp.name)}${expWarn}</div>` +
-            `<div class="text-xs text-slate-500 mt-1">${this.esc(emp.department || '')} ${PoolView.categoryBadge(emp.category)}</div>` +
+            `<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1">${this.esc(emp.department || '')} ${PoolView.categoryBadge(emp.category)}${special ? this.workModeBadge(emp.work_mode) : ''}</div>` +
           '</td>' +
-          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0">` +
-            this.gridDivs(cells) +
+          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
+            this.gridDivs(cells, special ? this.workModeLine(emp.work_mode) : null) +
             todayMarkerHtml;
 
         myAsgs.forEach((a, idx) => {
@@ -1466,6 +1545,7 @@ const GanttView = {
     html += '</tbody></table>';
 
     html += this.legendRole();
+    html += this.legendWorkMode();
     html += '<p class="text-xs text-slate-500 p-3 border-t">※ 縦軸は資格別グループ（1級→2級→その他の順）。区分ボタンで現場監督／準現場監督／監督サポートの表示を切替できます。同一人が複数資格を保有する場合は各グループに重複表示。資格の取得日・有効期限の詳細は「監督ダッシュボード」を参照。</p>';
     return html;
   },
