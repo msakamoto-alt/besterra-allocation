@@ -1334,6 +1334,33 @@ const Sync = {
     '監督サポート': '監督サポート',
   },
 
+  // 稼働形態（work_mode）：tier とは独立した運用状態。空/未設定 = 通常（現場配置可）。
+  // ガントでは個人行を背景色＋ラベルで表現し、案件バーは出さない。配色はここで一元管理。
+  WORK_MODES: {
+    '監督派遣':   { label: '監督派遣（送出）', short: '派遣中（送出）', bg: '#eef1f5', line: '#cbd5e1', text: '#334155', accent: '#64748b', badge: 'bg-slate-200 text-slate-700 border border-slate-400' },
+    '事務所専従': { label: '事務所専従',       short: '事務所専従',     bg: '#dbeafe', line: '#93c5fd', text: '#1d4ed8', accent: '#3b82f6', badge: 'bg-blue-100 text-blue-700 border border-blue-300' },
+    '構内専従':   { label: '構内専従',         short: '構内専従',       bg: '#dcfce7', line: '#86efac', text: '#15803d', accent: '#22c55e', badge: 'bg-green-100 text-green-700 border border-green-300' },
+  },
+  // 通常以外の稼働形態か（''/'通常'/null は false）
+  isSpecialWorkMode(mode) {
+    const m = String(mode || '').trim();
+    return !!(m && m !== '通常' && this.WORK_MODES[m]);
+  },
+
+  // 稼働形態を保存（監督ダッシュボードから）。tier 列には触れない（onConflict で work_mode のみ更新）。
+  // 空文字 = 通常（NULL に戻す）。
+  async setEmployeeWorkMode(empNo, mode) {
+    const sb = this.getSupabase();
+    const res = await sb.from('employee_tiers').upsert({
+      emp_no: String(empNo).trim(),
+      work_mode: (String(mode || '').trim() && mode !== '通常') ? String(mode).trim() : null,
+      updated_at: new Date().toISOString(),
+      updated_by: 'web',
+    }, { onConflict: 'emp_no' });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
   // 段階D: 階層の手動判定を保存（組織図画面から）。tier は監督リスト表記でよい。
   async setEmployeeTier(empNo, tier) {
     const sb = this.getSupabase();
@@ -1540,13 +1567,31 @@ const Sync = {
     return '対象外';
   },
 
+  // 作業所→親事務所の集約マップ（監督リスト・ガント監督軸・人材プールの「所属」表示で統合）。
+  // 「作業所は事務所配下のサブ組織」という方針に基づき、所属表示を事務所に寄せる。
+  // ※ 組織図画面（orgchart.js）は organization の生データを使うので作業所ノードはそのまま残る。
+  DEPT_CONSOLIDATE: [
+    { match: /千葉構内作業所/, to: '千葉事務所' },   // JFE千葉構内作業所 / 千葉構内作業所
+    { match: /倉敷作業所/,     to: '西日本事務所' },
+  ],
+  consolidateDept(name) {
+    const s = String(name || '');
+    for (const r of this.DEPT_CONSOLIDATE) if (r.match.test(s)) return r.to;
+    return s;
+  },
+
   // 段階D: organization（構造）＋ employee_tiers（手動階層）＋ 資格ソース から社員オブジェクトを生成。
   // 旧 normalizeEmployees（区分/中計）を置換。返す形は従来と同じ（id/name/department/role/category/...）。
   buildEmployeesFromOrg(orgRows, tierRows, qualSource) {
     const tierByEmp = {};
+    const workModeByEmp = {};
     (tierRows || []).forEach(t => {
       const no = String(t.emp_no || '').trim();
-      if (no) tierByEmp[no] = String(t.tier || '').trim();
+      if (no) {
+        tierByEmp[no] = String(t.tier || '').trim();
+        const wm = String(t.work_mode || '').trim();
+        if (wm) workModeByEmp[no] = wm;
+      }
     });
     // 段階Q: employee_quals は SmartHR「従業員の資格一覧」(1行=1人×1資格)。社員番号でグルーピングし、
     //   詳細配列(qual_details: 監督ダッシュボード用)と簡易タグ(資格軸/バッジ用)を作る。
@@ -1574,7 +1619,7 @@ const Sync = {
       return {
         id: parseInt(empNo, 10) || empNo,
         name: `${r.last_name || ''} ${r.first_name || ''}`.trim(),
-        department: primary ? String(primary).split('/').pop() : '',
+        department: this.consolidateDept(primary ? String(primary).split('/').pop() : ''),
         role: positions[0] || '',
         role_title: positions[0] || '',
         qualifications_raw: this.deriveSekouTags(
@@ -1583,6 +1628,7 @@ const Sync = {
         ).join('、'),
         qual_details: detailsByEmp[empNo] || [],
         category: this.judgeCategory(empNo, depts, tierByEmp),
+        work_mode: workModeByEmp[empNo] || '',
         status: 'active',
         rank: '',
         depts,            // 組織図画面用に保持

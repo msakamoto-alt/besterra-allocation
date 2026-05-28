@@ -31,6 +31,22 @@ const DashboardView = {
         GanttView.showAssignmentModal(asgId);
       }
     });
+
+    // 稼働形態プルダウン（監督派遣/事務所専従/構内専従）の変更を保存
+    document.getElementById('dash-content').addEventListener('change', async (e) => {
+      const sel = e.target.closest('#dash-workmode');
+      if (!sel) return;
+      const empNo = sel.dataset.emp;
+      const mode = sel.value;
+      sel.disabled = true;
+      try {
+        await Sync.setEmployeeWorkMode(empNo, mode);
+        if (typeof App !== 'undefined' && App.loadData) await App.loadData();  // 再同期→全ビュー再描画
+      } catch (err) {
+        alert('稼働形態の保存に失敗しました: ' + (err.message || err));
+        sel.disabled = false;
+      }
+    });
   },
 
   // 配置編集後に呼ばれる：選択中の監督の現在配置を再描画
@@ -317,6 +333,29 @@ const DashboardView = {
     const sekouBadges = String(emp.qualifications_raw || '').split('、').map(s => s.trim()).filter(Boolean)
       .map(t => `<span class="${sekouClass(t)} border px-2 py-0.5 rounded text-xs font-medium">${this.esc(t)}</span>`).join('');
 
+    // 稼働形態（監督派遣/事務所専従/構内専従）。canEdit はプルダウン、閲覧者は設定時のみバッジ表示。
+    const WM = (typeof Sync !== 'undefined' && Sync.WORK_MODES) || {};
+    let wmCtrl = '';
+    if (canEdit) {
+      const cur = emp.work_mode || '';
+      const opts = [['', '通常（現場配置可）']].concat(Object.keys(WM).map(k => [k, WM[k].label]));
+      wmCtrl =
+        '<div class="mt-3 pt-3 border-t">' +
+          '<label class="text-xs text-slate-500 block mb-1">稼働形態</label>' +
+          `<select id="dash-workmode" data-emp="${this.esc(emp.emp_no || emp.id)}" class="border rounded px-2 py-1 text-sm">` +
+            opts.map(([v, l]) => `<option value="${this.esc(v)}"${v === cur ? ' selected' : ''}>${this.esc(l)}</option>`).join('') +
+          '</select>' +
+          '<div class="text-[11px] text-slate-400 mt-1">※「通常」以外はガントで行を背景色で区別（案件があればバーも表示）</div>' +
+        '</div>';
+    } else if (Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(emp.work_mode)) {
+      const wm = WM[emp.work_mode];
+      wmCtrl =
+        '<div class="mt-3 pt-3 border-t text-sm">' +
+          '<span class="text-slate-500 text-xs mr-2">稼働形態</span>' +
+          `<span class="${wm.badge} px-2 py-0.5 rounded text-xs">${this.esc(wm.label)}</span>` +
+        '</div>';
+    }
+
     document.getElementById('dash-content').innerHTML =
       '<div class="grid grid-cols-2 gap-4 mb-4">' +
         '<div class="bg-white rounded-lg shadow p-4">' +
@@ -324,6 +363,7 @@ const DashboardView = {
           `<div class="text-xl font-bold mt-1">${this.esc(emp.name)}</div>` +
           `<div class="text-xs text-slate-500 mt-1">${this.esc(emp.department || '-')} / ${this.esc(emp.role || '一般')}</div>` +
           `<div class="mt-2 flex flex-wrap items-center gap-1.5">${PoolView.categoryBadge(emp.category)}${sekouBadges}</div>` +
+          wmCtrl +
         '</div>' +
         '<div class="bg-white rounded-lg shadow p-4">' +
           '<div class="text-sm text-slate-600">配置状況</div>' +
