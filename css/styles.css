@@ -162,6 +162,15 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
 .org-box-count { font-weight: 400; opacity: 0.85; margin-left: 3px; font-size: 11px; }
 .org-box-title[data-org-path]:hover { background: #475569; }
 
+/* Point4: 空き人員の帯（配置ガント・監督軸／事務所モニター）。斜線ハッチ＋スカイ系で「空き」を一目に。 */
+.gantt-gap {
+  position: absolute; top: 3px; bottom: 3px; pointer-events: none; overflow: hidden;
+  background: repeating-linear-gradient(45deg, rgba(2,132,199,0.14) 0 7px, transparent 7px 14px);
+  border: 1px dashed #7dd3fc; border-radius: 5px;
+  display: flex; align-items: center; padding-left: 6px;
+}
+.gantt-gap span { font-size: 11px; font-weight: 700; color: #0369a1; white-space: nowrap; }
+
 /* ========== 安全学習（ベステラ・ネイビー×レッド／スマホ最優先） ========== */
 /* すべて #elearn-body.el-scope 配下にスコープし、他タブへ影響させない。 */
 #elearn-body.el-scope {

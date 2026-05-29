@@ -35,6 +35,10 @@ const GanttView = {
   BAR_HEIGHT: 22,
   BAR_GAP: 4,
 
+  // Point4: 空き人員の可視化。今日以降、配置が無い連続期間がこの日数以上なら「空き」帯を表示。
+  // 対象は通常稼働の監督のみ（派遣・専従は除外＝配置プール外）。
+  GAP_MIN_DAYS: 30,
+
   // 役割→色（全軸共通）
   ROLE_COLOR: {
     '主任技術者': '#1e40af',
@@ -1452,7 +1456,9 @@ const GanttView = {
       '</td>' +
       `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
         this.gridDivs(cells, special ? this.workModeLine(e.work_mode) : null) +
-        todayMarkerHtml;
+        todayMarkerHtml +
+        // Point4: 空き帯は「通常稼働の現場監督」のみ（派遣・専従・準現場監督は除外）
+        ((!special && e.category === '現場監督') ? this.availabilityBandsHtml(myAsgs, cells, projects) : '');
     myAsgs.forEach((a, idx) => {
       const proj = projects.find(p => p.project_id === a.project_id);
       if (!proj) return;
@@ -1465,6 +1471,62 @@ const GanttView = {
       html += this.renderBar(start, end, cells, style.color, projLabel, top, `${a.project_name}（${style.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, style.dashed, a.assignment_id);
     });
     html += '</td></tr>';
+    return html;
+  },
+
+  // Point4: 今日以降で配置（表示中のバー）が無い連続期間が GAP_MIN_DAYS 以上の「空き」帯を返す。
+  // 占有 = 表示中の myAsgs の join〜planned_end(無ければ工期末) の和集合。
+  availabilityBandsHtml(myAsgs, cells, projects) {
+    if (!cells.length) return '';
+    const windowStart = cells[0].date;
+    const last = cells[cells.length - 1];
+    const windowEnd = last.type === 'month'
+      ? new Date(last.date.getFullYear(), last.date.getMonth() + 1, 1)
+      : new Date(last.date.getFullYear(), last.date.getMonth(), last.date.getDate() + 1);
+    let from = new Date(); from.setHours(0, 0, 0, 0);   // 今日以降の空きのみ対象
+    if (from < windowStart) from = new Date(windowStart);
+    if (from >= windowEnd) return '';
+
+    // 占有区間（バーと同じ定義）→ 開始日昇順でマージ
+    const occ = [];
+    myAsgs.forEach(a => {
+      const proj = projects.find(p => p.project_id === a.project_id);
+      const s = this.parseDate(a.join);
+      const e = this.parseDate(a.planned_end || (proj && proj.end));
+      if (s && e && !isNaN(s) && !isNaN(e) && e > s) occ.push([s, e]);
+    });
+    occ.sort((x, y) => x[0] - y[0]);
+    const merged = [];
+    occ.forEach(iv => {
+      const lastIv = merged[merged.length - 1];
+      if (lastIv && iv[0] <= lastIv[1]) { if (iv[1] > lastIv[1]) lastIv[1] = new Date(iv[1]); }
+      else merged.push([new Date(iv[0]), new Date(iv[1])]);
+    });
+
+    // from〜windowEnd から占有を引いた空き区間
+    const gaps = [];
+    let cursor = new Date(from);
+    for (const [s, e] of merged) {
+      if (e <= cursor) continue;
+      if (s > cursor) gaps.push([new Date(cursor), new Date(Math.min(s, windowEnd))]);
+      if (e > cursor) cursor = new Date(e);
+      if (cursor >= windowEnd) break;
+    }
+    if (cursor < windowEnd) gaps.push([new Date(cursor), new Date(windowEnd)]);
+
+    const MIN = this.GAP_MIN_DAYS * 86400000;
+    let html = '';
+    gaps.forEach(([s, e]) => {
+      if ((e - s) < MIN) return;
+      const left = this.dateToPx(s, cells);
+      const right = this.dateToPx(e, cells);
+      const width = Math.max(8, right - left - 2);
+      const days = Math.round((e - s) / 86400000);
+      const months = Math.floor(days / 30);
+      const label = months >= 12 ? `空き 約${Math.floor(months / 12)}年` : `空き 約${months}か月`;
+      const sLabel = `${s.getFullYear()}/${s.getMonth() + 1}/${s.getDate()}`;
+      html += `<div class="gantt-gap" style="left:${left + 1}px;width:${width}px;" title="空き ${sLabel} から ${days}日"><span>${label}</span></div>`;
+    });
     return html;
   },
 
