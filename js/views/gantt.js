@@ -1118,8 +1118,8 @@ const GanttView = {
   },
 
   // 現場1件分の行HTML（現場軸・事務所軸で共通利用）。ラベル列＋配置監督のバー（準備期間バー含む）。
-  // 縦積み順＝役割優先（主任技術者→副監督→派遣）→ 同役割は配属期間の長い順（上）→短い順（下）。
-  //   期間を短く修正すると、その人が自動で下に下がる。タイブレーク＝着工日→氏名。
+  // 縦積み順＝①実員を上・配置未定/不足は役割に関係なく常に下 → ②役割優先（主任技術者→副監督→派遣）
+  //   → ③同役割は配属期間の長い順（上）→短い順（下）。タイブレーク＝着工日→氏名。
   projectRowHtml(p, assignments, cells, colCount, todayMarkerHtml) {
     const rolePriority = (a) => {
       const r = Sync.normalizeRole ? Sync.normalizeRole(a.role) : a.role;
@@ -1130,6 +1130,10 @@ const GanttView = {
       return (isNaN(s) || isNaN(e)) ? -1 : (e - s);
     };
     const projAsgs = assignments.filter(a => a.project_id === p.project_id).sort((x, y) => {
+      // 配置未定・不足は役割に関係なく常に最下段へ
+      const ux = this.isPlaceholderName(x.emp_name) ? 1 : 0;
+      const uy = this.isPlaceholderName(y.emp_name) ? 1 : 0;
+      if (ux !== uy) return ux - uy;
       const pr = rolePriority(x) - rolePriority(y);
       if (pr !== 0) return pr;
       const dd = durationMs(y) - durationMs(x);   // 期間の長い順（降順）
