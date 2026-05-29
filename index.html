@@ -322,9 +322,10 @@
         </div>
         <div class="bg-white rounded-lg shadow px-4 py-3 mb-3 flex items-center gap-3 flex-wrap">
           <span class="text-sm font-medium text-slate-700 mr-1">種類:</span>
+          <button class="mgmt-type-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-type="annual">年度経営分析</button>
           <button class="mgmt-type-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-type="analysis">月次経営分析</button>
           <button class="mgmt-type-btn px-4 py-2 rounded-lg font-medium text-sm border-2 transition" data-type="rf">ローリングフォーキャスト</button>
-          <span class="text-sm font-medium text-slate-700 ml-3">対象月:</span>
+          <span id="mgmt-period-label" class="text-sm font-medium text-slate-700 ml-3">対象月:</span>
           <select id="mgmt-month" class="border rounded px-3 py-1.5 text-sm bg-white min-w-[180px]"></select>
           <span class="text-xs text-slate-400 ml-auto">🔒 管理者・経営者のみ閲覧</span>
         </div>
@@ -661,6 +662,7 @@
           <div>
             <label class="block text-xs text-slate-500 mb-1">種類 <span class="text-red-500">*</span></label>
             <select id="mgmt-up-type" class="border rounded w-full px-2 py-1.5 text-sm">
+              <option value="annual">年度経営分析レポート</option>
               <option value="analysis">月次経営分析レポート</option>
               <option value="rf">ローリングフォーキャスト分析資料</option>
             </select>
@@ -676,7 +678,7 @@
           <div>
             <label class="block text-xs text-slate-500 mb-1">HTMLファイル <span class="text-red-500">*</span></label>
             <input type="file" id="mgmt-up-file" accept=".html,.htm,text/html" class="border rounded w-full px-2 py-1.5 text-sm">
-            <p class="text-xs text-slate-400 mt-1">生成済みの月次経営分析／R/F分析資料の .html を選択。同じ種類・同じ月は上書きされます。</p>
+            <p class="text-xs text-slate-400 mt-1">生成済みの 年度／月次経営分析・R/F分析資料の .html を選択。同じ種類・同じ対象月は上書きされます。<br>年度版は決算期末の月を選び、タイトルに期（例：第53期）を入力してください。</p>
           </div>
           <div id="mgmt-up-status" class="text-xs min-h-[16px]"></div>
         </div>

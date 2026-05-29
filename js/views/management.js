@@ -10,7 +10,7 @@
  *     触れられない。Chart.js CDN は opaque origin でも読み込み・実行できるので表示は問題ない。
  */
 const ManagementView = {
-  TYPE_LABELS: { analysis: '月次経営分析レポート', rf: 'ローリングフォーキャスト分析資料' },
+  TYPE_LABELS: { annual: '年度経営分析レポート', analysis: '月次経営分析レポート', rf: 'ローリングフォーキャスト分析資料' },
 
   reports: [],          // メタ一覧（html_content は含まない）
   currentType: 'analysis',
@@ -68,7 +68,7 @@ const ManagementView = {
   },
 
   setType(type) {
-    if (type !== 'analysis' && type !== 'rf') return;
+    if (!this.TYPE_LABELS[type]) return;
     this.currentType = type;
     this.renderTypeButtons();
     this.populateMonths();
@@ -89,13 +89,20 @@ const ManagementView = {
   // 現在の種類のレポートを年月降順で月セレクタに反映し、最新を表示
   populateMonths() {
     const sel = document.getElementById('mgmt-month');
+    // 年度版は「対象年度」、月次/R/Fは「対象月」とラベルを切替
+    const plabel = document.getElementById('mgmt-period-label');
+    if (plabel) plabel.textContent = this.currentType === 'annual' ? '対象年度:' : '対象月:';
     const list = this.reports
       .filter(r => r.report_type === this.currentType)
       .sort((a, b) => String(b.year_month).localeCompare(String(a.year_month)));
     if (!sel) return;
-    sel.innerHTML = list.map(r =>
-      `<option value="${r.id}">${this.esc(this.fmtYM(r.year_month))}${r.title ? '（' + this.esc(r.title) + '）' : ''}</option>`
-    ).join('');
+    sel.innerHTML = list.map(r => {
+      // 年度版はタイトル（期）を主ラベルに。月次/R/Fは「YYYY年M月（タイトル）」。
+      const label = (this.currentType === 'annual' && r.title)
+        ? this.esc(r.title)
+        : `${this.esc(this.fmtYM(r.year_month))}${r.title ? '（' + this.esc(r.title) + '）' : ''}`;
+      return `<option value="${r.id}">${label}</option>`;
+    }).join('');
     if (list.length) {
       sel.disabled = false;
       this.showReport(list[0].id);
