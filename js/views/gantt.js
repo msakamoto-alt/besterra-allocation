@@ -1491,7 +1491,11 @@ const GanttView = {
     const occ = [];
     myAsgs.forEach(a => {
       const proj = projects.find(p => p.project_id === a.project_id);
-      const s = this.parseDate(a.join);
+      const join = this.parseDate(a.join);
+      const prep = a.prep_start ? this.parseDate(a.prep_start) : null;
+      // 準備期間(prep_start〜join)も占有扱い＝空きにしない。占有開始は prep と join の早い方。
+      let s = join;
+      if (prep && !isNaN(prep) && (!s || isNaN(s) || prep < s)) s = prep;
       const e = this.parseDate(a.planned_end || (proj && proj.end));
       if (s && e && !isNaN(s) && !isNaN(e) && e > s) occ.push([s, e]);
     });
@@ -1672,7 +1676,9 @@ const GanttView = {
           '</td>' +
           `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
             this.gridDivs(cells, special ? this.workModeLine(emp.work_mode) : null) +
-            todayMarkerHtml;
+            todayMarkerHtml +
+            // Point4: 資格軸でも空き帯（通常稼働の現場監督のみ・派遣/専従/準現場監督は除外）
+            ((!special && emp.category === '現場監督') ? this.availabilityBandsHtml(myAsgs, cells, projects) : '');
 
         myAsgs.forEach((a, idx) => {
           const proj = projects.find(p => p.project_id === a.project_id);
