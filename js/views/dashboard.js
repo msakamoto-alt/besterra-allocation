@@ -35,19 +35,25 @@ const DashboardView = {
       }
     });
 
-    // 稼働形態プルダウン（監督派遣/事務所専従/構内専従）の変更を保存
+    // 稼働形態（監督派遣/事務所専従/構内専従）＋色帯期間の変更を保存
     document.getElementById('dash-content').addEventListener('change', async (e) => {
-      const sel = e.target.closest('#dash-workmode');
-      if (!sel) return;
-      const empNo = sel.dataset.emp;
-      const mode = sel.value;
-      sel.disabled = true;
+      const t = e.target.closest('#dash-workmode, #dash-workmode-start, #dash-workmode-end');
+      if (!t) return;
+      const modeSel = document.getElementById('dash-workmode');
+      const empNo = (modeSel && modeSel.dataset.emp) || t.dataset.emp;
+      const mode = modeSel ? modeSel.value : '';
+      const start = (document.getElementById('dash-workmode-start') || {}).value || '';
+      const end = (document.getElementById('dash-workmode-end') || {}).value || '';
+      if (start && end && start > end) { alert('色帯期間の開始が終了より後になっています'); return; }
+      const inputs = ['dash-workmode', 'dash-workmode-start', 'dash-workmode-end']
+        .map(id => document.getElementById(id)).filter(Boolean);
+      inputs.forEach(el => el.disabled = true);
       try {
-        await Sync.setEmployeeWorkMode(empNo, mode);
+        await Sync.setEmployeeWorkMode(empNo, mode, start, end);
         if (typeof App !== 'undefined' && App.loadData) await App.loadData();  // 再同期→全ビュー再描画
       } catch (err) {
         alert('稼働形態の保存に失敗しました: ' + (err.message || err));
-        sel.disabled = false;
+        inputs.forEach(el => el.disabled = false);
       }
     });
   },
@@ -370,13 +376,22 @@ const DashboardView = {
     if (canEdit) {
       const cur = emp.work_mode || '';
       const opts = [['', '通常（現場配置可）']].concat(Object.keys(WM).map(k => [k, WM[k].label]));
+      const empKey = this.esc(emp.emp_no || emp.id);
+      const isoS = this.toIsoDate(emp.work_mode_start);
+      const isoE = this.toIsoDate(emp.work_mode_end);
       wmCtrl =
         '<div class="mt-3 pt-3 border-t">' +
           '<label class="text-xs text-slate-500 block mb-1">稼働形態</label>' +
-          `<select id="dash-workmode" data-emp="${this.esc(emp.emp_no || emp.id)}" class="border rounded px-2 py-1 text-sm">` +
-            opts.map(([v, l]) => `<option value="${this.esc(v)}"${v === cur ? ' selected' : ''}>${this.esc(l)}</option>`).join('') +
-          '</select>' +
-          '<div class="text-[11px] text-slate-400 mt-1">※「通常」以外はガントで行を背景色で区別（案件があればバーも表示）</div>' +
+          '<div class="flex flex-wrap items-center gap-2">' +
+            `<select id="dash-workmode" data-emp="${empKey}" class="border rounded px-2 py-1 text-sm">` +
+              opts.map(([v, l]) => `<option value="${this.esc(v)}"${v === cur ? ' selected' : ''}>${this.esc(l)}</option>`).join('') +
+            '</select>' +
+            '<span class="text-xs text-slate-500 ml-1">色帯期間</span>' +
+            `<input type="date" id="dash-workmode-start" data-emp="${empKey}" value="${isoS}" class="border rounded px-2 py-1 text-sm">` +
+            '<span class="text-xs text-slate-400">〜</span>' +
+            `<input type="date" id="dash-workmode-end" data-emp="${empKey}" value="${isoE}" class="border rounded px-2 py-1 text-sm">` +
+          '</div>' +
+          '<div class="text-[11px] text-slate-400 mt-1">※「通常」以外はガントで色帯表示。期間を入れるとその期間だけ色帯（空欄＝全期間）。配置可否・空きには影響しません。</div>' +
         '</div>';
     } else if (Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(emp.work_mode)) {
       const wm = WM[emp.work_mode];
@@ -436,5 +451,13 @@ const DashboardView = {
   fmtDate(s) {
     if (!s) return '-';
     return this.esc(String(s).replace(/-/g, '/'));
+  },
+
+  // 'YYYY/MM/DD' や 'YYYY-MM-DD' → date input 用 'YYYY-MM-DD'（空は ''）
+  toIsoDate(s) {
+    if (!s) return '';
+    const d = new Date(String(s).replace(/\//g, '-'));
+    if (isNaN(d)) return '';
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   },
 };

@@ -1299,6 +1299,29 @@ const GanttView = {
     return wm ? wm.accent : null;
   },
 
+  // 稼働形態（派遣/専従）の色帯を指定期間だけ描画。start/end の欠けは表示窓端で補完。
+  // 配置可否・空きには影響しない（色帯の見た目のみ）。
+  workModeBandHtml(emp, cells) {
+    const wm = Sync.WORK_MODES && Sync.WORK_MODES[emp.work_mode];
+    if (!wm || !cells.length) return '';
+    const ws = cells[0].date;
+    const last = cells[cells.length - 1];
+    const we = last.type === 'month'
+      ? new Date(last.date.getFullYear(), last.date.getMonth() + 1, 1)
+      : new Date(last.date.getFullYear(), last.date.getMonth(), last.date.getDate() + 1);
+    let s = emp.work_mode_start ? this.parseDate(emp.work_mode_start) : null;
+    let e = emp.work_mode_end ? this.parseDate(emp.work_mode_end) : null;
+    if (!s || isNaN(s)) s = ws;
+    if (!e || isNaN(e)) e = we;
+    const clip = this.clipRange(s, e, cells);
+    if (!clip) return '';
+    const left = this.dateToPx(clip.start, cells);
+    const right = this.dateToPx(clip.end, cells);
+    const width = Math.max(8, right - left);
+    const range = `${emp.work_mode_start || ''}${(emp.work_mode_start || emp.work_mode_end) ? '〜' : ''}${emp.work_mode_end || ''}`;
+    return `<div class="gantt-wm-band" style="left:${left}px;width:${width}px;background:${wm.bg};border-left:4px solid ${wm.accent};" title="${this.esc(wm.label)} ${this.esc(range)}"><span style="color:${wm.text}">${this.esc(wm.short)}</span></div>`;
+  },
+
   // emp.id → emp のマップ（employees 配列の参照が変わった時だけ再構築＝同期後のみ）
   empByIdMap() {
     const emps = Sync.cache.employees || [];
@@ -1456,19 +1479,22 @@ const GanttView = {
   // 監督1名分の行HTML（監督軸・事務所モニターで共通利用）。ラベル列＋配置現場のバー。
   supervisorRowHtml(e, assignments, projects, cells, colCount, todayMarkerHtml) {
     const special = Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(e.work_mode);
+    const wmPeriod = special && !!(e.work_mode_start || e.work_mode_end);  // 色帯の表示期間あり
+    const tintWhole = special && !wmPeriod;                               // 期間なし＝従来の全行色帯
     const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect));
     const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
-    const labelBg = special ? `;${this.workModeBg(e.work_mode)}` : '';
-    const tlStyle = special ? ` ${this.workModeTimelineStyle(e.work_mode)}` : '';
+    const labelBg = tintWhole ? `;${this.workModeBg(e.work_mode)}` : '';
+    const tlStyle = tintWhole ? ` ${this.workModeTimelineStyle(e.work_mode)}` : '';
 
     let html = '<tr class="border-t">' +
-      `<td class="p-2 sticky left-0 ${special ? '' : 'bg-white'} border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px${labelBg}">` +
+      `<td class="p-2 sticky left-0 ${tintWhole ? '' : 'bg-white'} border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px${labelBg}">` +
         `<div class="text-sm font-medium">${this.esc(e.name)}</div>` +
         `<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1">${PoolView.categoryBadge(e.category)}${special ? this.workModeBadge(e.work_mode) : ''}</div>` +
       '</td>' +
       `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
-        this.gridDivs(cells, special ? this.workModeLine(e.work_mode) : null) +
+        this.gridDivs(cells, tintWhole ? this.workModeLine(e.work_mode) : null) +
         todayMarkerHtml +
+        (wmPeriod ? this.workModeBandHtml(e, cells) : '') +
         // Point4: 空き帯は「通常稼働の現場監督」のみ（派遣・専従・準現場監督は除外）
         ((!special && e.category === '現場監督') ? this.availabilityBandsHtml(myAsgs, cells, projects) : '');
     myAsgs.forEach((a, idx) => {
@@ -1669,8 +1695,10 @@ const GanttView = {
         const myAsgs = assignments.filter(a => a.emp_id === emp.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect));
         const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
         const special = Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(emp.work_mode);
-        const labelBg = special ? `;${this.workModeBg(emp.work_mode)}` : '';
-        const tlStyle = special ? ` ${this.workModeTimelineStyle(emp.work_mode)}` : '';
+        const wmPeriod = special && !!(emp.work_mode_start || emp.work_mode_end);
+        const tintWhole = special && !wmPeriod;
+        const labelBg = tintWhole ? `;${this.workModeBg(emp.work_mode)}` : '';
+        const tlStyle = tintWhole ? ` ${this.workModeTimelineStyle(emp.work_mode)}` : '';
 
         let expWarn = '';
         if (eq.expiry) {
@@ -1682,13 +1710,14 @@ const GanttView = {
         }
 
         html += '<tr class="border-t">' +
-          `<td class="p-2 sticky left-0 ${special ? '' : 'bg-white'} border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px${labelBg}">` +
+          `<td class="p-2 sticky left-0 ${tintWhole ? '' : 'bg-white'} border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px${labelBg}">` +
             `<div class="text-sm font-medium">${this.esc(emp.name)}${expWarn}</div>` +
             `<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1">${this.esc(emp.department || '')} ${PoolView.categoryBadge(emp.category)}${special ? this.workModeBadge(emp.work_mode) : ''}</div>` +
           '</td>' +
           `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
-            this.gridDivs(cells, special ? this.workModeLine(emp.work_mode) : null) +
+            this.gridDivs(cells, tintWhole ? this.workModeLine(emp.work_mode) : null) +
             todayMarkerHtml +
+            (wmPeriod ? this.workModeBandHtml(emp, cells) : '') +
             // Point4: 資格軸でも空き帯（通常稼働の現場監督のみ・派遣/専従/準現場監督は除外）
             ((!special && emp.category === '現場監督') ? this.availabilityBandsHtml(myAsgs, cells, projects) : '');
 

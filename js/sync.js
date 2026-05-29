@@ -1372,11 +1372,16 @@ const Sync = {
 
   // 稼働形態を保存（監督ダッシュボードから）。tier 列には触れない（onConflict で work_mode のみ更新）。
   // 空文字 = 通常（NULL に戻す）。
-  async setEmployeeWorkMode(empNo, mode) {
+  async setEmployeeWorkMode(empNo, mode, start, end) {
     const sb = this.getSupabase();
+    const isSpecial = !!(String(mode || '').trim() && mode !== '通常');
+    const slash = (s) => { const v = String(s || '').trim().replace(/-/g, '/'); return v || null; };
     const res = await sb.from('employee_tiers').upsert({
       emp_no: String(empNo).trim(),
-      work_mode: (String(mode || '').trim() && mode !== '通常') ? String(mode).trim() : null,
+      work_mode: isSpecial ? String(mode).trim() : null,
+      // 期間は色帯の表示範囲のみ（空＝全期間）。通常に戻したら期間もクリア。
+      work_mode_start: isSpecial ? slash(start) : null,
+      work_mode_end: isSpecial ? slash(end) : null,
       updated_at: new Date().toISOString(),
       updated_by: 'web',
     }, { onConflict: 'emp_no' });
@@ -1607,13 +1612,17 @@ const Sync = {
   // 旧 normalizeEmployees（区分/中計）を置換。返す形は従来と同じ（id/name/department/role/category/...）。
   buildEmployeesFromOrg(orgRows, tierRows, qualSource) {
     const tierByEmp = {};
-    const workModeByEmp = {};
+    const workModeByEmp = {};   // emp_no -> { mode, start, end }
     (tierRows || []).forEach(t => {
       const no = String(t.emp_no || '').trim();
       if (no) {
         tierByEmp[no] = String(t.tier || '').trim();
         const wm = String(t.work_mode || '').trim();
-        if (wm) workModeByEmp[no] = wm;
+        if (wm) workModeByEmp[no] = {
+          mode: wm,
+          start: String(t.work_mode_start || '').trim(),
+          end: String(t.work_mode_end || '').trim(),
+        };
       }
     });
     // 段階Q: employee_quals は SmartHR「従業員の資格一覧」(1行=1人×1資格)。社員番号でグルーピングし、
@@ -1651,7 +1660,9 @@ const Sync = {
         ).join('、'),
         qual_details: detailsByEmp[empNo] || [],
         category: this.judgeCategory(empNo, depts, tierByEmp),
-        work_mode: workModeByEmp[empNo] || '',
+        work_mode: workModeByEmp[empNo] ? workModeByEmp[empNo].mode : '',
+        work_mode_start: workModeByEmp[empNo] ? workModeByEmp[empNo].start : '',
+        work_mode_end: workModeByEmp[empNo] ? workModeByEmp[empNo].end : '',
         status: 'active',
         rank: '',
         depts,            // 組織図画面用に保持
