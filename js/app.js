@@ -14,7 +14,7 @@ const App = {
     dash:       ['admin', 'editor', 'executive', 'manager', 'viewer'],  // Point2: 閲覧者(工事監督)は自分のダッシュボードのみ
     prospects:  ['admin', 'editor', 'executive'],
     management: ['admin', 'executive'],   // 段階E3: 経営機密。閲覧は管理者・経営者のみ（RLSでも強制）
-    elearning:  ['admin', 'editor', 'executive', 'manager', 'viewer'],  // 段階E4a: 安全学習はログイン者全員
+    elearning:  ['admin'],  // 当面 admin 限定（問題の精査が済むまで一般非公開）。精査後に全ロールへ戻す。
     orgchart:   ['admin'],
   },
   canViewTab(tab) {
