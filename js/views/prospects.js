@@ -147,7 +147,8 @@ const ProspectsView = {
     if (pn.length < 3) return null;
     const projs = Sync.cache.projects || [];
     for (const p of projs) {
-      if (p.prospect || !p.project_id) continue;   // SF実工事のみ（見込み由来は除外）
+      // SF実工事のみ（見込み由来は除外）。完了済みは重複チェック対象外（古い工事への誤検知を防ぐ）。
+      if (p.prospect || !p.project_id || p.completed) continue;
       const sn = this.normName(p.name);
       if (!sn) continue;
       if (sn === pn || (pn.length >= 5 && (sn.includes(pn) || pn.includes(sn)))) return p;
