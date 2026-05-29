@@ -667,6 +667,27 @@
 
   </div>
 
+  <!-- ========== 事務所モニターボード（?board=事務所名 で起動・全画面キオスク表示）========== -->
+  <div id="board-screen" class="hidden fixed inset-0 bg-slate-100 flex flex-col z-40">
+    <header class="bg-slate-900 text-white px-6 py-3 flex items-center justify-between flex-none">
+      <div class="flex items-center gap-3">
+        <span class="text-2xl font-bold" id="board-office-name">事務所</span>
+        <span class="text-sm text-slate-300">監督配置ボード</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="board-mode-btn text-sm font-medium px-3 py-1.5 rounded bg-white text-slate-900" data-mode="month">月次</button>
+        <button class="board-mode-btn text-sm font-medium px-3 py-1.5 rounded bg-slate-700 text-slate-200" data-mode="monthday">当月日次＋先々月次</button>
+      </div>
+      <div class="flex items-center gap-4 text-sm text-slate-300">
+        <span id="board-date"></span>
+        <span id="board-updated" class="text-xs text-slate-400"></span>
+      </div>
+    </header>
+    <div id="board-stage" class="flex-1 overflow-hidden relative">
+      <div id="board-content" class="absolute top-2 left-2" style="transform-origin: top left;"></div>
+    </div>
+  </div>
+
   <!-- ========== 階層判定モーダル（段階D4: 組織図から）========== -->
   <div id="tier-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
     <div class="bg-white rounded-lg shadow-xl w-full max-w-sm p-6">
@@ -700,6 +721,7 @@
   <script src="js/views/accounts.js"></script>
   <script src="js/views/management.js"></script>
   <script src="js/views/elearning.js"></script>
+  <script src="js/views/board.js"></script>
   <script src="js/config.js" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
   <script src="js/app.js"></script>
 </body>

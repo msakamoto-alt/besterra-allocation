@@ -221,6 +221,13 @@ const GanttView = {
     });
 
     document.getElementById('gantt-container').addEventListener('click', (e) => {
+      // 事務所モニターボタン → 別タブでその事務所だけのボードを開く
+      const boardBtn = e.target.closest('[data-board-office]');
+      if (boardBtn) {
+        const office = boardBtn.getAttribute('data-board-office');
+        window.open('?board=' + encodeURIComponent(office), '_blank');
+        return;
+      }
       // バークリック → 詳細モーダル
       const bar = e.target.closest('.gantt-bar[data-asg-id]');
       if (bar) {
@@ -1402,54 +1409,134 @@ const GanttView = {
       if (ai !== bi) return ai - bi;
       return String(a).localeCompare(String(b), 'ja');
     });
-
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     depts.forEach(dept => {
       const emps = empByDept[dept];
       const assignedInDept = emps.filter(e => !(Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(e.work_mode)) && assignments.some(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect))).length;
 
+      const monitorBtn =
+        `<button data-board-office="${this.esc(dept)}" title="この事務所だけを別タブでモニター表示" ` +
+        `class="flex-none text-[11px] bg-slate-600 hover:bg-slate-500 text-white px-2 py-1 rounded">📺 モニター</button>`;
       html += '<tr class="bg-slate-800 text-white">' +
         `<td class="p-2 sticky left-0 bg-slate-800 border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
-          `<div class="font-bold text-sm">${this.esc(dept)}</div>` +
-          `<div class="text-xs text-slate-300">在籍 ${emps.length}名 / 配置中 ${assignedInDept}名</div>` +
+          `<div class="flex items-center justify-between gap-2">` +
+            `<div><div class="font-bold text-sm">${this.esc(dept)}</div>` +
+            `<div class="text-xs text-slate-300">在籍 ${emps.length}名 / 配置中 ${assignedInDept}名</div></div>` +
+            monitorBtn +
+          `</div>` +
         '</td>' +
         `<td colspan="${colCount}" style="height:36px; padding:0; background:#1e293b"></td>` +
       '</tr>';
 
-      emps.forEach(e => {
-        const special = Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(e.work_mode);
-        const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect));
-        const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
-        const labelBg = special ? `;${this.workModeBg(e.work_mode)}` : '';
-        const tlStyle = special ? ` ${this.workModeTimelineStyle(e.work_mode)}` : '';
-
-        html += '<tr class="border-t">' +
-          `<td class="p-2 sticky left-0 ${special ? '' : 'bg-white'} border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px${labelBg}">` +
-            `<div class="text-sm font-medium">${this.esc(e.name)}</div>` +
-            `<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1">${PoolView.categoryBadge(e.category)}${special ? this.workModeBadge(e.work_mode) : ''}</div>` +
-          '</td>' +
-          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
-            this.gridDivs(cells, special ? this.workModeLine(e.work_mode) : null) +
-            todayMarkerHtml;
-        myAsgs.forEach((a, idx) => {
-          const proj = projects.find(p => p.project_id === a.project_id);
-          if (!proj) return;
-          const start = this.parseDate(a.join);
-          const end = this.parseDate(a.planned_end || proj.end);
-          const style = this.resolveBarStyle(a, proj);
-          const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
-          const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
-          html += this.prepBarHtml(a, cells, style.color, top);
-          html += this.renderBar(start, end, cells, style.color, projLabel, top, `${a.project_name}（${style.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, style.dashed, a.assignment_id);
-        });
-        html += '</td></tr>';
-      });
+      emps.forEach(e => { html += this.supervisorRowHtml(e, assignments, projects, cells, colCount, todayMarkerHtml); });
     });
     html += '</tbody></table>';
 
     html += this.legendRole();
     html += this.legendWorkMode();
     return html;
+  },
+
+  // 監督1名分の行HTML（監督軸・事務所モニターで共通利用）。ラベル列＋配置現場のバー。
+  supervisorRowHtml(e, assignments, projects, cells, colCount, todayMarkerHtml) {
+    const special = Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(e.work_mode);
+    const myAsgs = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect));
+    const rowH = Math.max(48, 16 + Math.max(1, myAsgs.length) * (this.BAR_HEIGHT + this.BAR_GAP));
+    const labelBg = special ? `;${this.workModeBg(e.work_mode)}` : '';
+    const tlStyle = special ? ` ${this.workModeTimelineStyle(e.work_mode)}` : '';
+
+    let html = '<tr class="border-t">' +
+      `<td class="p-2 sticky left-0 ${special ? '' : 'bg-white'} border-r z-10 pl-6 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px${labelBg}">` +
+        `<div class="text-sm font-medium">${this.esc(e.name)}</div>` +
+        `<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1">${PoolView.categoryBadge(e.category)}${special ? this.workModeBadge(e.work_mode) : ''}</div>` +
+      '</td>' +
+      `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
+        this.gridDivs(cells, special ? this.workModeLine(e.work_mode) : null) +
+        todayMarkerHtml;
+    myAsgs.forEach((a, idx) => {
+      const proj = projects.find(p => p.project_id === a.project_id);
+      if (!proj) return;
+      const start = this.parseDate(a.join);
+      const end = this.parseDate(a.planned_end || proj.end);
+      const style = this.resolveBarStyle(a, proj);
+      const top = 8 + idx * (this.BAR_HEIGHT + this.BAR_GAP);
+      const projLabel = (proj.contract_type || '').includes('元請') ? `[元請] ${a.project_name}` : a.project_name;
+      html += this.prepBarHtml(a, cells, style.color, top);
+      html += this.renderBar(start, end, cells, style.color, projLabel, top, `${a.project_name}（${style.role}） ${a.join}〜${a.planned_end || proj.end}${a.prospect ? '【見込み】' : ''}`, style.dashed, a.assignment_id);
+    });
+    html += '</td></tr>';
+    return html;
+  },
+
+  // ===== 事務所モニター（単一事務所・複数列・キオスク）=====
+
+  // その事務所の監督を numCols 列に分けて横並びに描画（画面いっぱいに使う）。
+  renderOfficeMonitor(office, numCols) {
+    const employees = (Sync.cache.employees || []).filter(e =>
+      (e.category === '現場監督' || e.category === '準現場監督') && e.department === office);
+    const assignments = Sync.cache.assignments || [];
+    const projects = Sync.cache.projects || [];
+    const cells = this.buildCells();
+    if (cells.length === 0) return '<p class="p-4 text-slate-500">表示範囲のデータがありません</p>';
+    if (employees.length === 0) return `<p class="p-4 text-slate-500">「${this.esc(office)}」に該当する監督が見つかりません。</p>`;
+    const colCount = cells.length;
+    const todayMarkerHtml = this.todayMarker(cells);
+
+    const groups = this.balanceColumns(employees, Math.max(1, numCols), (e) => this.supervisorRowHeight(e, assignments));
+    const tables = groups.map(group => {
+      let body = '';
+      group.forEach(e => { body += this.supervisorRowHtml(e, assignments, projects, cells, colCount, todayMarkerHtml); });
+      return `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>${body}</tbody></table>`;
+    }).join('');
+
+    return `<div class="flex items-start gap-6">${tables}</div>` + this.legendRole() + this.legendWorkMode();
+  },
+
+  // 監督1行の高さ（割当数で決まる・列バランス計算と行描画で共通の式）
+  supervisorRowHeight(e, assignments) {
+    const n = assignments.filter(a => a.emp_id === e.id && (this.showCompleted || !a.completed) && (this.showProspects || !a.prospect)).length;
+    return Math.max(48, 16 + Math.max(1, n) * (this.BAR_HEIGHT + this.BAR_GAP));
+  },
+
+  // 並び順を保ったまま、各列の合計高さがそろうように numCols 列へ分割
+  balanceColumns(items, numCols, weightOf) {
+    if (numCols <= 1 || items.length <= 1) return [items.slice()];
+    const weights = items.map(weightOf);
+    const total = weights.reduce((a, b) => a + b, 0);
+    const target = total / numCols;
+    const cols = []; let cur = []; let curW = 0;
+    for (let i = 0; i < items.length; i++) {
+      cur.push(items[i]); curW += weights[i];
+      const itemsLeft = items.length - 1 - i;
+      const colsLeft = numCols - cols.length - 1;   // この列を閉じた後に残る列数
+      if (cols.length < numCols - 1 && curW >= target && itemsLeft >= colsLeft && colsLeft > 0) {
+        cols.push(cur); cur = []; curW = 0;
+      }
+    }
+    cols.push(cur);
+    return cols;
+  },
+
+  // 画面（stageW×stageH）に最も大きく収まる列数を 1〜maxCols から選ぶ（解析的に scale を比較）
+  pickColumnCount(office, stageW, stageH, maxCols = 4) {
+    const employees = (Sync.cache.employees || []).filter(e =>
+      (e.category === '現場監督' || e.category === '準現場監督') && e.department === office);
+    if (employees.length <= 1) return 1;
+    const assignments = Sync.cache.assignments || [];
+    const cells = this.buildCells();
+    const colW = this.LABEL_WIDTH + this.cellsTotalWidth(cells);
+    const headerH = 60;
+    const gap = 24;
+    const totalRowH = employees.reduce((s, e) => s + this.supervisorRowHeight(e, assignments), 0);
+    const cap = Math.min(maxCols, employees.length);
+    let best = 1, bestScale = 0;
+    for (let c = 1; c <= cap; c++) {
+      const W = c * colW + (c - 1) * gap;
+      const H = headerH + totalRowH / c;
+      const scale = Math.min(stageW / W, stageH / H);
+      if (scale > bestScale + 1e-6) { bestScale = scale; best = c; }
+    }
+    return best;
   },
 
   // ===== 4. 資格軸 =====

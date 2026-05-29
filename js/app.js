@@ -39,9 +39,13 @@ const App = {
     ManagementView.init();
     ELearningView.init();
 
+    // ?board=事務所名 のときは事務所モニターボードモード（監督軸をその事務所だけ全画面表示）
+    this._boardOffice = new URLSearchParams(location.search).get('board');
+
     // 段階E1: 既存ログインセッションがあれば復元してそのまま入る
     if (await Sync.refreshSession()) {
-      await this.enterApp();
+      if (this._boardOffice) await this.enterBoard(this._boardOffice);
+      else await this.enterApp();
     }
   },
 
@@ -51,6 +55,13 @@ const App = {
     this.updateRoleUI();
     this.applyTabVisibility();
     await this.loadData();
+  },
+
+  // 事務所モニターボード：データを読み込み、Board に委譲して全画面表示
+  async enterBoard(office) {
+    try { await Sync.syncAll(); } catch (e) { console.error('Sync失敗:', e); }
+    try { this.updateLastSync(); } catch (e) { /* noop */ }
+    Board.enter(office);
   },
 
   // 段階E1: 個人アカウント（Supabase Auth）でログイン。ロールが取れて初めて入室。
@@ -70,7 +81,8 @@ const App = {
           await Sync.logout();
           throw new Error('このアカウントには権限が割り当てられていません。管理者にご連絡ください。');
         }
-        await this.enterApp();
+        if (this._boardOffice) await this.enterBoard(this._boardOffice);
+        else await this.enterApp();
       } catch (err) {
         errorEl.textContent = '× ' + (err.message || 'ログインに失敗しました');
         errorEl.classList.remove('hidden');
