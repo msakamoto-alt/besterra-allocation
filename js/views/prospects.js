@@ -89,6 +89,11 @@ const ProspectsView = {
     const period = (r.start_date || '') + (r.end_date ? ' 〜 ' + r.end_date : '');
     const amountM = this.parseAmount(r.amount);
     const amountTxt = amountM > 0 ? `¥${amountM.toFixed(1)}M` : '-';
+    // Salesforce取込の実工事と工事名が一致＝受注済みで重複の可能性 → ⚠表示
+    const hit = this.sfCollision(r);
+    const collisionMark = hit
+      ? ` <span class="inline-flex items-center bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded text-[10px] font-bold align-middle" title="Salesforce取込の工事「${this.esc(hit.project_id)} ${this.esc(hit.name)}」と工事名が一致。すでに受注済みの可能性があります。受注済みなら『受注済』でアーカイブしてください。">⚠ SF重複? ${this.esc(hit.project_id)}</span>`
+      : '';
     const actions = !Sync.canEdit()
       ? '<span class="text-slate-300 text-xs">—</span>'
       : isArchived
@@ -99,7 +104,7 @@ const ProspectsView = {
     return `<tr class="border-t${archRow}">` +
       `<td class="px-3 py-2">${statusBadge}</td>` +
       `<td class="px-3 py-2">${this.esc(r.customer)}</td>` +
-      `<td class="px-3 py-2 font-medium">${this.esc(r.project_name)}</td>` +
+      `<td class="px-3 py-2 font-medium">${this.esc(r.project_name)}${collisionMark}</td>` +
       `<td class="px-3 py-2 text-center text-xs">${this.esc(r.contract_type || '-')}</td>` +
       `<td class="px-3 py-2 text-center text-xs">${this.esc(r.area || '-')}</td>` +
       `<td class="px-3 py-2 text-center text-xs">${this.esc(r.managing_dept || '-')}</td>` +
@@ -127,6 +132,27 @@ const ProspectsView = {
     if (!s) return 0;
     const n = Number(String(s).replace(/[^\d.-]/g, ''));
     return isNaN(n) ? 0 : n / 1e6;
+  },
+
+  // 工事名の正規化（全半角統一・空白/記号除去）。バッティング照合用。
+  normName(s) {
+    return String(s || '').normalize('NFKC').replace(/\s+/g, '')
+      .replace(/[（）()【】「」・,，.．\-－—_／/]/g, '').toLowerCase();
+  },
+
+  // この見込み案件と工事名が一致する Salesforce取込の実工事（見込み由来でない）を返す。
+  // SF側は customer が空のため、照合は工事名のみ（正規化＝一致 or どちらかが他方を包含・長さ5以上）。
+  sfCollision(r) {
+    const pn = this.normName(r.project_name);
+    if (pn.length < 3) return null;
+    const projs = Sync.cache.projects || [];
+    for (const p of projs) {
+      if (p.prospect || !p.project_id) continue;   // SF実工事のみ（見込み由来は除外）
+      const sn = this.normName(p.name);
+      if (!sn) continue;
+      if (sn === pn || (pn.length >= 5 && (sn.includes(pn) || pn.includes(sn)))) return p;
+    }
+    return null;
   },
 
   populateDeptSelect() {
