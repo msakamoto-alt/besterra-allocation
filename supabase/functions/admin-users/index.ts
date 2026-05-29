@@ -13,6 +13,7 @@
 // アクション（POST body の action）：
 //   list         … user_roles 一覧（emp_no 含む）
 //   create       … { email, password, display_name, role, emp_no } でユーザー作成＋ロール付与
+//                  （Point3: user_metadata.must_change_pw=true ＝初回ログインで本人がパスワード変更）
 //   set_role     … { user_id, role } でロール変更
 //   set_name     … { user_id, display_name } で表示名変更
 //   set_emp      … { user_id, emp_no } で社員番号（紐付け）変更
@@ -72,6 +73,7 @@ Deno.serve(async (req) => {
       if (!ROLES.includes(role)) return json({ error: '不正なロールです' }, 400);
       const { data: created, error: cErr } = await admin.auth.admin.createUser({
         email, password, email_confirm: true,
+        user_metadata: { must_change_pw: true },   // Point3: 仮パスワード→初回ログインで本人が変更
       });
       if (cErr) return json({ error: cErr.message }, 400);
       const uid = created.user!.id;
@@ -118,7 +120,10 @@ Deno.serve(async (req) => {
     if (action === 'set_password') {
       const { user_id, password } = body;
       if (!password) return json({ error: 'パスワードが未指定です' }, 400);
-      const { error } = await admin.auth.admin.updateUserById(user_id, { password });
+      // Point3: 管理者の再設定も仮パスワード扱い→本人が初回ログインで変更
+      const { error } = await admin.auth.admin.updateUserById(user_id, {
+        password, user_metadata: { must_change_pw: true },
+      });
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
     }

@@ -28,6 +28,7 @@ const App = {
     this.setupTabs();
     this.setupSync();
     this.setupLogout();
+    this.setupPwChange();
 
     PoolView.init();
     GanttView.init();
@@ -44,9 +45,15 @@ const App = {
 
     // 段階E1: 既存ログインセッションがあれば復元してそのまま入る
     if (await Sync.refreshSession()) {
-      if (this._boardOffice) await this.enterBoard(this._boardOffice);
-      else await this.enterApp();
+      await this.proceedAfterAuth();
     }
+  },
+
+  // 認証後の遷移：仮パスワードなら変更画面、それ以外はボード/メインへ。
+  async proceedAfterAuth() {
+    if (Sync.mustChangePw) { this.showPwChange(); return; }
+    if (this._boardOffice) await this.enterBoard(this._boardOffice);
+    else await this.enterApp();
   },
 
   // ログイン成功後の共通処理：ロールUI反映 → データ読込
@@ -85,6 +92,43 @@ const App = {
     }
   },
 
+  // Point3: 初回パスワード変更画面を表示（仮パスワードでログインした人）
+  showPwChange() {
+    document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('main-screen').classList.add('hidden');
+    const bs = document.getElementById('board-screen');
+    if (bs) bs.classList.add('hidden');
+    document.getElementById('pwchange-screen').classList.remove('hidden');
+    const inp = document.getElementById('pwchange-new');
+    if (inp) inp.focus();
+  },
+
+  setupPwChange() {
+    const form = document.getElementById('pwchange-form');
+    if (!form) return;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const pw = document.getElementById('pwchange-new').value;
+      const confirm = document.getElementById('pwchange-confirm').value;
+      const err = document.getElementById('pwchange-error');
+      const btn = form.querySelector('button[type="submit"]');
+      err.classList.add('hidden');
+      if (pw.length < 8) { err.textContent = 'パスワードは8文字以上にしてください'; err.classList.remove('hidden'); return; }
+      if (pw !== confirm) { err.textContent = '確認用パスワードが一致しません'; err.classList.remove('hidden'); return; }
+      if (btn) { btn.disabled = true; btn.textContent = '設定中…'; }
+      try {
+        await Sync.changeOwnPassword(pw);
+        document.getElementById('pwchange-screen').classList.add('hidden');
+        if (this._boardOffice) await this.enterBoard(this._boardOffice);
+        else await this.enterApp();
+      } catch (er) {
+        err.textContent = '× ' + (er.message || 'パスワードの設定に失敗しました');
+        err.classList.remove('hidden');
+        if (btn) { btn.disabled = false; btn.textContent = '設定してはじめる'; }
+      }
+    });
+  },
+
   // 事務所モニターボード：データを読み込み、Board に委譲して全画面表示
   async enterBoard(office) {
     try { await Sync.syncAll(); } catch (e) { console.error('Sync失敗:', e); }
@@ -109,8 +153,7 @@ const App = {
           await Sync.logout();
           throw new Error('このアカウントには権限が割り当てられていません。管理者にご連絡ください。');
         }
-        if (this._boardOffice) await this.enterBoard(this._boardOffice);
-        else await this.enterApp();
+        await this.proceedAfterAuth();
       } catch (err) {
         errorEl.textContent = '× ' + (err.message || 'ログインに失敗しました');
         errorEl.classList.remove('hidden');

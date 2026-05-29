@@ -1256,6 +1256,15 @@ const Sync = {
     this.isEditor = false;
   },
 
+  // Point3: 本人が自分のパスワードを変更（初回の仮パスワード変更）。同時に変更強制フラグを解除。
+  async changeOwnPassword(newPassword) {
+    const sb = this.getSupabase();
+    const { error } = await sb.auth.updateUser({ password: newPassword, data: { must_change_pw: false } });
+    if (error) throw new Error(error.message || 'パスワードの変更に失敗しました');
+    this.mustChangePw = false;
+    return true;
+  },
+
   // 既存セッション（localStorage 永続）を復元し、ロールを取得。ログイン中なら true。
   async refreshSession() {
     if (!this.USE_SUPABASE || !this.SUPABASE_URL) return false;
@@ -1274,6 +1283,8 @@ const Sync = {
       const { data: u } = await sb.auth.getUser();
       const uid = u && u.user && u.user.id;
       this.userId = uid || null;            // 段階E4: 自分の学習ログ絞り込み用
+      // Point3: 仮パスワードで作成された/再設定されたアカウントは初回ログインで変更を強制
+      this.mustChangePw = !!(u && u.user && u.user.user_metadata && u.user.user_metadata.must_change_pw);
       if (!uid) {
         this.role = null;
       } else {
@@ -1298,6 +1309,7 @@ const Sync = {
       this.userId = null;
       this.displayName = null;
       this.empNo = null;
+      this.mustChangePw = false;
     }
     this.isEditor = (this.role === 'admin' || this.role === 'editor');  // 後方互換
     return this.role;

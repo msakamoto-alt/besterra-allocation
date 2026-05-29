@@ -61,6 +61,31 @@
 
   </div>
 
+  <!-- ========== 初回パスワード変更（仮パスワードでログイン後・強制）========== -->
+  <div id="pwchange-screen" class="hidden min-h-screen flex items-center justify-center p-6 bg-slate-50">
+    <div class="w-full max-w-sm bg-white rounded-lg shadow p-6">
+      <h1 class="text-xl font-bold text-slate-900 mb-1">パスワードの設定</h1>
+      <p class="text-sm text-slate-500 mb-5">初回ログインです。ご自身の新しいパスワードを設定してください。</p>
+      <form id="pwchange-form" class="space-y-4">
+        <div>
+          <label for="pwchange-new" class="block text-xs font-semibold text-slate-600 mb-1.5">新しいパスワード（8文字以上）</label>
+          <input type="password" id="pwchange-new" autocomplete="new-password" required minlength="8"
+            class="w-full px-4 py-3 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 transition">
+        </div>
+        <div>
+          <label for="pwchange-confirm" class="block text-xs font-semibold text-slate-600 mb-1.5">新しいパスワード（確認）</label>
+          <input type="password" id="pwchange-confirm" autocomplete="new-password" required minlength="8"
+            class="w-full px-4 py-3 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 transition">
+        </div>
+        <button type="submit"
+          class="w-full bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-semibold py-3 rounded-lg shadow-md shadow-red-600/20 transition">
+          設定してはじめる
+        </button>
+      </form>
+      <p id="pwchange-error" class="hidden mt-3 text-red-600 text-sm text-center"></p>
+    </div>
+  </div>
+
   <!-- ========== メイン画面 ========== -->
   <div id="main-screen" class="hidden">
 
