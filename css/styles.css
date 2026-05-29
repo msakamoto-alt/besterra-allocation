@@ -162,3 +162,81 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
 .org-box-count { font-weight: 400; opacity: 0.85; margin-left: 3px; font-size: 11px; }
 .org-box-title[data-org-path]:hover { background: #475569; }
 
+/* ========== 安全学習（ベステラ・ネイビー×レッド／スマホ最優先） ========== */
+/* すべて #elearn-body.el-scope 配下にスコープし、他タブへ影響させない。 */
+#elearn-body.el-scope {
+  background: #eef2f7;            /* 涼しい薄青グレー地 */
+  border-radius: 14px;
+  padding: 14px 12px 28px;
+  color: #1e293b;
+}
+@media (min-width: 640px) { #elearn-body.el-scope { padding: 20px 18px 32px; } }
+.el-scope .el-wrap { max-width: 600px; margin: 0 auto; }
+.el-scope .el-wrap-wide { max-width: 1000px; margin: 0 auto; }
+.el-scope .el-card {
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .06);
+}
+.el-scope .el-muted { color: #94a3b8; }
+.el-scope .el-ink { color: #0f172a; }
+/* ネイビーのヘッダーバナー */
+.el-scope .el-banner {
+  background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%);
+  color: #fff; border-radius: 14px; font-weight: 700;
+  box-shadow: 0 2px 6px rgba(30, 58, 138, .25);
+}
+/* 主アクション＝ゴールド（連続カードと同系・赤ヘッダーと衝突しない行動色・min 48px でタップしやすく） */
+.el-scope .el-btn-primary {
+  background: #d97706; color: #fff; border: none; border-radius: 12px;
+  font-weight: 700; cursor: pointer; transition: background .15s; min-height: 48px;
+}
+.el-scope .el-btn-primary:hover { background: #b45309; }
+.el-scope .el-btn-primary:disabled { background: #cbd5e1; color: #fff; cursor: not-allowed; }
+/* 副アクション＝ネイビー */
+.el-scope .el-btn-navy {
+  background: #1e3a8a; color: #fff; border: none; border-radius: 12px;
+  font-weight: 700; cursor: pointer; transition: background .15s; min-height: 40px;
+}
+.el-scope .el-btn-navy:hover { background: #1e40af; }
+.el-scope .el-btn-ghost {
+  background: #fff; color: #334155; border: 1.5px solid #cbd5e1;
+  border-radius: 12px; font-weight: 600; cursor: pointer; min-height: 40px;
+}
+.el-scope .el-btn-ghost:hover { border-color: #94a3b8; }
+/* チップ（選択中＝ネイビー）・タップ領域確保 */
+.el-scope .el-chip {
+  background: #fff; color: #475569; border: 1.5px solid #cbd5e1;
+  border-radius: 9999px; font-weight: 600; cursor: pointer; transition: all .12s; min-height: 36px;
+}
+.el-scope .el-chip:hover { border-color: #94a3b8; }
+.el-scope .el-chip.on { background: #1e3a8a; color: #fff; border-color: #1e3a8a; }
+/* 4択カード（大きめタップ領域・スマホ前提） */
+.el-scope .el-answer {
+  background: #fff; border: 2px solid #e2e8f0; border-radius: 14px;
+  cursor: pointer; transition: border-color .12s, background .12s; text-align: left; width: 100%;
+  min-height: 56px;
+}
+.el-scope .el-answer:hover { border-color: #93c5fd; }
+.el-scope .el-answer:disabled { cursor: default; }
+.el-scope .el-answer.correct { border-color: #16a34a; background: #f0fdf4; }
+.el-scope .el-answer.wrong { border-color: #dc2626; background: #fef2f2; }
+.el-scope .el-answer.dim { opacity: .5; }
+.el-scope .el-badge-letter {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 9999px; font-weight: 700; font-size: 14px; flex: none;
+  background: #eef2f7; color: #475569;
+}
+.el-scope .el-answer.correct .el-badge-letter { background: #16a34a; color: #fff; }
+.el-scope .el-answer.wrong .el-badge-letter { background: #dc2626; color: #fff; }
+/* 「正解」区切り */
+.el-scope .el-divider { display: flex; align-items: center; gap: 10px; color: #64748b; font-size: 12px; font-weight: 700; }
+.el-scope .el-divider::before, .el-scope .el-divider::after { content: ''; flex: 1; height: 1px; background: #e2e8f0; }
+/* 直近7日バーのトラック背景 */
+.el-scope .el-bartrack { background: #e2e8f0; }
+/* 上段3カードの上アクセント（絵文字を使わず色帯で表現＝独自性） */
+.el-scope .el-stat { position: relative; overflow: hidden; }
+.el-scope .el-stat::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; }
+.el-scope .el-stat.s-today::before { background: #1e3a8a; }
+.el-scope .el-stat.s-week::before { background: #2563eb; }
+.el-scope .el-stat.s-streak::before { background: #d97706; }
+

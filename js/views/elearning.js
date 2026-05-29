@@ -86,8 +86,7 @@ const ELearningView = {
     if (this.isAdmin()) items.push(['manage', '出題管理']);
     const btn = ([act, label]) => {
       const on = cur === act;
-      return `<button data-act="${act}" class="px-3 py-1.5 rounded text-sm font-medium border ${on
-        ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-700 border-slate-300'}">${label}</button>`;
+      return `<button data-act="${act}" class="el-chip ${on ? 'on' : ''} px-4 py-1.5 text-sm">${label}</button>`;
     };
     return `<div class="flex gap-2">${items.map(btn).join('')}</div>`;
   },
@@ -99,10 +98,8 @@ const ELearningView = {
     const total = this.questions.length;
     const chip = (val, label, cnt) => {
       const on = this.unit === val;
-      return `<button data-act="unit" data-unit="${this.esc(val)}"
-        class="px-3 py-1.5 rounded-lg text-sm font-medium border-2 ${on
-          ? 'bg-red-600 text-white border-red-600' : 'bg-white text-slate-700 border-slate-300 hover:border-red-300'}">
-        ${this.esc(label)} <span class="opacity-70">(${cnt})</span></button>`;
+      return `<button data-act="unit" data-unit="${this.esc(val)}" class="el-chip ${on ? 'on' : ''} px-3 py-1.5 text-sm">
+        ${this.esc(label)} <span class="opacity-60">${cnt}</span></button>`;
     };
     const unitChips = ['<div class="flex flex-wrap gap-2">',
       chip('all', '全分野', total),
@@ -111,24 +108,20 @@ const ELearningView = {
     const nBtn = (v) => {
       const on = this.n === v;
       const label = v === 0 ? '全部' : `${v}問`;
-      return `<button data-act="count" data-n="${v}"
-        class="px-3 py-1.5 rounded-lg text-sm font-medium border-2 ${on
-          ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-700 border-slate-300'}">${label}</button>`;
+      return `<button data-act="count" data-n="${v}" class="el-chip ${on ? 'on' : ''} px-3 py-1.5 text-sm">${label}</button>`;
     };
     const avail = this.unit === 'all' ? total : (byUnit[this.unit] || 0);
     const canStart = avail > 0;
     return `
-    <div class="bg-white rounded-xl border border-slate-200 p-5 mb-4">
-      <div class="text-base font-bold text-slate-800 mb-3">学習をはじめる</div>
+    <div class="el-card p-5 mb-4">
+      <div class="text-base font-bold el-ink mb-3">学習をはじめる</div>
       <div class="grid sm:grid-cols-[auto_1fr] gap-x-4 gap-y-2 items-center mb-4">
-        <div class="text-xs text-slate-500">分野</div><div>${unitChips}</div>
-        <div class="text-xs text-slate-500">問題数</div><div class="flex gap-2">${this.COUNT_OPTIONS.map(nBtn).join('')}</div>
+        <div class="text-xs el-muted">分野</div><div>${unitChips}</div>
+        <div class="text-xs el-muted">問題数</div><div class="flex gap-2">${this.COUNT_OPTIONS.map(nBtn).join('')}</div>
       </div>
-      <button data-act="start" ${canStart ? '' : 'disabled'}
-        class="w-full py-3 rounded-lg font-bold text-white ${canStart
-          ? 'bg-red-600 hover:bg-red-700' : 'bg-slate-300 cursor-not-allowed'}">
+      <button data-act="start" ${canStart ? '' : 'disabled'} class="el-btn-primary w-full py-3 text-base">
         ▶ はじめる（${avail ? (this.n === 0 ? '全' + avail : Math.min(this.n, avail)) + '問' : '0問'}）</button>
-      ${total === 0 ? '<div class="text-center text-sm text-slate-400 mt-3">公開中の問題がまだありません。</div>' : ''}
+      ${total === 0 ? '<div class="text-center text-sm el-muted mt-3">公開中の問題がまだありません。</div>' : ''}
     </div>`;
   },
 
@@ -151,44 +144,49 @@ const ELearningView = {
     const letters = ['A', 'B', 'C', 'D'];
     const texts = { A: q.choice_a, B: q.choice_b, C: q.choice_c, D: q.choice_d };
     const cards = letters.map(L => {
-      let cls = 'border-slate-300 bg-white hover:border-red-300';
-      let mark = `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-sm font-bold mr-2">${L}</span>`;
+      let state = '';
+      let mark = L;
       if (this.revealed) {
-        if (L === q.correct) { cls = 'border-emerald-500 bg-emerald-50'; mark = `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-500 text-white text-sm font-bold mr-2">✓</span>`; }
-        else if (L === this.chosen) { cls = 'border-red-500 bg-red-50'; mark = `<span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-red-500 text-white text-sm font-bold mr-2">✕</span>`; }
-        else { cls = 'border-slate-200 bg-white opacity-60'; }
+        if (L === q.correct) { state = 'correct'; mark = '✓'; }
+        else if (L === this.chosen) { state = 'wrong'; mark = '✕'; }
+        else { state = 'dim'; }
       }
       return `<button data-act="choose" data-letter="${L}" ${this.revealed ? 'disabled' : ''}
-        class="text-left border-2 rounded-lg p-4 flex items-start ${cls}">
-        ${mark}<span class="text-sm text-slate-800 leading-relaxed">${this.esc(texts[L])}</span></button>`;
+        class="el-answer ${state} p-4 flex items-start gap-3">
+        <span class="el-badge-letter">${mark}</span>
+        <span class="text-sm leading-relaxed" style="color:#1e293b">${this.esc(texts[L])}</span></button>`;
     }).join('');
 
     let reveal = '';
     if (this.revealed) {
       const ok = this.chosen === q.correct;
       reveal = `
-      <div class="mt-4 rounded-lg ${ok ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'} p-4">
-        <div class="font-bold ${ok ? 'text-emerald-700' : 'text-red-700'} mb-2">${ok ? '正解！' : '不正解'}　<span class="text-slate-600 font-normal text-sm">正解は ${q.correct}</span></div>
-        <div class="text-sm text-slate-700 leading-relaxed">${this.nl2br(q.explanation)}</div>
-        ${q.source ? `<div class="text-xs text-slate-400 mt-2">出典：${this.esc(q.source)}</div>` : ''}
+      <div class="my-4 el-divider">正解は ${q.correct}</div>
+      <div class="rounded-2xl p-4" style="background:${ok ? '#f0fdf4' : '#fef2f2'};border:1px solid ${ok ? '#bbf7d0' : '#fecaca'}">
+        <div class="font-bold mb-2" style="color:${ok ? '#15803d' : '#b91c1c'}">${ok ? '◎ 正解！' : '✕ 不正解'}</div>
+        <div class="text-sm leading-relaxed" style="color:#334155">${this.nl2br(q.explanation)}</div>
+        ${q.source ? `<div class="text-xs el-muted mt-2">出典：${this.esc(q.source)}</div>` : ''}
       </div>
-      <button data-act="next" class="w-full mt-4 py-3 rounded-lg font-bold text-white bg-red-600 hover:bg-red-700">
+      <button data-act="next" class="el-btn-primary w-full mt-4 py-3 text-base">
         ${this.pos + 1 >= this.queue.length ? '結果を見る' : '次の問題 →'}</button>`;
     }
 
     const pct = this.sCount ? Math.round(this.sCorrect / this.sCount * 100) : 0;
     return `
-    <div class="max-w-2xl mx-auto mb-2">
-      <button data-act="home" class="text-sm text-slate-500 hover:text-slate-800">← 中断してホームへ</button>
-    </div>
-    <div class="bg-white rounded-lg shadow p-5 max-w-2xl mx-auto">
-      <div class="flex items-center justify-between text-xs text-slate-500 mb-3">
-        <span>${this.esc(q.unit)}${q.sub ? ' / ' + this.esc(q.sub) : ''} <span class="text-amber-500">${this.esc(q.difficulty || '')}</span></span>
-        <span>${this.pos + 1} / ${this.queue.length}　正答 ${this.sCorrect}/${this.sCount}（${pct}%）</span>
+    <div class="el-wrap">
+      <div class="flex items-center justify-between mb-3">
+        <button data-act="home" class="el-muted text-sm hover:opacity-70">✕ 中断</button>
+        <span class="text-xs el-muted">${this.pos + 1} / ${this.queue.length}　正答 ${this.sCorrect}/${this.sCount}（${pct}%）</span>
       </div>
-      <div class="text-base font-bold text-slate-900 mb-4 leading-relaxed">${this.nl2br(q.question)}</div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">${cards}</div>
-      ${reveal}
+      <div class="el-card p-5">
+        <div class="text-xs el-muted mb-2 flex items-center justify-between gap-2">
+          <span>${this.esc(q.unit)}${q.sub ? ' / ' + this.esc(q.sub) : ''} <span style="color:#d97706">${this.esc(q.difficulty || '')}</span></span>
+          ${q.source ? `<span class="truncate max-w-[50%] text-right">出典：${this.esc(q.source)}</span>` : ''}
+        </div>
+        <div class="text-base font-bold el-ink mb-4 leading-relaxed">${this.nl2br(q.question)}</div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">${cards}</div>
+        ${reveal}
+      </div>
     </div>`;
   },
 
@@ -217,15 +215,19 @@ const ELearningView = {
   // ===== 学習: 結果 =====
   htmlSummary() {
     const pct = this.sCount ? Math.round(this.sCorrect / this.sCount * 100) : 0;
+    const tone = this.rateTone(pct);
+    const msg = pct >= 80 ? 'すばらしい！' : pct >= 50 ? 'その調子！' : '復習して再挑戦しよう';
     return `
-    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">${this.countsBar()}${this.navBar()}</div>
-    <div class="bg-white rounded-lg shadow p-8 max-w-lg mx-auto text-center">
-      <div class="text-lg font-bold text-slate-800 mb-4">おつかれさまでした</div>
-      <div class="text-5xl font-extrabold text-red-600 mb-1">${pct}<span class="text-2xl">%</span></div>
-      <div class="text-sm text-slate-500 mb-6">${this.sCount}問中 ${this.sCorrect}問 正解</div>
-      <div class="flex gap-3 justify-center">
-        <button data-act="again" class="px-5 py-2.5 rounded-lg font-bold text-white bg-red-600 hover:bg-red-700">もう一度</button>
-        <button data-act="home" class="px-5 py-2.5 rounded-lg font-medium text-slate-700 bg-white border border-slate-300">ホームへ</button>
+    <div class="el-wrap">
+      <div class="el-card p-8 text-center">
+        <div class="text-base font-bold el-ink mb-1">おつかれさまでした</div>
+        <div class="text-sm el-muted mb-5">${msg}</div>
+        <div class="text-6xl font-extrabold mb-1" style="color:${tone}">${pct}<span class="text-2xl">%</span></div>
+        <div class="text-sm el-muted mb-7">${this.sCount}問中 <b class="el-ink">${this.sCorrect}</b>問 正解</div>
+        <div class="flex gap-3 justify-center">
+          <button data-act="again" class="el-btn-primary px-6 py-2.5">もう一度</button>
+          <button data-act="home" class="el-btn-ghost px-6 py-2.5">ホームへ</button>
+        </div>
       </div>
     </div>`;
   },
@@ -356,6 +358,9 @@ const ELearningView = {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   },
 
+  // 正答率→色（80%↑緑 / 50%↑琥珀 / それ未満レッド）。結果画面と日別バーで共用。
+  rateTone(p) { return p >= 80 ? '#16a34a' : p >= 50 ? '#d97706' : '#b91c1c'; },
+
   // ホーム（進捗）へ。stats を捨てて再取得させる（render の遅延ロードが拾う）。
   showProgress() {
     this.screen = 'progress'; this._stats = null; this._editGoals = false;
@@ -378,10 +383,11 @@ const ELearningView = {
   },
 
   computeStats(answers) {
-    const dayCount = {}, perUnit = {};
+    const dayCount = {}, dayCorrect = {}, perUnit = {};
     answers.forEach(a => {
       const k = this.dateKey(new Date(a.answered_at));
       dayCount[k] = (dayCount[k] || 0) + 1;
+      if (a.is_correct) dayCorrect[k] = (dayCorrect[k] || 0) + 1;
       const u = a.unit || 'その他';
       if (!perUnit[u]) perUnit[u] = { n: 0, c: 0 };
       perUnit[u].n++; if (a.is_correct) perUnit[u].c++;
@@ -401,7 +407,9 @@ const ELearningView = {
       run = (prev && (cur - prev) === 86400000) ? run + 1 : 1;
       if (run > maxStreak) maxStreak = run; prev = cur;
     });
-    const todayCount = dayCount[this.dateKey(new Date())] || 0;
+    const todayKey = this.dateKey(new Date());
+    const todayCount = dayCount[todayKey] || 0;
+    const todayCorrect = dayCorrect[todayKey] || 0;
     // 週（月曜起点）
     const ws = new Date(); ws.setHours(0, 0, 0, 0); ws.setDate(ws.getDate() - ((ws.getDay() + 6) % 7));
     const week = []; let weekCount = 0;
@@ -409,15 +417,16 @@ const ELearningView = {
       const c = dayCount[this.dateKey(dd)] || 0; weekCount += c; week.push({ date: dd, count: c }); }
     // 直近7日（バー用・古→新）
     const last7 = []; for (let i = 6; i >= 0; i--) { const dd = new Date(); dd.setHours(0, 0, 0, 0); dd.setDate(dd.getDate() - i);
-      last7.push({ date: dd, count: dayCount[this.dateKey(dd)] || 0 }); }
-    return { total, studyDays, maxPerDay, streak, maxStreak, todayCount, weekCount, week, last7, perUnit };
+      const kk = this.dateKey(dd);
+      last7.push({ date: dd, count: dayCount[kk] || 0, correct: dayCorrect[kk] || 0 }); }
+    return { total, studyDays, maxPerDay, streak, maxStreak, todayCount, todayCorrect, weekCount, week, last7, perUnit };
   },
 
   // SVGドーナツ（中央に数値）
   ring(pct, center, color) {
     const r = 26, c = 2 * Math.PI * r, off = c * (1 - Math.max(0, Math.min(100, pct)) / 100);
     return `<svg viewBox="0 0 64 64" class="w-16 h-16">
-      <circle cx="32" cy="32" r="${r}" fill="none" stroke="#e9e4d8" stroke-width="6"/>
+      <circle cx="32" cy="32" r="${r}" fill="none" stroke="#e2e8f0" stroke-width="6"/>
       <circle cx="32" cy="32" r="${r}" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round"
         stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 32 32)"/>
       <text x="32" y="37" text-anchor="middle" font-size="16" font-weight="700" fill="#475569">${center}</text></svg>`;
@@ -425,82 +434,92 @@ const ELearningView = {
 
   htmlProgress() {
     const name = Sync.displayName || (Sync.email || '').split('@')[0] || '';
-    const top = `<div class="flex items-start justify-between mb-4 flex-wrap gap-2">
-      <div>
-        <div class="text-xl font-bold text-slate-800">${this.esc(name)} さんの学習</div>
-        <div class="text-xs text-slate-400 mt-0.5">今日 ${this.counts.today} 問 ・ 通算 ${this.counts.total} 問</div>
-      </div>
-      ${this.navBar()}</div>`;
-    if (!this._stats) return top + this.startCard() + '<div class="flex items-center justify-center h-32 text-slate-400 text-sm">進捗を読み込み中…</div>';
-    if (this._stats.error) return top + `<div class="flex items-center justify-center h-48 text-red-600 text-sm text-center px-4">進捗の取得に失敗しました。<br>SQL（phaseE4_elearning.sql / phaseE4b_goals.sql）が未実行の可能性があります。<br><span class="text-xs text-slate-400">${this.esc(this._stats.error)}</span></div>`;
+    const nav = `<div class="flex items-center justify-end mb-3">${this.navBar()}</div>`;
+    if (!this._stats) return `<div class="el-wrap">${nav}
+      <div class="el-banner text-center mb-4 px-5 py-3.5">${this.esc(name)} さんの学習</div>
+      ${this.startCard()}
+      <div class="flex items-center justify-center h-24 el-muted text-sm">進捗を読み込み中…</div></div>`;
+    if (this._stats.error) return `<div class="el-wrap">${nav}
+      <div class="el-card p-6 text-center text-sm" style="color:#c2604f">進捗の取得に失敗しました。<br>SQL（phaseE4_elearning.sql / phaseE4b_goals.sql）が未実行の可能性があります。<br><span class="text-xs el-muted">${this.esc(this._stats.error)}</span></div></div>`;
     const s = this._stats, g = this._goals;
-    const UNIT_COLORS = { '安全のしおり': '#2563eb', '規程類': '#d97706', 'ベステラスタンダード': '#dc2626', '過去事例': '#7c3aed', 'その他': '#64748b' };
+    const UNIT_COLORS = { '安全のしおり': '#2563eb', '規程類': '#d97706', 'ベステラスタンダード': '#b91c1c', '過去事例': '#7c3aed', 'その他': '#64748b' };
 
-    // 上段カード（今日/今週/連続）
-    const card = (val, sub, unit) => `<div class="bg-white rounded-xl border border-slate-200 p-4">
-      <div class="flex items-end gap-1"><span class="text-3xl font-extrabold text-slate-800">${val}</span>${unit ? `<span class="text-sm text-slate-400 mb-1">${unit}</span>` : ''}</div>
-      <div class="text-xs text-slate-500 mt-1">${sub}</div></div>`;
+    // ヘッダーバナー（ネイビーのグラデーション）。今日やっていれば正答率も表示。
+    const todayPct = s.todayCount ? Math.round(s.todayCorrect / s.todayCount * 100) : null;
+    const banner = `<div class="el-banner mb-4 px-5 py-3.5 text-center text-base">
+      ${this.esc(name)} さん　・　今日 ${s.todayCount}問${todayPct != null ? `（正答 ${todayPct}%）` : ''}　・　連続 ${s.streak}日</div>`;
+
+    // 上段カード（今日/今週/連続）＝上の色帯で種別を表現（絵文字なし）
+    const card = (val, sub, unit, cls) => `<div class="el-card el-stat ${cls} p-4 pt-5">
+      <div class="text-3xl font-extrabold el-ink leading-none">${val}</div>
+      <div class="text-xs el-muted mt-2">${sub}${unit ? ` <span class="opacity-70">${unit}</span>` : ''}</div></div>`;
     const cards = `<div class="grid grid-cols-3 gap-3 mb-4">
-      ${card(s.todayCount, '今日', `/ ${g.daily_goal}`)}
-      ${card(s.weekCount, '今週', `/ ${g.weekly_goal}`)}
-      ${card(s.streak, '連続学習日数', '日')}</div>`;
+      ${card(s.todayCount, '今日', `/ ${g.daily_goal}`, 's-today')}
+      ${card(s.weekCount, '今週', `/ ${g.weekly_goal}`, 's-week')}
+      ${card(s.streak, '連続', '日', 's-streak')}</div>`;
 
     // 週次達成率＋目標変更
     const wpct = g.weekly_goal ? Math.min(100, Math.round(s.weekCount / g.weekly_goal * 100)) : 0;
     const goalEdit = this._editGoals
       ? `<div class="flex items-center gap-2 flex-wrap">
-          <label class="text-xs text-slate-500">今日 <input id="eq-goal-daily" type="number" min="1" value="${g.daily_goal}" class="border rounded w-16 px-2 py-1 text-sm"></label>
-          <label class="text-xs text-slate-500">今週 <input id="eq-goal-weekly" type="number" min="1" value="${g.weekly_goal}" class="border rounded w-16 px-2 py-1 text-sm"></label>
-          <button data-act="savegoals" class="bg-emerald-600 text-white px-3 py-1 rounded text-sm">保存</button>
-          <button data-act="cancelgoals" class="text-slate-500 px-2 py-1 text-sm">取消</button></div>`
-      : `<button data-act="editgoals" class="bg-slate-800 text-white px-4 py-1.5 rounded-full text-sm font-medium">目標変更</button>`;
-    const weekly = `<div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
-      <div class="flex items-center justify-between mb-2"><span class="text-sm font-medium text-slate-600">今週の達成率（${wpct}%）</span>${goalEdit}</div>
-      <div class="h-3 rounded-full bg-slate-100 overflow-hidden"><div class="h-full bg-slate-800" style="width:${wpct}%"></div></div>
+          <label class="text-xs el-muted">今日 <input id="eq-goal-daily" type="number" min="1" value="${g.daily_goal}" class="border border-[#cbd5e1] rounded-lg w-16 px-2 py-1 text-sm"></label>
+          <label class="text-xs el-muted">今週 <input id="eq-goal-weekly" type="number" min="1" value="${g.weekly_goal}" class="border border-[#cbd5e1] rounded-lg w-16 px-2 py-1 text-sm"></label>
+          <button data-act="savegoals" class="el-btn-primary px-3 py-1.5 text-sm">保存</button>
+          <button data-act="cancelgoals" class="el-btn-ghost px-3 py-1.5 text-sm">取消</button></div>`
+      : `<button data-act="editgoals" class="el-btn-navy px-4 py-1.5 text-sm">目標変更</button>`;
+    const weekly = `<div class="el-card p-4 mb-4">
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2"><span class="text-sm font-bold el-ink">今週の達成率（${wpct}%）</span>${goalEdit}</div>
+      <div class="h-3 rounded-full overflow-hidden el-bartrack"><div class="h-full" style="width:${wpct}%;background:#1e3a8a"></div></div>
       <div class="flex justify-between mt-3">${s.week.map((d, i) => {
         const wd = ['月', '火', '水', '木', '金', '土', '日'][i];
         const done = g.daily_goal && d.count >= g.daily_goal;
         const isToday = this.dateKey(d.date) === this.dateKey(new Date());
         const pct = g.daily_goal ? Math.min(100, d.count / g.daily_goal * 100) : (d.count ? 100 : 0);
         const inner = done
-          ? `<div class="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center text-sm">✓</div>`
-          : `<div class="w-8 h-8 rounded-full" style="background:conic-gradient(#475569 ${pct * 3.6}deg,#e9e4d8 0)"><div class="w-6 h-6 m-1 rounded-full bg-white"></div></div>`;
+          ? `<div class="w-8 h-8 rounded-full text-white flex items-center justify-center text-sm" style="background:#16a34a">✓</div>`
+          : `<div class="w-8 h-8 rounded-full" style="background:conic-gradient(#1e3a8a ${pct * 3.6}deg,#e2e8f0 0)"><div class="w-6 h-6 m-1 rounded-full" style="background:#fff"></div></div>`;
         return `<div class="flex flex-col items-center gap-1 ${isToday ? 'font-bold' : ''}">
-          <span class="text-[11px] text-slate-400">${wd}</span><span class="text-xs text-slate-600">${d.date.getDate()}</span>${inner}</div>`;
+          <span class="text-[11px] el-muted">${wd}</span><span class="text-xs" style="color:#475569">${d.date.getDate()}</span>
+          <div style="${isToday ? 'outline:2px solid #2563eb;border-radius:9999px;outline-offset:2px' : ''}">${inner}</div></div>`;
       }).join('')}</div></div>`;
 
-    // 直近7日バー
+    // 直近7日バー（高さ＝学習量／下段の%＝日ごとの正答率）
     const maxC = Math.max(1, ...s.last7.map(x => x.count));
     const bars = s.last7.map(x => {
       const hpx = 8 + Math.round(x.count / maxC * 80);
+      const rate = x.count ? Math.round(x.correct / x.count * 100) : null;
       return `<div class="flex flex-col items-center justify-end flex-1">
-        <div class="text-[10px] text-slate-500 mb-0.5">${x.count || ''}</div>
-        <div class="w-5 rounded-t" style="height:${x.count ? hpx : 3}px;background:${x.count ? '#ef6b6b' : '#e9e4d8'}"></div>
-        <div class="text-[10px] text-slate-400 mt-1">${x.date.getMonth() + 1}/${x.date.getDate()}</div></div>`;
+        <div class="text-[10px] el-muted mb-0.5">${x.count || ''}</div>
+        <div class="w-5 rounded-t" style="height:${x.count ? hpx : 3}px;background:${x.count ? '#3b82f6' : '#e2e8f0'}"></div>
+        <div class="text-[10px] el-muted mt-1">${x.date.getMonth() + 1}/${x.date.getDate()}</div>
+        <div class="text-[11px] font-bold mt-0.5 leading-none" style="color:${rate == null ? '#cbd5e1' : this.rateTone(rate)}">${rate == null ? '–' : rate + '%'}</div></div>`;
     }).join('');
-    const daily = `<div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">
-      <div class="text-sm font-medium text-slate-600 mb-3">直近7日の学習量</div>
-      <div class="flex items-end gap-2 h-28">${bars}</div></div>`;
+    const daily = `<div class="el-card p-4 mb-4">
+      <div class="flex items-center justify-between mb-3 gap-2">
+        <span class="text-sm font-bold el-ink">直近7日の学習量と正答率</span>
+        <span class="text-[10px] el-muted">下段＝日ごとの正答率</span>
+      </div>
+      <div class="flex items-end gap-2 h-32">${bars}</div></div>`;
 
     // 通算カード
-    const stat = (v, label) => `<div class="bg-white rounded-xl border border-slate-200 p-4 text-center">
-      <div class="text-2xl font-extrabold text-slate-800">${v}</div><div class="text-xs text-slate-500 mt-1">${label}</div></div>`;
+    const stat = (v, label) => `<div class="el-card p-4 text-center">
+      <div class="text-2xl font-extrabold el-ink">${v}</div><div class="text-xs el-muted mt-1">${label}</div></div>`;
     const totals = `<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
       ${stat(s.total, '通算問題数')}${stat(s.maxStreak, '最高連続学習日数')}${stat(s.studyDays, '通算学習日数')}${stat(s.maxPerDay, '1日の最高問題数')}</div>`;
 
     // 単元別習得度リング
     const units = this.UNITS.filter(u => s.perUnit[u]);
-    const rings = units.length ? `<div class="bg-white rounded-xl border border-slate-200 p-4">
-      <div class="text-sm font-medium text-slate-600 mb-3">単元別 習得度（正答率）</div>
+    const rings = units.length ? `<div class="el-card p-4">
+      <div class="text-sm font-bold el-ink mb-3">単元別 習得度（正答率）</div>
       <div class="flex flex-wrap gap-5 justify-center">${units.map(u => {
         const p = Math.round(s.perUnit[u].c / s.perUnit[u].n * 100);
-        return `<div class="flex flex-col items-center">${this.ring(p, p, UNIT_COLORS[u] || '#64748b')}
-          <div class="text-xs text-slate-600 mt-1 text-center max-w-[88px]">${this.esc(u)}</div>
-          <div class="text-[10px] text-slate-400">${s.perUnit[u].n}問</div></div>`;
+        return `<div class="flex flex-col items-center">${this.ring(p, p, UNIT_COLORS[u] || '#8b8273')}
+          <div class="text-xs mt-1 text-center max-w-[88px]" style="color:#475569">${this.esc(u)}</div>
+          <div class="text-[10px] el-muted">${s.perUnit[u].n}問</div></div>`;
       }).join('')}</div></div>`
-      : '<div class="bg-white rounded-xl border border-slate-200 p-4 text-center text-sm text-slate-400">まだ解答がありません。学習を始めましょう。</div>';
+      : '<div class="el-card p-4 text-center text-sm el-muted">まだ解答がありません。学習を始めましょう。</div>';
 
-    return top + cards + this.startCard() + weekly + daily + totals + rings;
+    return `<div class="el-wrap">${nav}${banner}${cards}${weekly}${this.startCard()}${daily}${totals}${rings}</div>`;
   },
 
   async saveGoals() {
