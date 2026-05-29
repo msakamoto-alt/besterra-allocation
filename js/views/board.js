@@ -56,11 +56,15 @@ const Board = {
     this.render();
   },
 
-  // モードに応じて当月の日次展開を切替（displayStart/End は enter で設定済み）
+  // モードに応じて日次展開を切替（displayStart/End は enter で設定済み）
+  // monthday＝当月＋翌月を日次、それ以降は月次。
   applyMode() {
     GanttView.expandedMonths.clear();
     if (this.mode === 'monthday') {
-      GanttView.expandedMonths.add(GanttView.monthKey(new Date()));
+      const now = new Date();
+      GanttView.expandedMonths.add(GanttView.monthKey(now));
+      const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      GanttView.expandedMonths.add(GanttView.monthKey(next));
     }
   },
 
