@@ -630,7 +630,7 @@ const Sync = {
           customer: '',
           start: r.start,
           end: r.end,
-          amount: this.parseAmount(r.total_revenue || r.order_amount),
+          amount: this.parseAmount(r.order_amount || r.total_revenue),  // 売上規模＝受注金額を優先（空なら総売上で補完。総売上はJPY0が多いため）
           kind: '工事',
           dept: deptShort,
           contract_type: r.contract_type || '',
