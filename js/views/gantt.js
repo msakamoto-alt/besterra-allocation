@@ -147,12 +147,20 @@ const GanttView = {
       arr.push(a);
       asgByProject.set(a.project_id, arr);
     });
+    // 配置未定・不足（実員ゼロ＝プレースホルダのみ/未配置）は並び替えに関係なく下に沈める
+    const isUnstaffed = (p) => {
+      const arr = asgByProject.get(p.project_id) || [];
+      return !arr.some(a => !this.isPlaceholderName(a.emp_name));
+    };
     const decorated = projects.map((p, idx) => ({
       p,
       idx,
+      u: isUnstaffed(p) ? 1 : 0,
       v: def.key(p, asgByProject.get(p.project_id) || []),
     }));
     decorated.sort((a, b) => {
+      // 配置未定・不足は常に末尾（選択中の並び替えに関係なく）
+      if (a.u !== b.u) return a.u - b.u;
       // null は常に末尾
       if (a.v == null && b.v == null) return 0;
       if (a.v == null) return 1;
