@@ -1277,17 +1277,27 @@ const Sync = {
       if (!uid) {
         this.role = null;
       } else {
-        const { data, error } = await sb.from('user_roles').select('role, display_name, email').eq('user_id', uid).maybeSingle();
-        if (error) throw error;
-        this.role = (data && data.role) || null;
-        this.displayName = (data && data.display_name) || null;   // 段階E4b: 進捗ホームの氏名表示
-        this.email = (data && data.email) || (u && u.user && u.user.email) || null;
+        // emp_no を含めて取得。列が無い環境（SQL未実行）でもログインを壊さないようコア列にフォールバック。
+        let row = null;
+        const r = await sb.from('user_roles').select('role, display_name, email, emp_no').eq('user_id', uid).maybeSingle();
+        if (r.error) {
+          const r2 = await sb.from('user_roles').select('role, display_name, email').eq('user_id', uid).maybeSingle();
+          if (r2.error) throw r2.error;
+          row = r2.data;
+        } else {
+          row = r.data;
+        }
+        this.role = (row && row.role) || null;
+        this.displayName = (row && row.display_name) || null;   // 段階E4b: 進捗ホームの氏名表示
+        this.email = (row && row.email) || (u && u.user && u.user.email) || null;
+        this.empNo = (row && row.emp_no) || null;               // Point2: 工事監督アカウント→社員番号の紐付け
       }
     } catch (e) {
       console.error('ロール取得失敗:', e);
       this.role = null;
       this.userId = null;
       this.displayName = null;
+      this.empNo = null;
     }
     this.isEditor = (this.role === 'admin' || this.role === 'editor');  // 後方互換
     return this.role;
@@ -1314,11 +1324,12 @@ const Sync = {
     return data;
   },
   async adminListUsers() { const d = await this._invokeAdmin({ action: 'list' }); return (d && d.users) || []; },
-  async adminCreateUser({ email, password, display_name, role }) {
-    return this._invokeAdmin({ action: 'create', email, password, display_name, role });
+  async adminCreateUser({ email, password, display_name, role, emp_no }) {
+    return this._invokeAdmin({ action: 'create', email, password, display_name, role, emp_no });
   },
   async adminSetRole(user_id, role) { return this._invokeAdmin({ action: 'set_role', user_id, role }); },
   async adminSetName(user_id, display_name) { return this._invokeAdmin({ action: 'set_name', user_id, display_name }); },
+  async adminSetEmp(user_id, emp_no) { return this._invokeAdmin({ action: 'set_emp', user_id, emp_no }); },
   async adminSetPassword(user_id, password) { return this._invokeAdmin({ action: 'set_password', user_id, password }); },
   async adminDeleteUser(user_id) { return this._invokeAdmin({ action: 'delete', user_id }); },
 

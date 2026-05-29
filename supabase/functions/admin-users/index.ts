@@ -11,9 +11,11 @@
 //   （SUPABASE_SERVICE_ROLE_KEY / SUPABASE_URL）。手動設定不要。
 //
 // アクション（POST body の action）：
-//   list         … user_roles 一覧
-//   create       … { email, password, display_name, role } でユーザー作成＋ロール付与
+//   list         … user_roles 一覧（emp_no 含む）
+//   create       … { email, password, display_name, role, emp_no } でユーザー作成＋ロール付与
 //   set_role     … { user_id, role } でロール変更
+//   set_name     … { user_id, display_name } で表示名変更
+//   set_emp      … { user_id, emp_no } で社員番号（紐付け）変更
 //   set_password … { user_id, password } でパスワード再設定
 //   delete       … { user_id } でユーザー削除（user_roles は FK cascade）
 
@@ -58,14 +60,14 @@ Deno.serve(async (req) => {
     if (action === 'list') {
       const { data, error } = await admin
         .from('user_roles')
-        .select('user_id, role, display_name, email, created_at')
+        .select('user_id, role, display_name, email, emp_no, created_at')
         .order('created_at', { ascending: true });
       if (error) throw error;
       return json({ users: data });
     }
 
     if (action === 'create') {
-      const { email, password, display_name, role } = body;
+      const { email, password, display_name, role, emp_no } = body;
       if (!email || !password) return json({ error: 'メールとパスワードは必須です' }, 400);
       if (!ROLES.includes(role)) return json({ error: '不正なロールです' }, 400);
       const { data: created, error: cErr } = await admin.auth.admin.createUser({
@@ -74,7 +76,7 @@ Deno.serve(async (req) => {
       if (cErr) return json({ error: cErr.message }, 400);
       const uid = created.user!.id;
       const { error: rErr } = await admin.from('user_roles')
-        .insert({ user_id: uid, role, display_name: display_name || null, email });
+        .insert({ user_id: uid, role, display_name: display_name || null, email, emp_no: emp_no || null });
       if (rErr) {
         // ロール付与に失敗したら、作ったユーザーを巻き戻す（孤立アカウントを残さない）
         await admin.auth.admin.deleteUser(uid);
@@ -101,6 +103,14 @@ Deno.serve(async (req) => {
       const { user_id, display_name } = body;
       const { error } = await admin.from('user_roles')
         .update({ display_name: display_name || null }).eq('user_id', user_id);
+      if (error) throw error;
+      return json({ ok: true });
+    }
+
+    if (action === 'set_emp') {
+      const { user_id, emp_no } = body;
+      const { error } = await admin.from('user_roles')
+        .update({ emp_no: emp_no || null }).eq('user_id', user_id);
       if (error) throw error;
       return json({ ok: true });
     }

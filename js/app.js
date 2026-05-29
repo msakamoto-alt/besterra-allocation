@@ -11,7 +11,7 @@ const App = {
   TAB_ROLES: {
     pool:       ['admin', 'editor', 'executive', 'manager'],
     gantt:      ['admin', 'editor', 'executive', 'manager', 'viewer'],
-    dash:       ['admin', 'editor', 'executive', 'manager'],
+    dash:       ['admin', 'editor', 'executive', 'manager', 'viewer'],  // Point2: 閲覧者(工事監督)は自分のダッシュボードのみ
     prospects:  ['admin', 'editor', 'executive'],
     management: ['admin', 'executive'],   // 段階E3: 経営機密。閲覧は管理者・経営者のみ（RLSでも強制）
     elearning:  ['admin', 'editor', 'executive', 'manager', 'viewer'],  // 段階E4a: 安全学習はログイン者全員
@@ -55,6 +55,34 @@ const App = {
     this.updateRoleUI();
     this.applyTabVisibility();
     await this.loadData();
+    this.applyRoleLanding();
+  },
+
+  // Point2: 工事監督（閲覧者/役職者）を自分の監督ダッシュボードへ着地させる。
+  // 閲覧者は自分のみ（プライバシー）、役職者は全員閲覧可だが自分に着地。
+  applyRoleLanding() {
+    const role = Sync.role;
+    let empNo = Sync.empNo;
+    // 保存された社員番号が無ければ、ログインメール一致でSmartHR名簿(organization)から導出（自動紐付け）
+    if (!empNo && Sync.email) {
+      const e = String(Sync.email).trim().toLowerCase();
+      const o = (Sync.cache.organization || []).find(x => String(x.email || '').trim().toLowerCase() === e);
+      empNo = o ? String(o.emp_no || '') : null;
+    }
+    // 閲覧者は自分のダッシュボードに限定（社員番号未設定なら何も一致しない値で空表示）
+    DashboardView.restrictEmpId = (role === 'viewer') ? (empNo || '___none___') : null;
+
+    const matched = empNo && (Sync.cache.employees || []).some(e =>
+      (e.category === '現場監督' || e.category === '準現場監督') &&
+      (String(e.id) === String(empNo) || String(e.emp_no) === String(empNo)));
+
+    // 閲覧者は常にダッシュボード着地。役職者は本人が監督として一致するときだけ着地。
+    if ((role === 'viewer' || (role === 'manager' && matched)) && this.canViewTab('dash')) {
+      this.activateTab('dash');
+    }
+    if (role === 'viewer' || role === 'manager') {
+      try { DashboardView.focusEmployee(empNo); } catch (e) { /* noop */ }
+    }
   },
 
   // 事務所モニターボード：データを読み込み、Board に委譲して全画面表示
@@ -149,7 +177,9 @@ const App = {
     });
     // 現在のタブが見られなければ最初の許可タブへ。view.refresh は直後の loadData が行うので
     // ここでは activateTab を呼ばず（データ未取得での描画を避ける）クラスだけ切り替える。
-    const target = this.canViewTab(this.currentTab) ? this.currentTab : firstAllowed;
+    let target = this.canViewTab(this.currentTab) ? this.currentTab : firstAllowed;
+    // Point2: 閲覧者（工事監督）は自分の監督ダッシュボードを起点にする
+    if (Sync.role === 'viewer' && this.canViewTab('dash')) target = 'dash';
     if (!target) return;
     this.currentTab = target;
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('tab-active', b.dataset.tab === target));

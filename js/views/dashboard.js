@@ -3,6 +3,9 @@
  */
 
 const DashboardView = {
+  // Point2: 値が入ると「その社員番号の監督1名のみ」表示（閲覧者＝自分のみ）。null で全員閲覧可。
+  restrictEmpId: null,
+
   init() {
     document.getElementById('dash-select').addEventListener('change', () => this.render());
 
@@ -55,16 +58,41 @@ const DashboardView = {
   },
 
   refresh() {
+    this.applyRestrictionUI();
     this.populateSelect();
     this.render();
   },
 
+  // 自分の監督ダッシュボードへフォーカス（社員番号で選択し描画）。app.js のログイン着地から呼ぶ。
+  focusEmployee(empNo) {
+    this.applyRestrictionUI();
+    this.populateSelect();
+    if (empNo != null && empNo !== '') {
+      const match = (Sync.cache.employees || []).find(e =>
+        String(e.id) === String(empNo) || String(e.emp_no) === String(empNo));
+      if (match) document.getElementById('dash-select').value = String(match.id);
+    }
+    this.render();
+  },
+
+  // 閲覧制限（閲覧者＝自分のみ）のとき、監督セレクタ行を隠す
+  applyRestrictionUI() {
+    const search = document.getElementById('dash-search');
+    const controls = search && search.parentElement;   // 「監督を選択」行
+    if (controls) controls.style.display = this.restrictEmpId ? 'none' : '';
+  },
+
   // セレクトボックスを社員番号順 + 検索フィルタで再構築
   populateSelect() {
-    const all = (Sync.cache.employees || [])
+    let all = (Sync.cache.employees || [])
       .filter(e => e.category === '現場監督' || e.category === '準現場監督')
       .slice()
       .sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+
+    // Point2: 閲覧制限中は自分（社員番号一致）の1名だけに絞る
+    if (this.restrictEmpId) {
+      all = all.filter(e => String(e.id) === String(this.restrictEmpId) || String(e.emp_no) === String(this.restrictEmpId));
+    }
 
     const search = (document.getElementById('dash-search').value || '').trim().toLowerCase();
     const filtered = search
@@ -93,7 +121,10 @@ const DashboardView = {
     const sel = document.getElementById('dash-select');
     const empId = parseInt(sel.value);
     if (!empId) {
-      document.getElementById('dash-content').innerHTML = '<p class="text-slate-500">監督を選択してください</p>';
+      const msg = this.restrictEmpId
+        ? 'あなたのアカウントに紐付く監督データが見つかりません。<br>社員番号の紐付けを管理者にご確認ください。'
+        : '監督を選択してください';
+      document.getElementById('dash-content').innerHTML = `<p class="text-slate-500">${msg}</p>`;
       return;
     }
     const emp = (Sync.cache.employees || []).find(e => e.id === empId);
