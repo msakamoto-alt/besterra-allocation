@@ -303,17 +303,29 @@ const Sync = {
 
   // 健全性チェック：当社社員として登録された配置のうち emp_id が解決できていないものを返す。
   // 派遣社員・配置未定/不足は対象外（意図的に emp_id を持たない）。
-  // 氏名の表記揺れ・退職・新異体字などで名簿と一致しない配置を早期発見する監査関数。
+  // ★進行中・今後の案件のみ対象（完成・終了済みは除外）。退職者の過去配置は履歴でありエラーではないが、
+  //   退職者が「現役の案件」の担当に残っているのは是正すべきエラーとして検出する。
   // 使い方（編集ログイン中のコンソール）：Sync.auditUnresolvedAssignments()
   auditUnresolvedAssignments() {
     const isDispatch = n => /^派遣社員\s*#\d+$/.test(String(n || '').trim());
     const isPlaceholder = n => String(n || '').trim() === '配置未定・不足';
+    const projById = {};
+    (this.cache.projects || []).forEach(p => { projById[p.project_id] = p; });
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const parseEnd = s => { const d = new Date(String(s || '').replace(/\//g, '-')); return isNaN(d) ? null : d; };
     return (this.cache.assignments || [])
       .filter(a => (a.emp_id == null) && !isDispatch(a.emp_name) && !isPlaceholder(a.emp_name))
+      .filter(a => {
+        const p = projById[a.project_id];
+        if (p && p.completed) return false;                 // 完成案件は履歴扱い
+        const end = parseEnd(a.planned_end || (p && p.end));
+        if (end && end < today) return false;               // 終了日が過去＝履歴（日付不明は安全側で残す）
+        return true;                                        // 進行中・今後のみ＝現役の不一致
+      })
       .map(a => ({
         emp_name: a.emp_name, emp_no: a.emp_no || '',
         project_id: a.project_id, project_name: a.project_name,
-        role: a.role, join: a.join, source: a.source || '',
+        role: a.role, join: a.join, planned_end: a.planned_end || '', source: a.source || '',
       }));
   },
 
@@ -1819,7 +1831,7 @@ const Sync = {
       try {
         const unresolved = this.auditUnresolvedAssignments();
         if (unresolved.length > 0) {
-          console.warn(`⚠ 氏名が社員名簿と一致しない配置が ${unresolved.length} 件あります（監督軸・資格軸・空き判定に出ません）。詳細: Sync.auditUnresolvedAssignments()`, unresolved);
+          console.warn(`⚠ 進行中・今後の案件で氏名が社員名簿と一致しない担当が ${unresolved.length} 件あります（退職者が現役案件に残っている等。監督軸・資格軸・空き判定に出ません）。詳細: Sync.auditUnresolvedAssignments()`, unresolved);
         }
       } catch (e) { /* 監査は副作用なし。失敗しても本処理は継続 */ }
   },
