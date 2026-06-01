@@ -223,6 +223,7 @@ const MemberAdd = {
 
     // 人員タイプ別に emp_name / override_key の suffix を決定
     let empName = '';
+    let empNo = '';       // 社員番号（当社社員のみ。氏名に依存しない恒久キー）
     let keySuffix = '';   // override_key 衝突回避用（配置未定・不足は役割で区別）
     if (this.currentType === 'employee') {
       const sel = document.getElementById('member-add-emp');
@@ -232,8 +233,10 @@ const MemberAdd = {
         statusEl.className = 'text-xs text-red-600';
         return;
       }
-      const [, n] = selected.split('|');
+      // option value = "社員番号|氏名"。社員番号も保存して氏名照合への依存をなくす。
+      const [empNoSel, n] = selected.split('|');
       empName = n;
+      empNo = String(empNoSel || '').trim();
     } else if (this.currentType === 'dispatch') {
       empName = `派遣社員 #${this.nextDispatchSerial()}`;
     } else if (this.currentType === 'placeholder') {
@@ -259,6 +262,7 @@ const MemberAdd = {
         op: 'add',
         override_key: overrideKey,
         emp_name: empName,
+        emp_no: empNo,
         project_id: ctx.project_id,
         join_date: toSlash(start),
         planned_end: toSlash(end),

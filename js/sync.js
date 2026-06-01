@@ -282,6 +282,41 @@ const Sync = {
       .trim();
   },
 
+  // 氏名の異体字を代表字へ畳む対応表（旧字体・人名異体字 → 常用字）。
+  // 例：髙橋⇔高橋 / 﨑⇔崎 / 邉邊⇔辺 / 齋齊⇔斉。照合キー生成専用（表示名は変えない）。
+  // 新たな食い違いが出たら1行追記すれば対応できる。
+  NAME_VARIANT_MAP: {
+    '髙': '高', '﨑': '崎', '邉': '辺', '邊': '辺',
+    '齋': '斉', '齊': '斉', '斎': '斉',
+    '濵': '浜', '濱': '浜', '冨': '富', '廣': '広',
+    '德': '徳', '桒': '桑', '栁': '柳', '舘': '館',
+  },
+
+  // 氏名照合キー：NFKC正規化 → 全空白除去 → 異体字を代表字へ畳む。
+  // emp_name → emp_id の突合専用。表示名・override_key には使わない（既存データ互換のため）。
+  normEmpKey(name) {
+    const s = String(name == null ? '' : name).normalize('NFKC').replace(/\s+/g, '');
+    let out = '';
+    for (const ch of s) out += (this.NAME_VARIANT_MAP[ch] || ch);
+    return out;
+  },
+
+  // 健全性チェック：当社社員として登録された配置のうち emp_id が解決できていないものを返す。
+  // 派遣社員・配置未定/不足は対象外（意図的に emp_id を持たない）。
+  // 氏名の表記揺れ・退職・新異体字などで名簿と一致しない配置を早期発見する監査関数。
+  // 使い方（編集ログイン中のコンソール）：Sync.auditUnresolvedAssignments()
+  auditUnresolvedAssignments() {
+    const isDispatch = n => /^派遣社員\s*#\d+$/.test(String(n || '').trim());
+    const isPlaceholder = n => String(n || '').trim() === '配置未定・不足';
+    return (this.cache.assignments || [])
+      .filter(a => (a.emp_id == null) && !isDispatch(a.emp_name) && !isPlaceholder(a.emp_name))
+      .map(a => ({
+        emp_name: a.emp_name, emp_no: a.emp_no || '',
+        project_id: a.project_id, project_name: a.project_name,
+        role: a.role, join: a.join, source: a.source || '',
+      }));
+  },
+
   // 日付正規化：YYYY/MM/DD → そのまま、空文字は null
   normalizeDate(s) {
     if (!s) return null;
@@ -531,7 +566,7 @@ const Sync = {
   deriveQualificationsFromSalesforce(sfRows, employees, existingEqs) {
     const empByName = {};
     (employees || []).forEach(e => {
-      const key = (e.name || '').replace(/\s+/g, '');
+      const key = this.normEmpKey(e.name);
       if (key) empByName[key] = e;
     });
 
@@ -540,7 +575,7 @@ const Sync = {
     sfRows.forEach(r => {
       const qualId = this.detectQualMarker(r.emp_name_raw);
       if (!qualId) return;
-      const empKey = (r.emp_name || '').replace(/\s+/g, '');
+      const empKey = this.normEmpKey(r.emp_name);
       const emp = empByName[empKey];
       if (!emp) return;
       const k = emp.id + '|' + qualId;
@@ -613,7 +648,7 @@ const Sync = {
     // 氏名インデックス
     const empByName = {};
     (employees || []).forEach(e => {
-      const key = (e.name || '').replace(/\s+/g, '');
+      const key = this.normEmpKey(e.name);
       if (key) empByName[key] = e;
     });
 
@@ -639,7 +674,7 @@ const Sync = {
         };
       }
 
-      const empKey = r.emp_name.replace(/\s+/g, '');
+      const empKey = this.normEmpKey(r.emp_name);
       const emp = empByName[empKey];
       assignments.push({
         assignment_id: asgIdSeq++,
@@ -837,9 +872,11 @@ const Sync = {
     // 2. op=add のレコードを新規 assignment として追加
     const employees = this.cache.employees || [];
     const empByName = {};
+    const empById = {};   // 社員番号(e.id) → 社員。emp_no による恒久紐付けの引き先
     employees.forEach(e => {
-      const k = (e.name || '').replace(/\s+/g, '');
+      const k = this.normEmpKey(e.name);
       if (k) empByName[k] = e;
+      if (e.id != null && String(e.id) !== '') empById[String(e.id).trim()] = e;
     });
     const projMap = {};
     (projects || []).forEach(p => { projMap[p.project_id] = p; });
@@ -871,7 +908,10 @@ const Sync = {
         return;
       }
 
-      const emp = empByName[empName.replace(/\s+/g, '')];
+      // 社員番号(emp_no)があれば最優先で引く（氏名変更・異体字に影響されない恒久キー）。
+      // 無い既存行は氏名の正規化照合へフォールバック。
+      const empNo = String(o.emp_no || '').trim();
+      const emp = (empNo && empById[empNo]) || empByName[this.normEmpKey(empName)];
       const proj = projMap[projId];
       working.push({
         assignment_id: nextAsgId++,
@@ -947,6 +987,7 @@ const Sync = {
       const row = {
         override_key: key,
         emp_name: payload.emp_name || '',
+        emp_no: payload.emp_no || '',   // 社員番号で恒久紐付け（氏名照合のフォールバック先）
         project_id: payload.project_id || '',
         join_date: payload.join_date || '',
         planned_end: payload.planned_end || '',
@@ -1772,6 +1813,15 @@ const Sync = {
           console.error('project_status_overrides マージ失敗:', e);
         }
       }
+
+      // 健全性チェック：氏名照合に失敗した配置（emp_id未解決）を読込時に検出して警告。
+      // emp_no恒久キー＋異体字正規化でも一致しない＝名簿に該当者なし（誤字・退職・新異体字）の早期発見用。
+      try {
+        const unresolved = this.auditUnresolvedAssignments();
+        if (unresolved.length > 0) {
+          console.warn(`⚠ 氏名が社員名簿と一致しない配置が ${unresolved.length} 件あります（監督軸・資格軸・空き判定に出ません）。詳細: Sync.auditUnresolvedAssignments()`, unresolved);
+        }
+      } catch (e) { /* 監査は副作用なし。失敗しても本処理は継続 */ }
   },
 
   loadMockData() {
