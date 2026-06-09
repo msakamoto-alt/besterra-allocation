@@ -1345,11 +1345,10 @@ const GanttView = {
     return out;
   },
 
-  // 不在のグレー網掛け帯（監督軸・事務所モニター）。「育休中 約6か月」等のラベル。
+  // 不在のグレー網掛け帯（監督軸・事務所モニター）。帯は一律「休暇 約Nか月」表示。
   absenceBandsHtml(emp, cells) {
     const ivs = this.absenceIntervals(emp, cells);
     if (!ivs.length) return '';
-    const shortMap = (Sync && Sync.ABSENCE_SHORT) || {};
     let html = '';
     ivs.forEach(({ s, e, kind, note }) => {
       const clip = this.clipRange(s, e, cells);
@@ -1360,11 +1359,11 @@ const GanttView = {
       const days = Math.round((e - s) / 86400000);
       const months = Math.floor(days / 30);
       const dur = months >= 12 ? `約${Math.floor(months / 12)}年` : (months >= 1 ? `約${months}か月` : `${days}日`);
-      const word = shortMap[kind] || kind || '不在';
+      // ガント帯はシンプルに「休暇」で統一。種別・期間・メモの詳細はホバー(title)に残す。
       const sLabel = `${s.getFullYear()}/${s.getMonth() + 1}/${s.getDate()}`;
       const eLabel = `${e.getFullYear()}/${e.getMonth() + 1}/${e.getDate()}`;
       const title = `${kind || '不在'} ${sLabel}〜${eLabel}${note ? '（' + note + '）' : ''}`;
-      html += `<div class="gantt-absence" style="left:${left + 1}px;width:${width}px;" title="${this.esc(title)}"><span>${this.esc(word)} ${dur}</span></div>`;
+      html += `<div class="gantt-absence" style="left:${left + 1}px;width:${width}px;" title="${this.esc(title)}"><span>休暇 ${dur}</span></div>`;
     });
     return html;
   },
