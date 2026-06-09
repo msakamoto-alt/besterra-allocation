@@ -1322,6 +1322,53 @@ const GanttView = {
     return `<div class="gantt-wm-band" style="left:${left}px;width:${width}px;background:${wm.bg};border-left:4px solid ${wm.accent};" title="${this.esc(wm.label)} ${this.esc(range)}"><span style="color:${wm.text}">${this.esc(wm.short)}</span></div>`;
   },
 
+  // 不在（長期休暇/休職/育休等）の [start,end] Date 配列を返す。end 空欄は表示窓端で補完。
+  // 監督軸／事務所モニターで「空き」帯の抑制（占有扱い）にも使う。
+  absenceIntervals(emp, cells) {
+    const list = (emp && emp.absences) || [];
+    if (!list.length || !cells.length) return [];
+    const we = (() => {
+      const last = cells[cells.length - 1];
+      return last.type === 'month'
+        ? new Date(last.date.getFullYear(), last.date.getMonth() + 1, 1)
+        : new Date(last.date.getFullYear(), last.date.getMonth(), last.date.getDate() + 1);
+    })();
+    const ws = cells[0].date;
+    const out = [];
+    list.forEach(a => {
+      let s = a.start ? this.parseDate(a.start) : null;
+      let e = a.end ? this.parseDate(a.end) : null;
+      if (!s || isNaN(s)) s = ws;
+      if (!e || isNaN(e)) e = we;
+      if (e > s) out.push({ s, e, kind: a.kind, note: a.note });
+    });
+    return out;
+  },
+
+  // 不在のグレー網掛け帯（監督軸・事務所モニター）。「育休中 約6か月」等のラベル。
+  absenceBandsHtml(emp, cells) {
+    const ivs = this.absenceIntervals(emp, cells);
+    if (!ivs.length) return '';
+    const shortMap = (Sync && Sync.ABSENCE_SHORT) || {};
+    let html = '';
+    ivs.forEach(({ s, e, kind, note }) => {
+      const clip = this.clipRange(s, e, cells);
+      if (!clip) return;
+      const left = this.dateToPx(clip.start, cells);
+      const right = this.dateToPx(clip.end, cells);
+      const width = Math.max(8, right - left - 2);
+      const days = Math.round((e - s) / 86400000);
+      const months = Math.floor(days / 30);
+      const dur = months >= 12 ? `約${Math.floor(months / 12)}年` : (months >= 1 ? `約${months}か月` : `${days}日`);
+      const word = shortMap[kind] || kind || '不在';
+      const sLabel = `${s.getFullYear()}/${s.getMonth() + 1}/${s.getDate()}`;
+      const eLabel = `${e.getFullYear()}/${e.getMonth() + 1}/${e.getDate()}`;
+      const title = `${kind || '不在'} ${sLabel}〜${eLabel}${note ? '（' + note + '）' : ''}`;
+      html += `<div class="gantt-absence" style="left:${left + 1}px;width:${width}px;" title="${this.esc(title)}"><span>${this.esc(word)} ${dur}</span></div>`;
+    });
+    return html;
+  },
+
   // emp.id → emp のマップ（employees 配列の参照が変わった時だけ再構築＝同期後のみ）
   empByIdMap() {
     const emps = Sync.cache.employees || [];
@@ -1495,8 +1542,11 @@ const GanttView = {
         this.gridDivs(cells, tintWhole ? this.workModeLine(e.work_mode) : null) +
         todayMarkerHtml +
         (wmPeriod ? this.workModeBandHtml(e, cells) : '') +
-        // Point4: 空き帯は「通常稼働の現場監督」のみ（派遣・専従・準現場監督は除外）
-        ((!special && e.category === '現場監督') ? this.availabilityBandsHtml(myAsgs, cells, projects) : '');
+        // 不在帯（休暇/休職/育休等）は監督軸に出る全員（現場監督＋準現場監督）に表示
+        this.absenceBandsHtml(e, cells) +
+        // Point4: 空き帯は「通常稼働の現場監督」のみ（派遣・専従・準現場監督は除外）。不在期間は占有扱いで「空き」を出さない
+        ((!special && e.category === '現場監督')
+          ? this.availabilityBandsHtml(myAsgs, cells, projects, this.absenceIntervals(e, cells)) : '');
     myAsgs.forEach((a, idx) => {
       const proj = projects.find(p => p.project_id === a.project_id);
       if (!proj) return;
@@ -1514,7 +1564,7 @@ const GanttView = {
 
   // Point4: 今日以降で配置（表示中のバー）が無い連続期間が GAP_MIN_DAYS 以上の「空き」帯を返す。
   // 占有 = 表示中の myAsgs の join〜planned_end(無ければ工期末) の和集合。
-  availabilityBandsHtml(myAsgs, cells, projects) {
+  availabilityBandsHtml(myAsgs, cells, projects, extraOcc) {
     if (!cells.length) return '';
     const windowStart = cells[0].date;
     const last = cells[cells.length - 1];
@@ -1537,6 +1587,8 @@ const GanttView = {
       const e = this.parseDate(a.planned_end || (proj && proj.end));
       if (s && e && !isNaN(s) && !isNaN(e) && e > s) occ.push([s, e]);
     });
+    // 不在期間（休暇/休職/育休等）も占有扱い＝その期間は「空き」を出さない
+    (extraOcc || []).forEach(iv => { if (iv && iv.s && iv.e && iv.e > iv.s) occ.push([iv.s, iv.e]); });
     occ.sort((x, y) => x[0] - y[0]);
     const merged = [];
     occ.forEach(iv => {

@@ -171,6 +171,15 @@ body { font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif; }
 }
 .gantt-gap span { font-size: 11px; font-weight: 700; color: #0369a1; white-space: nowrap; }
 
+/* 不在（長期休暇・休職・育休等）の帯：監督軸／事務所モニター。グレー網掛けで「空き」と明確に区別。 */
+.gantt-absence {
+  position: absolute; top: 3px; bottom: 3px; pointer-events: none; overflow: hidden; z-index: 2;
+  background: repeating-linear-gradient(45deg, rgba(100,116,139,0.28) 0 7px, transparent 7px 14px);
+  border: 1px dashed #94a3b8; border-radius: 5px;
+  display: flex; align-items: center; padding-left: 6px;
+}
+.gantt-absence span { font-size: 11px; font-weight: 700; color: #475569; white-space: nowrap; }
+
 /* 稼働形態（派遣/専従）の色帯：指定期間だけ行内に表示。配置可否・空きには非連動。 */
 .gantt-wm-band {
   position: absolute; top: 0; bottom: 0; pointer-events: none; overflow: hidden;

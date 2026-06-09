@@ -16,7 +16,58 @@ const DashboardView = {
     });
 
     // 「現在の配置」行クリックでガント詳細モーダルを開く（編集UI共通化）
-    document.getElementById('dash-content').addEventListener('click', (e) => {
+    document.getElementById('dash-content').addEventListener('click', async (e) => {
+      // 不在の追加（行クリックより優先）
+      const absAdd = e.target.closest('#dash-abs-add');
+      if (absAdd) {
+        e.stopPropagation();
+        await this.addAbsenceFromForm(absAdd.dataset.emp);
+        return;
+      }
+      // 不在の修正モードへ切替（✎）
+      const absEdit = e.target.closest('.dash-abs-edit');
+      if (absEdit) {
+        e.stopPropagation();
+        const row = absEdit.closest('.dash-abs-row');
+        if (row) {
+          row.querySelector('.dash-abs-disp').classList.add('hidden');
+          row.querySelector('.dash-abs-editrow').classList.remove('hidden');
+        }
+        return;
+      }
+      // 不在の修正キャンセル
+      const absCancel = e.target.closest('.dash-abs-cancel');
+      if (absCancel) {
+        e.stopPropagation();
+        const row = absCancel.closest('.dash-abs-row');
+        if (row) {
+          row.querySelector('.dash-abs-editrow').classList.add('hidden');
+          row.querySelector('.dash-abs-disp').classList.remove('hidden');
+        }
+        return;
+      }
+      // 不在の修正を保存
+      const absSave = e.target.closest('.dash-abs-save');
+      if (absSave) {
+        e.stopPropagation();
+        await this.saveAbsenceEdit(absSave);
+        return;
+      }
+      // 不在の削除
+      const absDel = e.target.closest('.dash-abs-del');
+      if (absDel) {
+        e.stopPropagation();
+        if (!confirm('この不在予定を削除しますか？')) return;
+        absDel.disabled = true;
+        try {
+          await Sync.deleteAbsence(parseInt(absDel.dataset.id, 10));
+          if (typeof App !== 'undefined' && App.loadData) await App.loadData();
+        } catch (err) {
+          alert('不在の削除に失敗しました: ' + (err.message || err));
+          absDel.disabled = false;
+        }
+        return;
+      }
       // 状態変更ボタン（行クリックより優先）
       const statusBtn = e.target.closest('.dash-status-edit');
       if (statusBtn) {
@@ -402,6 +453,8 @@ const DashboardView = {
         '</div>';
     }
 
+    const absCtrl = this.absenceSectionHtml(emp, canEdit);
+
     document.getElementById('dash-content').innerHTML =
       '<div class="grid grid-cols-2 gap-4 mb-4">' +
         '<div class="bg-white rounded-lg shadow p-4">' +
@@ -409,12 +462,13 @@ const DashboardView = {
           `<div class="text-xl font-bold mt-1">${this.esc(emp.name)}</div>` +
           `<div class="text-xs text-slate-500 mt-1">${this.esc(emp.department || '-')} / ${this.esc(emp.role || '一般')}</div>` +
           `<div class="mt-2 flex flex-wrap items-center gap-1.5">${PoolView.categoryBadge(emp.category)}${sekouBadges}</div>` +
-          wmCtrl +
         '</div>' +
         '<div class="bg-white rounded-lg shadow p-4">' +
           '<div class="text-sm text-slate-600">配置状況</div>' +
           `<div class="text-3xl font-bold mt-1">${asgs.length} <span class="text-base text-slate-500 font-normal">アクティブ</span></div>` +
           `<div class="text-xs text-slate-500 mt-1">経験現場 ${uniqProjectIds.size}件 / 過去 ${pastAsgs.length}回</div>` +
+          wmCtrl +
+          absCtrl +
         '</div>' +
       '</div>' +
       '<div class="bg-white rounded-lg shadow p-4 mb-4">' +
@@ -440,6 +494,108 @@ const DashboardView = {
         `<div class="grid grid-cols-5 gap-2">${gHtml}</div>` +
         '<p class="text-xs text-slate-500 mt-3">※ G工番＝直接工事以外の時間（教育/会議/事務等）。配置自動化のロジックには使用しません（仕様書v4.0方針）。可視化のみ。</p>' +
       '</div>';
+  },
+
+  // 不在種別の <option> 群。selected を選択状態に。リスト外の旧種別（育休/産休等）は先頭に温存。
+  absKindOptions(selected) {
+    const base = (typeof Sync !== 'undefined' && Sync.ABSENCE_KINDS) || ['長期休暇', '休職', '産休・育休', 'その他'];
+    const KINDS = (selected && base.indexOf(selected) < 0) ? [selected].concat(base) : base;
+    return KINDS.map(k => `<option value="${this.esc(k)}"${k === selected ? ' selected' : ''}>${this.esc(k)}</option>`).join('');
+  },
+
+  // 不在予定セクション（カード内）。閲覧者は登録があれば一覧のみ・編集者は一覧＋追加フォーム＋行ごとの修正/削除。
+  absenceSectionHtml(emp, canEdit) {
+    const list = (emp.absences || []).slice().sort((a, b) => String(a.start).localeCompare(String(b.start)));
+    const empKey = this.esc(emp.emp_no || emp.id);
+    const rows = list.length
+      ? list.map(a => {
+          const period = `${this.esc(a.start || '')}${(a.start || a.end) ? '〜' : ''}${this.esc(a.end || '')}`;
+          const noteDisp = a.note ? ` <span class="text-slate-400">（${this.esc(a.note)}）</span>` : '';
+          const kindBadge = `<span class="bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">${this.esc(a.kind || '不在')}</span>`;
+          if (!canEdit) {
+            return '<div class="flex items-center gap-2 text-xs py-1 border-b last:border-0">' +
+              `${kindBadge}<span class="text-slate-600">${period}</span>${noteDisp}</div>`;
+          }
+          const idA = this.esc(a.id);
+          // 表示モード＋編集モード（初期非表示）を1行に同梱。✎で切替。
+          return `<div class="dash-abs-row border-b last:border-0 py-1" data-id="${idA}">` +
+            '<div class="dash-abs-disp flex items-center gap-2 text-xs">' +
+              `${kindBadge}<span class="text-slate-600">${period}</span>${noteDisp}<span class="flex-1"></span>` +
+              `<button class="dash-abs-edit text-blue-600 hover:text-blue-800 text-sm" data-id="${idA}" title="修正">✎</button>` +
+              `<button class="dash-abs-del text-rose-600 hover:text-rose-800 text-sm" data-id="${idA}" title="削除">🗑</button>` +
+            '</div>' +
+            '<div class="dash-abs-editrow hidden flex flex-wrap items-center gap-2 mt-1">' +
+              `<select class="abs-e-kind border rounded px-2 py-1 text-sm">${this.absKindOptions(a.kind || '')}</select>` +
+              `<input type="date" class="abs-e-start border rounded px-2 py-1 text-sm" value="${this.toIsoDate(a.start)}">` +
+              '<span class="text-xs text-slate-400">〜</span>' +
+              `<input type="date" class="abs-e-end border rounded px-2 py-1 text-sm" value="${this.toIsoDate(a.end)}">` +
+              `<input type="text" class="abs-e-note border rounded px-2 py-1 text-sm" style="width:110px" value="${this.esc(a.note || '')}" placeholder="メモ">` +
+              `<button class="dash-abs-save bg-slate-700 text-white px-2 py-1 rounded text-xs hover:bg-slate-800" data-id="${idA}">保存</button>` +
+              '<button class="dash-abs-cancel text-slate-500 px-2 py-1 text-xs">キャンセル</button>' +
+            '</div>' +
+          '</div>';
+        }).join('')
+      : '<div class="text-xs text-slate-400">登録なし</div>';
+
+    if (!canEdit) {
+      if (!list.length) return '';   // 閲覧者は登録ゼロならカードを汚さない
+      return '<div class="mt-3 pt-3 border-t">' +
+        '<label class="text-xs text-slate-500 block mb-1">不在予定</label>' + rows + '</div>';
+    }
+
+    const addForm = '<div class="flex flex-wrap items-center gap-2 mt-2">' +
+      `<select id="dash-abs-kind" class="border rounded px-2 py-1 text-sm">${this.absKindOptions('')}</select>` +
+      '<input type="date" id="dash-abs-start" class="border rounded px-2 py-1 text-sm">' +
+      '<span class="text-xs text-slate-400">〜</span>' +
+      '<input type="date" id="dash-abs-end" class="border rounded px-2 py-1 text-sm">' +
+      '<input type="text" id="dash-abs-note" placeholder="メモ（任意）" class="border rounded px-2 py-1 text-sm" style="width:120px">' +
+      `<button id="dash-abs-add" data-emp="${empKey}" class="bg-slate-700 text-white px-3 py-1 rounded text-sm hover:bg-slate-800">＋追加</button>` +
+      '</div>';
+    return '<div class="mt-3 pt-3 border-t">' +
+      '<label class="text-xs text-slate-500 block mb-1">不在予定（長期休暇・休職・産休育休等）</label>' +
+      rows + addForm +
+      '<div class="text-[11px] text-slate-400 mt-1">※ 監督軸・事務所モニターでグレーの網掛け帯（「産育休中 約6か月」等）。不在期間は「空き」表示を抑制します。</div>' +
+      '</div>';
+  },
+
+  // 行ごとの修正フォームの値を読んで更新→再描画
+  async saveAbsenceEdit(btn) {
+    const row = btn.closest('.dash-abs-row');
+    if (!row) return;
+    const id = parseInt(btn.dataset.id, 10);
+    const kind = (row.querySelector('.abs-e-kind') || {}).value || '';
+    const start = (row.querySelector('.abs-e-start') || {}).value || '';
+    const end = (row.querySelector('.abs-e-end') || {}).value || '';
+    const note = (row.querySelector('.abs-e-note') || {}).value || '';
+    if (!start && !end) { alert('開始日または終了日を入力してください'); return; }
+    if (start && end && start > end) { alert('開始が終了より後になっています'); return; }
+    btn.disabled = true;
+    try {
+      await Sync.updateAbsence(id, kind, start, end, note);
+      if (typeof App !== 'undefined' && App.loadData) await App.loadData();
+    } catch (err) {
+      alert('不在の修正に失敗しました: ' + (err.message || err));
+      btn.disabled = false;
+    }
+  },
+
+  // 不在の追加フォームの値を読んで保存→再描画
+  async addAbsenceFromForm(empNo) {
+    const kind = (document.getElementById('dash-abs-kind') || {}).value || '';
+    const start = (document.getElementById('dash-abs-start') || {}).value || '';
+    const end = (document.getElementById('dash-abs-end') || {}).value || '';
+    const note = (document.getElementById('dash-abs-note') || {}).value || '';
+    if (!start && !end) { alert('開始日または終了日を入力してください'); return; }
+    if (start && end && start > end) { alert('開始が終了より後になっています'); return; }
+    const btn = document.getElementById('dash-abs-add');
+    if (btn) btn.disabled = true;
+    try {
+      await Sync.addAbsence(empNo, kind, start, end, note);
+      if (typeof App !== 'undefined' && App.loadData) await App.loadData();
+    } catch (err) {
+      alert('不在の登録に失敗しました: ' + (err.message || err));
+      if (btn) btn.disabled = false;
+    }
   },
 
   esc(text) {

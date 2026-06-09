@@ -1259,7 +1259,7 @@ const Sync = {
       }
       return all;
     };
-    const [sf, pro, ov, gw, ps, org, tiers, quals] = await Promise.all([
+    const [sf, pro, ov, gw, ps, org, tiers, quals, absences] = await Promise.all([
       fetchTable('salesforce_imports', 'id'),
       fetchTable('prospects', null),
       fetchTable('assignment_overrides', null),
@@ -1268,6 +1268,7 @@ const Sync = {
       fetchTable('organization', 'id'),       // 段階D: 組織図名簿（無ければ[]）
       fetchTable('employee_tiers', null),      // 段階D: 階層判定（無ければ[]）
       fetchTable('employee_quals', 'id'),      // 段階D5: 資格マスタ（無ければ[]）
+      fetchTable('employee_absences', 'id'),   // 不在（長期休暇/休職/育休等・無ければ[]）
     ]);
     this.cache.employees = [];               // 段階D6: 旧 employees 廃止。processRawTables が organization から再生成
     this.cache.salesforce_imports = sf;
@@ -1278,10 +1279,11 @@ const Sync = {
     this.cache.organization = org;
     this.cache.employee_tiers = tiers;
     this.cache.employee_quals = quals;
+    this.cache.employee_absences = absences;
     console.info('Supabaseから取得:',
       `sf=${sf.length}`, `prospects=${pro.length}`,
       `overrides=${ov.length}`, `glogs=${gw.length}`, `status=${ps.length}`,
-      `org=${org.length}`, `tiers=${tiers.length}`, `quals=${quals.length}`);
+      `org=${org.length}`, `tiers=${tiers.length}`, `quals=${quals.length}`, `absences=${absences.length}`);
   },
 
   // supabase-js クライアント（遅延生成）
@@ -1417,6 +1419,12 @@ const Sync = {
     '事務所専従': { label: '事務所専従',       short: '事務所専従',     bg: '#dbeafe', line: '#93c5fd', text: '#1d4ed8', accent: '#3b82f6', badge: 'bg-blue-100 text-blue-700 border border-blue-300' },
     '構内専従':   { label: '構内専従',         short: '構内専従',       bg: '#dcfce7', line: '#86efac', text: '#15803d', accent: '#22c55e', badge: 'bg-green-100 text-green-700 border border-green-300' },
   },
+
+  // 不在の種別（employee_absences.kind）。監督ダッシュボードのプルダウンとガントのラベルで使用。
+  // short = ガント帯の表記語幹（「産育休中 約6か月」のように後ろに「約Nか月」が付く）。
+  // ※ 育休・産休は1区分（産休・育休）に統合。旧データ（育休/産休）も帯表記できるよう SHORT に残置。
+  ABSENCE_KINDS: ['長期休暇', '休職', '産休・育休', 'その他'],
+  ABSENCE_SHORT: { '長期休暇': '長期休暇', '休職': '休職中', '産休・育休': '産育休中', '育休': '育休中', '産休': '産休中', 'その他': '不在' },
   // 通常以外の稼働形態か（''/'通常'/null は false）
   isSpecialWorkMode(mode) {
     const m = String(mode || '').trim();
@@ -1438,6 +1446,48 @@ const Sync = {
       updated_at: new Date().toISOString(),
       updated_by: 'web',
     }, { onConflict: 'emp_no' });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
+  // 不在を1件追加（監督ダッシュボードから）。1人が複数期間を持てる別テーブル。
+  // start/end は YYYY/MM/DD のテキストに正規化（ガントの parseDate と整合）。
+  async addAbsence(empNo, kind, start, end, note) {
+    const sb = this.getSupabase();
+    const slash = (s) => { const v = String(s || '').trim().replace(/-/g, '/'); return v || null; };
+    const res = await sb.from('employee_absences').insert({
+      emp_no: String(empNo).trim(),
+      kind: String(kind || '').trim(),
+      start_date: slash(start),
+      end_date: slash(end),
+      note: String(note || '').trim() || null,
+      updated_at: new Date().toISOString(),
+      updated_by: 'web',
+    });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
+  // 不在を1件更新（id 指定）。種別・期間・メモを上書き。
+  async updateAbsence(id, kind, start, end, note) {
+    const sb = this.getSupabase();
+    const slash = (s) => { const v = String(s || '').trim().replace(/-/g, '/'); return v || null; };
+    const res = await sb.from('employee_absences').update({
+      kind: String(kind || '').trim(),
+      start_date: slash(start),
+      end_date: slash(end),
+      note: String(note || '').trim() || null,
+      updated_at: new Date().toISOString(),
+      updated_by: 'web',
+    }).eq('id', id);
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
+  // 不在を1件削除（id 指定）。
+  async deleteAbsence(id) {
+    const sb = this.getSupabase();
+    const res = await sb.from('employee_absences').delete().eq('id', id);
     if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
     return { ok: true };
   },
@@ -1663,9 +1713,23 @@ const Sync = {
 
   // 段階D: organization（構造）＋ employee_tiers（手動階層）＋ 資格ソース から社員オブジェクトを生成。
   // 旧 normalizeEmployees（区分/中計）を置換。返す形は従来と同じ（id/name/department/role/category/...）。
-  buildEmployeesFromOrg(orgRows, tierRows, qualSource) {
+  buildEmployeesFromOrg(orgRows, tierRows, qualSource, absenceRows) {
     const tierByEmp = {};
     const workModeByEmp = {};   // emp_no -> { mode, start, end }
+    // 不在（複数期間可）を社員番号でグルーピング。開始日昇順。
+    const absByEmp = {};
+    (absenceRows || []).forEach(a => {
+      const no = String(a.emp_no || '').trim();
+      if (!no) return;
+      (absByEmp[no] = absByEmp[no] || []).push({
+        id: a.id,
+        kind: String(a.kind || '').trim(),
+        start: String(a.start_date || '').trim(),
+        end: String(a.end_date || '').trim(),
+        note: String(a.note || '').trim(),
+      });
+    });
+    Object.values(absByEmp).forEach(list => list.sort((x, y) => String(x.start).localeCompare(String(y.start))));
     (tierRows || []).forEach(t => {
       const no = String(t.emp_no || '').trim();
       if (no) {
@@ -1716,6 +1780,7 @@ const Sync = {
         work_mode: workModeByEmp[empNo] ? workModeByEmp[empNo].mode : '',
         work_mode_start: workModeByEmp[empNo] ? workModeByEmp[empNo].start : '',
         work_mode_end: workModeByEmp[empNo] ? workModeByEmp[empNo].end : '',
+        absences: absByEmp[empNo] || [],     // 不在予定（監督軸でグレー網掛け帯）
         status: 'active',
         rank: '',
         depts,            // 組織図画面用に保持
@@ -1733,7 +1798,8 @@ const Sync = {
       if (this.cache.organization && this.cache.organization.length > 0) {
         try {
           this.cache.employees = this.buildEmployeesFromOrg(
-            this.cache.organization, this.cache.employee_tiers, this.cache.employee_quals);
+            this.cache.organization, this.cache.employee_tiers, this.cache.employee_quals,
+            this.cache.employee_absences);
         } catch (e) {
           console.error('組織図ベース社員生成失敗・旧employeesにフォールバック:', e);
           try { this.cache.employees = this.normalizeEmployees(this.cache.employees); }
