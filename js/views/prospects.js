@@ -117,7 +117,7 @@ const ProspectsView = {
     // Salesforce取込の実工事と工事名が一致＝受注済みで重複の可能性 → ⚠表示
     const hit = this.sfCollision(r);
     const collisionMark = hit
-      ? ` <span class="inline-flex items-center bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded text-[10px] font-bold align-middle" title="Salesforce取込の工事「${this.esc(hit.project_id)} ${this.esc(hit.name)}」と工事名が一致。すでに受注済みの可能性があります。受注済みなら『受注済』でアーカイブしてください。">⚠ SF重複? ${this.esc(hit.project_id)}</span>`
+      ? ` <span class="inline-flex items-center bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded text-[10px] font-bold align-middle whitespace-normal" title="Salesforce取込の工事「${this.esc(hit.project_id)} ${this.esc(hit.name)}」と工事名が似ています。すでに受注済みの可能性があります。受注済みなら『受注済』でアーカイブしてください。">⚠ SF重複? ${this.esc(hit.project_id)} ${this.esc(hit.name)}</span>`
       : '';
     const actions = !Sync.canEdit()
       ? '<span class="text-slate-300 text-xs">—</span>'
