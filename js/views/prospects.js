@@ -162,21 +162,59 @@ const ProspectsView = {
   // 工事名の正規化（全半角統一・空白/記号除去）。バッティング照合用。
   normName(s) {
     return String(s || '').normalize('NFKC').replace(/\s+/g, '')
-      .replace(/[（）()【】「」・,，.．\-－—_／/]/g, '').toLowerCase();
+      .replace(/[（）()【】「」『』〔〕［］\[\]{}・,，.．、。/／\\\-－—~〜_|｜:：;；'"”’#＃*＊]/g, '').toLowerCase();
   },
 
-  // この見込み案件と工事名が一致する Salesforce取込の実工事（見込み由来でない）を返す。
-  // SF側は customer が空のため、照合は工事名のみ（正規化＝一致 or どちらかが他方を包含・長さ5以上）。
+  // 工事種別・会社種別など、どの案件にも現れる一般語。固有部分の重なりを見るため核から除去する。
+  // ここを足し引きすれば誤検知/見逃しを調整できる。
+  CORE_STOP: /株式会社|有限会社|合同会社|工事|作業|業務|請負|解体|撤去|新設|増設|設置|据付|据置|改修|補修|修繕|更新|更生|分解|工場|設備|機器|装置|建物|建屋|一式|本社|工区|計画|年度|案件|その他|ほか|外|及び|および|並びに/g,
+
+  // 一般語を除いた「核」（固有名詞部分）を返す
+  coreName(s) {
+    return this.normName(s).replace(this.CORE_STOP, '');
+  },
+
+  // 連続する最長共通部分文字列の長さ（DPでO(n*m)）
+  lcsLen(a, b) {
+    if (!a || !b) return 0;
+    let best = 0;
+    const dp = new Array(b.length + 1).fill(0);
+    for (let i = 1; i <= a.length; i++) {
+      let prev = 0;
+      for (let j = 1; j <= b.length; j++) {
+        const tmp = dp[j];
+        dp[j] = (a[i - 1] === b[j - 1]) ? prev + 1 : 0;
+        if (dp[j] > best) best = dp[j];
+        prev = tmp;
+      }
+    }
+    return best;
+  },
+
+  // 核どうしの共通部分文字列がこの文字数以上なら重複候補とみなす（小さいほど敏感／誤検知増）
+  SIM_MIN_LCS: 4,
+
+  // この見込み案件と工事名が被る Salesforce取込の実工事（見込み由来でない）を返す。
+  // SF側は customer が空のため照合は工事名のみ。
+  //   ① 完全一致／一方が他方を丸ごと内包（厳密・従来）
+  //   ② 一般語を除いた「核」の最長共通部分文字列が SIM_MIN_LCS 以上
+  //      （客先名や工事種別が違っても、現場名・対象設備などの固有部分が重なれば拾う）
   sfCollision(r) {
     const pn = this.normName(r.project_name);
     if (pn.length < 3) return null;
+    const pCore = this.coreName(r.project_name);
     const projs = Sync.cache.projects || [];
     for (const p of projs) {
       // SF実工事のみ（見込み由来は除外）。完了済みは重複チェック対象外（古い工事への誤検知を防ぐ）。
       if (p.prospect || !p.project_id || p.completed) continue;
       const sn = this.normName(p.name);
       if (!sn) continue;
+      // ① 厳密一致／内包
       if (sn === pn || (pn.length >= 5 && (sn.includes(pn) || pn.includes(sn)))) return p;
+      // ② 核の固有部分が一定長重なる
+      const sCore = this.coreName(p.name);
+      if (pCore.length >= this.SIM_MIN_LCS && sCore.length >= this.SIM_MIN_LCS
+          && this.lcsLen(pCore, sCore) >= this.SIM_MIN_LCS) return p;
     }
     return null;
   },
