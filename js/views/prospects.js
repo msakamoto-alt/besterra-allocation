@@ -32,12 +32,37 @@ const ProspectsView = {
     // 保存
     document.getElementById('prospect-modal-save').addEventListener('click', () => this.save());
 
+    // 見積金額：入力中に3桁カンマ区切りで整形（円・1円単位）
+    const amtEl = document.getElementById('prospect-amount');
+    if (amtEl) amtEl.addEventListener('input', () => this.formatAmountField(amtEl));
+
     // メンバー追加・解除
     document.getElementById('prospect-add-member-btn').addEventListener('click', () => this.openMemberAdd());
     document.getElementById('prospect-members-list').addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-action="member-remove"]');
       if (btn) this.removeMember(btn.dataset.asgId);
     });
+  },
+
+  // 数値文字列を3桁カンマ区切りに整形（数字以外は除去・空は空のまま）
+  fmtAmountStr(v) {
+    const digits = String(v == null ? '' : v).replace(/[^0-9]/g, '');
+    return digits ? Number(digits).toLocaleString('en-US') : '';
+  },
+
+  // 見積金額の入力欄をカンマ整形しつつキャレット位置を保持
+  formatAmountField(el) {
+    const start = el.selectionStart;
+    const digitsBefore = el.value.slice(0, start).replace(/[^0-9]/g, '').length;
+    const formatted = this.fmtAmountStr(el.value);
+    el.value = formatted;
+    // 同じ数字桁数の位置へキャレットを戻す
+    let pos = 0, seen = 0;
+    while (pos < formatted.length && seen < digitsBefore) {
+      if (formatted[pos] >= '0' && formatted[pos] <= '9') seen++;
+      pos++;
+    }
+    el.setSelectionRange(pos, pos);
   },
 
   // 全 prospects 行（archived 除外しない元データ）を取得
@@ -186,7 +211,7 @@ const ProspectsView = {
       document.getElementById('prospect-managing-dept').value = r.managing_dept || '';
       document.getElementById('prospect-start-date').value = this.toIsoDate(r.start_date);
       document.getElementById('prospect-end-date').value = this.toIsoDate(r.end_date);
-      document.getElementById('prospect-amount').value = r.amount || '';
+      document.getElementById('prospect-amount').value = this.fmtAmountStr(r.amount);
       document.getElementById('prospect-note').value = r.note || '';
       // 既存案件はメンバー管理セクションを表示
       memSection.classList.remove('hidden');
@@ -302,7 +327,7 @@ const ProspectsView = {
       managing_dept: document.getElementById('prospect-managing-dept').value,
       start_date: this.toSlashDate(document.getElementById('prospect-start-date').value),
       end_date: this.toSlashDate(document.getElementById('prospect-end-date').value),
-      amount: document.getElementById('prospect-amount').value,
+      amount: document.getElementById('prospect-amount').value.replace(/[^0-9]/g, ''),
       note: document.getElementById('prospect-note').value,
       updated_by: 'web',
     };
