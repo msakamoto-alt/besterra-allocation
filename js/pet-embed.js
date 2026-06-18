@@ -1,15 +1,15 @@
 /* ============================================================================
- * pet-embed.js — 統合管理ツールに住むペット兼エージェント「アップル」（1体）。
+ * pet-embed.js — 統合管理ツールに住むペット兼エージェント「ピー」（1体）。
  *
- * ⚠️ 本番では何もしない（localhost / 127.0.0.1 でのみ起動）。誤deployでも公開環境ではno-op。
- * ⚠️ フシ/クロの画像は使わない（個人ペットで非公開）。デフォルト画像はユーザー提供：
- *       assets/pet/default.png （未配置なら仮の代替SVGを表示）
+ * 起動条件＝ログイン済み かつ admin（PILOT_ADMIN_ONLY）。非admin/未ログインはno-op。
+ *   false にすると全ログインユーザーに開放（全社展開）。
+ * デフォルト画像＝assets/pet/pii_front.png（未配置なら仮の代替SVGを表示）。
  *
  * 仕様（すべてツール内で完結）：
  *   ・1体（キャラ選択なし）。名前・画像・サイズをツール上の設定パネルで変更。
- *   ・画像は「アップロード（端末から選ぶ→220pxに縮小）」か「デフォルトに戻す」を選べる。
- *   ・名前/画像/サイズは学習用Supabase(pet_config)に保存＝別端末でも引き継ぐ。
- *   ・サイズはスライダー＋つまみ(⤡)ドラッグで調整。本体はドラッグで移動。
+ *   ・画像は「アップロード（端末から選ぶ→220pxに縮小・静止画）」か「デフォルトに戻す」。
+ *   ・名前/画像/サイズ/非表示は本番Supabaseの user_pets に本人だけ保存(RLS)＝1人1匹・別端末でも引継ぐ。
+ *   ・× で恒久非表示→右下ハンドルで復帰。サイズはスライダー＋つまみ(⤡)。本体はドラッグで移動。
  * ========================================================================== */
 (function () {
   'use strict';
@@ -40,7 +40,7 @@
       '深呼吸〜。すーっ、はーっ。', '困ったら呼んでね。', 'むりしないでね。',
     ];
 
-    var state = { name: 'アップル', image: null, scale: 1, hidden: false }; // image:null → デフォルト画像 / hidden:恒久非表示
+    var state = { name: 'ピーちゃん', image: null, scale: 1, hidden: false }; // image:null → デフォルト画像 / hidden:恒久非表示
     var els = {};
 
     // ---------- スタイル ----------
@@ -124,7 +124,7 @@
       modal.innerHTML =
         '<div id="bpet-card">' +
           '<h2>ペットの設定</h2>' +
-          '<div class="bpet-f"><label>なまえ</label><input id="bpet-nameinput" type="text" maxlength="20" placeholder="例：アップル"></div>' +
+          '<div class="bpet-f"><label>なまえ</label><input id="bpet-nameinput" type="text" maxlength="20" placeholder="例：ピーちゃん"></div>' +
           '<div class="bpet-f"><label>画像</label><div class="bpet-imgrow">' +
             '<img id="bpet-preview" alt="preview">' +
             '<div class="bpet-btns">' +
@@ -360,7 +360,7 @@
       els.size.addEventListener('input', function (e) { applyScale(parseFloat(e.target.value)); });
       document.getElementById('bpet-save').addEventListener('click', function () {
         var btn = this; btn.disabled = true; btn.textContent = '保存中…';
-        state.name = (els.nameInput.value || '').trim() || 'ペット';
+        state.name = (els.nameInput.value || '').trim() || 'ピーちゃん';
         if (els._pendingImage !== undefined) state.image = els._pendingImage; // null=デフォルト/ dataUrl=カスタム
         state.scale = parseFloat(els.size.value);
         applyName(); applyImage(); applyScale(state.scale);
