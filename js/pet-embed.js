@@ -1,8 +1,8 @@
 /* ============================================================================
  * pet-embed.js — 統合管理ツールに住むペット兼エージェント「ピー」（1体）。
  *
- * 起動条件＝ログイン済み かつ admin（PILOT_ADMIN_ONLY）。非admin/未ログインはno-op。
- *   false にすると全ログインユーザーに開放（全社展開）。
+ * 起動条件＝ログイン済み かつ PILOT_ROLES に含まれるロール（既定 admin/editor）。対象外/未ログインはno-op。
+ *   PILOT_ROLES を null/[] にすると全ログインユーザーに開放（全社展開）。
  * デフォルト画像＝assets/pet/pii_front.png（未配置なら仮の代替SVGを表示）。
  *
  * 仕様（すべてツール内で完結）：
@@ -16,7 +16,7 @@
   try {
     // 起動条件はファイル末尾でゲート＝「ログイン済み かつ admin」のときだけ表示（パイロット）。
     // 設定・画像は本番Supabaseの user_pets に本人だけ読み書き（RLS）＝1人1匹。
-    var PILOT_ADMIN_ONLY = true;   // ← false にすると全ログインユーザーに開放（全社展開）
+    var PILOT_ROLES = ['admin', 'editor'];   // 表示するロール。null か [] にすると全ログインユーザーに開放（全社展開）
     // ツールの認証済みSyncを参照（sync.js の Sync はトップレベル const＝window に載らない）
     function SYNC() { return (typeof Sync !== 'undefined') ? Sync : window.Sync; }
 
@@ -466,8 +466,8 @@
     function loginOk() {
       var S = SYNC();
       if (!S || !S.userId) return false;                         // 未ログインは出さない
-      if (!PILOT_ADMIN_ONLY) return true;                        // 全社開放モード
-      return (typeof S.isAdmin === 'function') ? S.isAdmin() : (S.role === 'admin');
+      if (!PILOT_ROLES || !PILOT_ROLES.length) return true;      // 全社開放モード
+      return PILOT_ROLES.indexOf(S.role) !== -1;                 // 指定ロールのみ（admin/editor 等）
     }
     function gate() {
       if (started) {
