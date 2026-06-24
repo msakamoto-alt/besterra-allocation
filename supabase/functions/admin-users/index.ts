@@ -28,7 +28,7 @@ const cors = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const ROLES = ['admin', 'editor', 'executive', 'manager', 'viewer'];
+const ROLES = ['admin', 'editor', 'executive', 'manager', 'viewer', 'accounting'];
 
 function json(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), {

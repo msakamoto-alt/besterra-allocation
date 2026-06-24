@@ -7,7 +7,7 @@
 const AccountsView = {
   ROLE_OPTS: [
     ['viewer', '閲覧者'], ['manager', '役職者'], ['executive', '経営者'],
-    ['editor', '編集者'], ['admin', '管理者'],
+    ['accounting', '経理'], ['editor', '編集者'], ['admin', '管理者'],
   ],
 
   init() {

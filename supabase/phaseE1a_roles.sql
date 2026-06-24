@@ -14,7 +14,7 @@
 -- ===== 1. user_roles 表 =====
 create table if not exists public.user_roles (
   user_id      uuid primary key references auth.users(id) on delete cascade,
-  role         text not null check (role in ('admin','editor','executive','manager','viewer')),
+  role         text not null check (role in ('admin','editor','executive','manager','viewer','accounting')),
   display_name text,
   email        text,
   created_at   timestamptz default now()

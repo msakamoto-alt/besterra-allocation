@@ -38,7 +38,7 @@ const ManagementView = {
     if (del) del.addEventListener('click', () => this.deleteCurrent());
   },
 
-  canView() { return Sync.role === 'admin' || Sync.role === 'executive'; },
+  canView() { return Sync.role === 'admin' || Sync.role === 'executive' || Sync.role === 'accounting'; },
   isAdmin() { return Sync.isAdmin(); },
 
   esc(s) {

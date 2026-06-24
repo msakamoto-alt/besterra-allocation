@@ -42,7 +42,7 @@ drop policy if exists w_mgmt_ins  on public.management_reports;
 drop policy if exists w_mgmt_upd  on public.management_reports;
 drop policy if exists w_mgmt_del  on public.management_reports;
 
-create policy read_mgmt  on public.management_reports for select to authenticated using (app_role() in ('admin', 'executive'));
+create policy read_mgmt  on public.management_reports for select to authenticated using (app_role() in ('admin', 'executive', 'accounting'));
 create policy w_mgmt_ins on public.management_reports for insert to authenticated with check (app_role() = 'admin');
 create policy w_mgmt_upd on public.management_reports for update to authenticated using (app_role() = 'admin') with check (app_role() = 'admin');
 create policy w_mgmt_del on public.management_reports for delete to authenticated using (app_role() = 'admin');

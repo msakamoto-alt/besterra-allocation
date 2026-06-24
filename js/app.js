@@ -8,12 +8,13 @@ const App = {
   currentTab: null,
 
   // 段階E2: ロール別に閲覧できるタブ（編集可否は別途 Sync.canEdit で制御）
+  // 経理(accounting)＝経営レポート〜見込み案件を閲覧のみ（編集なし＝canEdit外）。executive相当の閲覧範囲。
   TAB_ROLES: {
-    pool:       ['admin', 'editor', 'executive', 'manager'],
-    gantt:      ['admin', 'editor', 'executive', 'manager', 'viewer'],
-    dash:       ['admin', 'editor', 'executive', 'manager', 'viewer'],  // Point2: 閲覧者(工事監督)は自分のダッシュボードのみ
-    prospects:  ['admin', 'editor', 'executive'],
-    management: ['admin', 'executive'],   // 段階E3: 経営機密。閲覧は管理者・経営者のみ（RLSでも強制）
+    pool:       ['admin', 'editor', 'executive', 'manager', 'accounting'],
+    gantt:      ['admin', 'editor', 'executive', 'manager', 'viewer', 'accounting'],
+    dash:       ['admin', 'editor', 'executive', 'manager', 'viewer', 'accounting'],  // Point2: 閲覧者(工事監督)は自分のダッシュボードのみ
+    prospects:  ['admin', 'editor', 'executive', 'accounting'],
+    management: ['admin', 'executive', 'accounting'],   // 段階E3: 経営機密。閲覧は管理者・経営者・経理のみ（RLSでも強制）
     elearning:  ['admin'],  // 当面 admin 限定（問題の精査が済むまで一般非公開）。精査後に全ロールへ戻す。
     orgchart:   ['admin'],
   },
