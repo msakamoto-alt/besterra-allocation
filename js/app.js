@@ -175,12 +175,13 @@ const App = {
   updateRoleUI() {
     const badge = document.getElementById('role-badge');
     if (badge) { badge.textContent = Sync.roleLabel(); badge.classList.remove('hidden'); }
-    // 同期（参照データ取込）・組織図（階層判定）は admin のみ
+    // 同期（参照データ取込）・アカウント管理は admin のみ。
+    // 組織図ボタンは「組織図を閲覧できるロール」に表示（admin＋経理＝閲覧のみ。編集はcanEditでガード）。
     const adminOnly = Sync.isAdmin();
     const syncBtn = document.getElementById('sync-button');
     if (syncBtn) syncBtn.classList.toggle('hidden', !adminOnly);
     const orgBtn = document.getElementById('org-toggle');
-    if (orgBtn) orgBtn.classList.toggle('hidden', !adminOnly);
+    if (orgBtn) orgBtn.classList.toggle('hidden', !this.canViewTab('orgchart'));
     const accBtn = document.getElementById('account-toggle');
     if (accBtn) accBtn.classList.toggle('hidden', !adminOnly);
   },
