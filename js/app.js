@@ -16,7 +16,7 @@ const App = {
     prospects:  ['admin', 'editor', 'executive', 'accounting'],
     management: ['admin', 'executive', 'accounting'],   // 段階E3: 経営機密。閲覧は管理者・経営者・経理のみ（RLSでも強制）
     elearning:  ['admin'],  // 当面 admin 限定（問題の精査が済むまで一般非公開）。精査後に全ロールへ戻す。
-    orgchart:   ['admin'],
+    orgchart:   ['admin', 'accounting'],  // 経理は閲覧のみ（階層編集は canEdit=admin/editor でガード＋RLSでも書込不可）
   },
   canViewTab(tab) {
     const allow = this.TAB_ROLES[tab];
