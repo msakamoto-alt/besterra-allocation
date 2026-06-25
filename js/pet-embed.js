@@ -16,7 +16,7 @@
   try {
     // 起動条件はファイル末尾でゲート＝「ログイン済み かつ admin」のときだけ表示（パイロット）。
     // 設定・画像は本番Supabaseの user_pets に本人だけ読み書き（RLS）＝1人1匹。
-    var PILOT_ROLES = ['admin', 'editor'];   // 表示するロール。null か [] にすると全ログインユーザーに開放（全社展開）
+    var PILOT_ROLES = ['admin', 'editor', 'accounting'];   // 表示するロール。null か [] にすると全ログインユーザーに開放（全社展開）
     // ツールの認証済みSyncを参照（sync.js の Sync はトップレベル const＝window に載らない）
     function SYNC() { return (typeof Sync !== 'undefined') ? Sync : window.Sync; }
 
