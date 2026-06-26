@@ -45,6 +45,10 @@ const App = {
 
     // ?board=事務所名 のときは事務所モニターボードモード（監督軸をその事務所だけ全画面表示）
     this._boardOffice = new URLSearchParams(location.search).get('board');
+    // ?bi=<id> のときは経営分析ダッシュボードの全画面モード（別タブで開かれる）
+    this._biId = new URLSearchParams(location.search).get('bi');
+    const biClose = document.getElementById('bi-screen-close');
+    if (biClose) biClose.addEventListener('click', () => { window.close(); location.href = location.pathname; });
 
     // 段階E1: 既存ログインセッションがあれば復元してそのまま入る
     if (await Sync.refreshSession()) {
@@ -52,11 +56,42 @@ const App = {
     }
   },
 
-  // 認証後の遷移：仮パスワードなら変更画面、それ以外はボード/メインへ。
+  // 認証後の遷移：仮パスワードなら変更画面、それ以外はボード/全画面BI/メインへ。
   async proceedAfterAuth() {
     if (Sync.mustChangePw) { this.showPwChange(); return; }
+    if (this._biId) { await this.enterBi(this._biId); return; }
     if (this._boardOffice) await this.enterBoard(this._boardOffice);
     else await this.enterApp();
+  },
+
+  // ?bi=<id> 全画面モード：ツールのchromeを隠し、ダッシュボードを全ビューポートの iframe で表示。
+  async enterBi(id) {
+    const canView = Sync.role === 'admin' || Sync.role === 'executive' || Sync.role === 'accounting';
+    document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('main-screen').classList.add('hidden');
+    const screen = document.getElementById('bi-screen');
+    const body = document.getElementById('bi-screen-body');
+    if (screen) screen.classList.remove('hidden');
+    if (!body) return;
+    if (!canView) {
+      body.innerHTML = '<div class="flex items-center justify-center h-full text-slate-500 text-sm">この画面の閲覧権限がありません。</div>';
+      return;
+    }
+    body.innerHTML = '<div class="flex items-center justify-center h-full text-slate-400 text-sm">ダッシュボードを読み込み中…</div>';
+    try {
+      const html = await Sync.fetchManagementReportHtml(id);
+      if (!html) { body.innerHTML = '<div class="flex items-center justify-center h-full text-slate-500 text-sm">ダッシュボードが見つかりません。</div>'; return; }
+      const blob = new Blob([html], { type: 'text/html' });
+      const iframe = document.createElement('iframe');
+      iframe.src = URL.createObjectURL(blob);
+      iframe.setAttribute('sandbox', 'allow-scripts');  // allow-same-origin は付けない（親セッション保護）
+      iframe.setAttribute('title', '経営分析ダッシュボード');
+      iframe.style.cssText = 'width:100%;height:100%;border:0;display:block;';
+      body.innerHTML = '';
+      body.appendChild(iframe);
+    } catch (e) {
+      body.innerHTML = `<div class="flex items-center justify-center h-full text-red-600 text-sm">読み込み失敗: ${String(e.message || e)}</div>`;
+    }
   },
 
   // ログイン成功後の共通処理：ロールUI反映 → データ読込

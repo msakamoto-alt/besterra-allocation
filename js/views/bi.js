@@ -18,6 +18,8 @@ const BiView = {
     if (del) del.addEventListener('click', () => this.deleteCurrent());
     const sel = document.getElementById('bi-version');
     if (sel) sel.addEventListener('change', () => this.showReport(sel.value));
+    const ob = document.getElementById('bi-open-btn');
+    if (ob) ob.addEventListener('click', () => this.openFullscreen());
     const c1 = document.getElementById('bi-upload-close');
     if (c1) c1.addEventListener('click', () => this.closeUpload());
     const c2 = document.getElementById('bi-upload-cancel');
@@ -76,51 +78,49 @@ const BiView = {
   },
 
   renderEmpty() {
-    const v = document.getElementById('bi-viewer');
-    if (this._blobUrl) { URL.revokeObjectURL(this._blobUrl); this._blobUrl = null; }
-    const hint = this.isAdmin()
-      ? '右上の「ダッシュボードを追加・差替」から経営分析ダッシュボードの HTML をアップロードしてください。'
-      : '管理者がダッシュボードをアップロードすると、ここに表示されます。';
-    if (v) v.innerHTML = `<div class="flex items-center justify-center h-64 text-slate-400 text-sm text-center px-4">
-      経営分析ダッシュボードはまだありません。<br>${hint}</div>`;
+    this.currentId = null;
+    const ob = document.getElementById('bi-open-btn');
+    if (ob) ob.disabled = true;
     const del = document.getElementById('bi-delete-btn');
     if (del) del.classList.add('hidden');
+    const v = document.getElementById('bi-launch');
+    const hint = this.isAdmin()
+      ? '右上の「ダッシュボードを追加・差替」から経営分析ダッシュボードの HTML をアップロードしてください。'
+      : '管理者がダッシュボードをアップロードすると、ここから開けます。';
+    if (v) v.innerHTML = `<div class="text-center text-slate-400 text-sm py-8">経営分析ダッシュボードはまだありません。<br>${hint}</div>`;
   },
 
-  async showReport(id) {
+  // 選択中バージョンのランチャーを表示（埋め込みはせず、別タブの全画面で開く）
+  showReport(id) {
     if (!id) { this.renderEmpty(); return; }
     this.currentId = id;
     const sel = document.getElementById('bi-version');
     if (sel && sel.value !== String(id)) sel.value = String(id);
-    const v = document.getElementById('bi-viewer');
-    if (v) v.innerHTML = '<div class="flex items-center justify-center h-64 text-slate-400 text-sm">ダッシュボードを読み込み中…</div>';
-    try {
-      const html = await Sync.fetchManagementReportHtml(id);
-      if (!html) { this.renderEmpty(); return; }
-      this.renderIframe(html);
-      const del = document.getElementById('bi-delete-btn');
-      if (del) del.classList.toggle('hidden', !this.isAdmin());
-    } catch (e) {
-      if (v) v.innerHTML = `<div class="flex items-center justify-center h-64 text-red-600 text-sm">読み込み失敗: ${this.esc(e.message || e)}</div>`;
-    }
+    const ob = document.getElementById('bi-open-btn');
+    if (ob) ob.disabled = false;
+    const del = document.getElementById('bi-delete-btn');
+    if (del) del.classList.toggle('hidden', !this.isAdmin());
+    const r = this.reports.find(x => String(x.id) === String(id));
+    const v = document.getElementById('bi-launch');
+    if (!v) return;
+    const ver = r ? `${this.esc(this.fmtYM(r.year_month))}${r.title ? '（' + this.esc(r.title) + '）' : ''}` : '';
+    const updated = (r && r.uploaded_at) ? String(r.uploaded_at).slice(0, 10) : '';
+    v.innerHTML = `
+      <div class="text-center py-6">
+        <div class="text-5xl mb-3">📊</div>
+        <div class="text-lg font-bold text-slate-800 mb-1">${ver}</div>
+        ${updated ? `<div class="text-xs text-slate-400 mb-4">最終更新 ${this.esc(updated)}</div>` : '<div class="mb-4"></div>'}
+        <p class="text-sm text-slate-500 mb-5">ドリルダウン分析は<strong>別タブの全画面</strong>で開きます。<br>画面を広く使えるので、面→線→点の分析がしやすくなります。</p>
+        <button id="bi-open-btn-lg" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg text-sm font-semibold shadow">🖥 全画面で開く（別タブ）</button>
+      </div>`;
+    const big = document.getElementById('bi-open-btn-lg');
+    if (big) big.addEventListener('click', () => this.openFullscreen());
   },
 
-  renderIframe(html) {
-    const v = document.getElementById('bi-viewer');
-    if (!v) return;
-    if (this._blobUrl) { URL.revokeObjectURL(this._blobUrl); this._blobUrl = null; }
-    const blob = new Blob([html], { type: 'text/html' });
-    this._blobUrl = URL.createObjectURL(blob);
-    const iframe = document.createElement('iframe');
-    iframe.src = this._blobUrl;
-    // allow-same-origin は付けない（親セッション保護）。ダッシュボードのテーマ伝播は postMessage 対応済み。
-    iframe.setAttribute('sandbox', 'allow-scripts');
-    iframe.setAttribute('title', '経営分析ダッシュボード');
-    iframe.className = 'w-full';
-    // 全画面ダッシュボードなので高さを大きく確保
-    iframe.style.cssText = 'height: calc(100vh - 210px); min-height: 600px; border: 0; display: block;';
-    v.innerHTML = '';
-    v.appendChild(iframe);
+  // 別タブで全画面表示（?bi=<id>）。ツールの index.html が ?bi を検知し全画面iframeで描画。
+  openFullscreen() {
+    if (!this.currentId) return;
+    window.open(location.pathname + '?bi=' + encodeURIComponent(this.currentId), '_blank');
   },
 
   // ===== アップロード（admin専用）=====

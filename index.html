@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex, nofollow">
   <title>ベステラ 統合管理ツール</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="css/styles.css?v=202606261200">
+  <link rel="stylesheet" href="css/styles.css?v=202606261800">
 </head>
 <body class="bg-slate-50">
 
@@ -347,11 +347,10 @@
         <div class="bg-white rounded-lg shadow px-4 py-3 mb-3 flex items-center gap-3 flex-wrap">
           <span class="text-sm font-medium text-slate-700 mr-1">バージョン:</span>
           <select id="bi-version" class="border rounded px-3 py-1.5 text-sm bg-white min-w-[180px]"></select>
+          <button id="bi-open-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed">🖥 全画面で開く（別タブ）</button>
           <span class="text-xs text-slate-400 ml-auto">🔒 管理者・経営者・経理のみ閲覧</span>
         </div>
-        <div class="bg-white rounded-lg shadow overflow-hidden">
-          <div id="bi-viewer"></div>
-        </div>
+        <div id="bi-launch" class="bg-white rounded-lg shadow p-8"></div>
       </section>
 
       <!-- ========== 安全学習（段階E4a: 安全Eラーニング）========== -->
@@ -788,23 +787,29 @@
     </div>
   </div>
 
+  <!-- 経営分析ダッシュボード 全画面モード（?bi=<id> で別タブ表示）-->
+  <div id="bi-screen" class="hidden fixed inset-0 bg-white z-40">
+    <div id="bi-screen-body" class="w-full h-full"></div>
+    <button id="bi-screen-close" class="fixed top-2 right-3 z-50 bg-slate-900/80 hover:bg-slate-900 text-white text-xs rounded px-3 py-1.5 shadow">× 閉じる</button>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/crypto.js?v=202606261200"></script>
-  <script src="js/mock_data.js?v=202606261200"></script>
-  <script src="js/sync.js?v=202606261200"></script>
-  <script src="js/views/pool.js?v=202606261200"></script>
-  <script src="js/views/gantt.js?v=202606261200"></script>
-  <script src="js/views/dashboard.js?v=202606261200"></script>
+  <script src="js/crypto.js?v=202606261800"></script>
+  <script src="js/mock_data.js?v=202606261800"></script>
+  <script src="js/sync.js?v=202606261800"></script>
+  <script src="js/views/pool.js?v=202606261800"></script>
+  <script src="js/views/gantt.js?v=202606261800"></script>
+  <script src="js/views/dashboard.js?v=202606261800"></script>
   <script src="js/views/prospects.js?v=202606162000"></script>
-  <script src="js/views/member_add.js?v=202606261200"></script>
-  <script src="js/views/orgchart.js?v=202606261200"></script>
-  <script src="js/views/accounts.js?v=202606261200"></script>
-  <script src="js/views/management.js?v=202606261200"></script>
-  <script src="js/views/bi.js?v=202606261200"></script>
-  <script src="js/views/elearning.js?v=202606261200"></script>
-  <script src="js/views/board.js?v=202606261200"></script>
-  <script src="js/config.js?v=202606261200" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
-  <script src="js/app.js?v=202606261200"></script>
+  <script src="js/views/member_add.js?v=202606261800"></script>
+  <script src="js/views/orgchart.js?v=202606261800"></script>
+  <script src="js/views/accounts.js?v=202606261800"></script>
+  <script src="js/views/management.js?v=202606261800"></script>
+  <script src="js/views/bi.js?v=202606261800"></script>
+  <script src="js/views/elearning.js?v=202606261800"></script>
+  <script src="js/views/board.js?v=202606261800"></script>
+  <script src="js/config.js?v=202606261800" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
+  <script src="js/app.js?v=202606261800"></script>
   <!-- 統合管理ツールのペット「ピー」（多人数対応・ログイン済みadminのみ表示＝パイロット） -->
   <script src="js/pet-embed.js?v=202606251400"></script>
 </body>
