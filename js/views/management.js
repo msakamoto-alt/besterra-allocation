@@ -10,7 +10,7 @@
  *     触れられない。Chart.js CDN は opaque origin でも読み込み・実行できるので表示は問題ない。
  */
 const ManagementView = {
-  TYPE_LABELS: { annual: '年度経営分析レポート', analysis: '月次経営分析レポート', rf: 'ローリングフォーキャスト分析資料' },
+  TYPE_LABELS: { annual: '年度経営分析レポート', analysis: '月次経営分析レポート', rf: 'ローリングフォーキャスト分析資料', bi: '経営分析ダッシュボード' },
 
   reports: [],          // メタ一覧（html_content は含まない）
   currentType: 'analysis',
@@ -91,7 +91,8 @@ const ManagementView = {
     const sel = document.getElementById('mgmt-month');
     // 年度版は「対象年度」、月次/R/Fは「対象月」とラベルを切替
     const plabel = document.getElementById('mgmt-period-label');
-    if (plabel) plabel.textContent = this.currentType === 'annual' ? '対象年度:' : '対象月:';
+    if (plabel) plabel.textContent = this.currentType === 'annual' ? '対象年度:'
+      : (this.currentType === 'bi' ? 'バージョン:' : '対象月:');
     const list = this.reports
       .filter(r => r.report_type === this.currentType)
       .sort((a, b) => String(b.year_month).localeCompare(String(a.year_month)));
@@ -130,6 +131,10 @@ const ManagementView = {
     this.currentId = id;
     const sel = document.getElementById('mgmt-month');
     if (sel && sel.value !== String(id)) sel.value = String(id);
+    const delTop = document.getElementById('mgmt-delete-btn');
+    if (delTop) delTop.classList.toggle('hidden', !this.isAdmin());
+    // 経営分析BIは埋め込まず、別タブの全画面で開くランチャーを表示
+    if (this.currentType === 'bi') { this.renderBiLauncher(id); return; }
     const v = document.getElementById('mgmt-viewer');
     if (v) v.innerHTML = '<div class="flex items-center justify-center h-64 text-slate-400 text-sm">レポートを読み込み中…</div>';
     try {
@@ -157,6 +162,30 @@ const ManagementView = {
     iframe.style.cssText = 'height: calc(100vh - 290px); min-height: 480px; border: 0; display: block;';
     v.innerHTML = '';
     v.appendChild(iframe);
+  },
+
+  // 経営分析BI：埋め込まず、別タブの全画面（?bi=<id>）で開くランチャー
+  renderBiLauncher(id) {
+    const v = document.getElementById('mgmt-viewer');
+    if (!v) return;
+    if (this._blobUrl) { URL.revokeObjectURL(this._blobUrl); this._blobUrl = null; }
+    const r = this.reports.find(x => String(x.id) === String(id));
+    const ver = r ? `${this.esc(this.fmtYM(r.year_month))}${r.title ? '（' + this.esc(r.title) + '）' : ''}` : '';
+    const updated = (r && r.uploaded_at) ? String(r.uploaded_at).slice(0, 10) : '';
+    v.innerHTML = `<div class="text-center py-12 px-4">
+      <div class="text-5xl mb-3">📊</div>
+      <div class="text-lg font-bold text-slate-800 mb-1">${ver}</div>
+      ${updated ? `<div class="text-xs text-slate-400 mb-4">最終更新 ${this.esc(updated)}</div>` : '<div class="mb-4"></div>'}
+      <p class="text-sm text-slate-500 mb-5">ドリルダウン分析は<strong>別タブの全画面</strong>で開きます。<br>画面を広く使えるので、面→線→点の分析がしやすくなります。</p>
+      <button id="mgmt-bi-open" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg text-sm font-semibold shadow">🖥 全画面で開く（別タブ）</button>
+    </div>`;
+    const btn = document.getElementById('mgmt-bi-open');
+    if (btn) btn.addEventListener('click', () => this.openFullscreen());
+  },
+
+  openFullscreen() {
+    if (!this.currentId) return;
+    window.open(location.pathname + '?bi=' + encodeURIComponent(this.currentId), '_blank');
   },
 
   // ===== アップロード（admin専用）=====
