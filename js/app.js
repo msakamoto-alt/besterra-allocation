@@ -15,7 +15,6 @@ const App = {
     dash:       ['admin', 'editor', 'executive', 'manager', 'viewer', 'accounting'],  // Point2: 閲覧者(工事監督)は自分のダッシュボードのみ
     prospects:  ['admin', 'editor', 'executive', 'accounting'],
     management: ['admin', 'executive', 'accounting'],   // 段階E3: 経営機密。閲覧は管理者・経営者・経理のみ（RLSでも強制）
-    bi:         ['admin', 'executive', 'accounting'],   // 経営分析BI（PowerBI移行）。management_reports と同じ機密モデル
     elearning:  ['admin'],  // 当面 admin 限定（問題の精査が済むまで一般非公開）。精査後に全ロールへ戻す。
     orgchart:   ['admin', 'accounting'],  // 経理は閲覧のみ（階層編集は canEdit=admin/editor でガード＋RLSでも書込不可）
   },
@@ -40,7 +39,6 @@ const App = {
     OrgChartView.init();
     AccountsView.init();
     ManagementView.init();
-    BiView.init();
     ELearningView.init();
 
     // ?board=事務所名 のときは事務所モニターボードモード（監督軸をその事務所だけ全画面表示）
@@ -211,7 +209,6 @@ const App = {
     if (name === 'prospects') ProspectsView.refresh();
     if (name === 'orgchart') OrgChartView.refresh();
     if (name === 'management') ManagementView.refresh();
-    if (name === 'bi') BiView.refresh();
     if (name === 'elearning') ELearningView.refresh();
   },
 
@@ -277,7 +274,6 @@ const App = {
     try { ProspectsView.refresh(); } catch (e) { console.error('ProspectsView失敗:', e); }
     try { OrgChartView.refresh(); } catch (e) { console.error('OrgChartView失敗:', e); }
     try { ManagementView.refresh(); } catch (e) { console.error('ManagementView失敗:', e); }
-    try { BiView.refresh(); } catch (e) { console.error('BiView失敗:', e); }
     try { ELearningView.refresh(); } catch (e) { console.error('ELearningView失敗:', e); }
   },
 

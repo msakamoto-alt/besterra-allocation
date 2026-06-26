@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex, nofollow">
   <title>ベステラ 統合管理ツール</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="css/styles.css?v=202606261200">
+  <link rel="stylesheet" href="css/styles.css?v=202606251600">
 </head>
 <body class="bg-slate-50">
 
@@ -109,7 +109,6 @@
     <nav class="bg-slate-100 border-b border-slate-300 px-3 sm:px-6 overflow-x-auto">
       <div class="flex space-x-1 w-max">
         <button class="tab-btn px-5 py-3 font-medium" data-tab="management">経営レポート</button>
-        <button class="tab-btn px-5 py-3 font-medium" data-tab="bi">経営分析</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="pool">監督リスト（3階層）</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="gantt">現場人員配置</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="dash">監督ダッシュボード</button>
@@ -332,25 +331,6 @@
         </div>
         <div class="bg-white rounded-lg shadow overflow-hidden">
           <div id="mgmt-viewer"></div>
-        </div>
-      </section>
-
-      <!-- ========== タブ：経営分析（PowerBI移行ダッシュボード・bi）========== -->
-      <section id="tab-bi" class="tab-panel hidden">
-        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h2 class="text-xl font-bold">経営分析</h2>
-          <div class="flex items-center gap-2">
-            <button id="bi-delete-btn" class="bi-admin-only hidden bg-red-100 hover:bg-red-200 text-red-700 border border-red-300 px-3 py-1.5 rounded text-sm">表示中を削除</button>
-            <button id="bi-upload-btn" class="bi-admin-only hidden bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded text-sm font-medium">+ ダッシュボードを追加・差替</button>
-          </div>
-        </div>
-        <div class="bg-white rounded-lg shadow px-4 py-3 mb-3 flex items-center gap-3 flex-wrap">
-          <span class="text-sm font-medium text-slate-700 mr-1">バージョン:</span>
-          <select id="bi-version" class="border rounded px-3 py-1.5 text-sm bg-white min-w-[180px]"></select>
-          <span class="text-xs text-slate-400 ml-auto">🔒 管理者・経営者・経理のみ閲覧</span>
-        </div>
-        <div class="bg-white rounded-lg shadow overflow-hidden">
-          <div id="bi-viewer"></div>
         </div>
       </section>
 
@@ -710,36 +690,6 @@
       </div>
     </div>
 
-    <!-- 経営分析ダッシュボード アップロード（admin専用）-->
-    <div id="bi-upload-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
-        <div class="flex justify-between items-start mb-4">
-          <h3 class="text-lg font-bold text-slate-900">ダッシュボードを追加・差替</h3>
-          <button id="bi-upload-close" class="text-slate-400 hover:text-slate-700 text-2xl leading-none">×</button>
-        </div>
-        <div class="space-y-3">
-          <div>
-            <label class="block text-xs text-slate-500 mb-1">対象月（ビルド月） <span class="text-red-500">*</span></label>
-            <input type="month" id="bi-up-month" class="border rounded w-full px-2 py-1.5 text-sm">
-          </div>
-          <div>
-            <label class="block text-xs text-slate-500 mb-1">タイトル（任意）</label>
-            <input type="text" id="bi-up-title" class="border rounded w-full px-2 py-1.5 text-sm" placeholder="例：経営分析ダッシュボード v2（6レポート）">
-          </div>
-          <div>
-            <label class="block text-xs text-slate-500 mb-1">HTMLファイル <span class="text-red-500">*</span></label>
-            <input type="file" id="bi-up-file" accept=".html,.htm,text/html" class="border rounded w-full px-2 py-1.5 text-sm">
-            <p class="text-xs text-slate-400 mt-1">自己完結の 経営分析ダッシュボード（PowerBI移行）の .html を選択。同じ対象月は上書きされます。サイズが大きいため保存に時間がかかる場合があります。</p>
-          </div>
-          <div id="bi-up-status" class="text-xs min-h-[16px]"></div>
-        </div>
-        <div class="mt-5 flex justify-end gap-2">
-          <button id="bi-upload-cancel" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded text-sm">キャンセル</button>
-          <button id="bi-upload-save" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded text-sm font-medium">保存</button>
-        </div>
-      </div>
-    </div>
-
     <footer class="text-center text-xs text-slate-500 py-6 border-t">
       統合管理ツール v0.8 / Supabase 連携
       （閲覧は公開・編集はログイン制／参照データはSheets編集→同期）
@@ -789,22 +739,21 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/crypto.js?v=202606261200"></script>
-  <script src="js/mock_data.js?v=202606261200"></script>
-  <script src="js/sync.js?v=202606261200"></script>
-  <script src="js/views/pool.js?v=202606261200"></script>
-  <script src="js/views/gantt.js?v=202606261200"></script>
-  <script src="js/views/dashboard.js?v=202606261200"></script>
+  <script src="js/crypto.js?v=202606251600"></script>
+  <script src="js/mock_data.js?v=202606251600"></script>
+  <script src="js/sync.js?v=202606251600"></script>
+  <script src="js/views/pool.js?v=202606251600"></script>
+  <script src="js/views/gantt.js?v=202606251600"></script>
+  <script src="js/views/dashboard.js?v=202606251600"></script>
   <script src="js/views/prospects.js?v=202606162000"></script>
-  <script src="js/views/member_add.js?v=202606261200"></script>
-  <script src="js/views/orgchart.js?v=202606261200"></script>
-  <script src="js/views/accounts.js?v=202606261200"></script>
-  <script src="js/views/management.js?v=202606261200"></script>
-  <script src="js/views/bi.js?v=202606261200"></script>
-  <script src="js/views/elearning.js?v=202606261200"></script>
-  <script src="js/views/board.js?v=202606261200"></script>
-  <script src="js/config.js?v=202606261200" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
-  <script src="js/app.js?v=202606261200"></script>
+  <script src="js/views/member_add.js?v=202606251600"></script>
+  <script src="js/views/orgchart.js?v=202606251600"></script>
+  <script src="js/views/accounts.js?v=202606251600"></script>
+  <script src="js/views/management.js?v=202606251600"></script>
+  <script src="js/views/elearning.js?v=202606251600"></script>
+  <script src="js/views/board.js?v=202606251600"></script>
+  <script src="js/config.js?v=202606251600" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
+  <script src="js/app.js?v=202606251600"></script>
   <!-- 統合管理ツールのペット「ピー」（多人数対応・ログイン済みadminのみ表示＝パイロット） -->
   <script src="js/pet-embed.js?v=202606251400"></script>
 </body>
