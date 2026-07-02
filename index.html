@@ -99,6 +99,7 @@
         <span id="role-badge" class="hidden bg-white/20 text-white font-semibold px-2.5 py-1 rounded">—</span>
         <button id="org-toggle" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg>組織図</button>
         <button id="account-toggle" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>アカウント</button>
+        <button id="audit-toggle" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>監査ログ</button>
         <button id="sync-button" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition">同期</button>
         <span class="text-white/80">最終同期 <span id="last-sync">未同期</span></span>
         <button id="logout-button" class="text-white/85 hover:text-white underline">ログアウト</button>
@@ -652,6 +653,63 @@
       </div>
     </div>
 
+    <!-- ========== 監査ログモーダル（admin専用・記録はDBトリガー＝add_audit_logs.sql）========== -->
+    <div id="audit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div class="bg-white rounded-lg shadow-xl max-w-5xl w-full mx-4 p-6">
+        <div class="flex justify-between items-start mb-4">
+          <div>
+            <h3 class="text-lg font-bold text-slate-900">監査ログ（編集履歴）</h3>
+            <p class="text-xs text-slate-500 mt-0.5">誰が・いつ・どのデータを・どう編集したかの自動記録（新しい順）</p>
+          </div>
+          <button id="audit-modal-close" class="text-slate-400 hover:text-slate-700 text-2xl leading-none">×</button>
+        </div>
+
+        <!-- フィルタ -->
+        <div class="flex items-center gap-2 mb-3 flex-wrap">
+          <select id="audit-filter-table" class="border rounded px-2 py-1.5 text-sm">
+            <option value="">すべての対象</option>
+            <option value="assignment_overrides">配置（現場人員配置）</option>
+            <option value="prospects">見込み案件</option>
+            <option value="project_status_overrides">案件の修正</option>
+            <option value="employee_tiers">階層・稼働形態</option>
+            <option value="employee_absences">不在予定</option>
+            <option value="management_reports">経営レポート</option>
+            <option value="quiz_questions">安全学習の問題</option>
+            <option value="learning_goals">学習目標</option>
+          </select>
+          <select id="audit-filter-op" class="border rounded px-2 py-1.5 text-sm">
+            <option value="">すべての操作</option>
+            <option value="INSERT">登録</option>
+            <option value="UPDATE">更新</option>
+            <option value="DELETE">削除</option>
+          </select>
+          <div class="flex-1"></div>
+          <button id="audit-csv" class="text-xs text-blue-600 hover:underline">CSVダウンロード（表示中の分）</button>
+        </div>
+
+        <!-- 一覧 -->
+        <div class="overflow-auto max-h-[60vh] border rounded">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-100 sticky top-0">
+              <tr>
+                <th class="px-3 py-2 text-left whitespace-nowrap">日時</th>
+                <th class="px-3 py-2 text-left whitespace-nowrap">操作者</th>
+                <th class="px-3 py-2 text-left whitespace-nowrap">対象</th>
+                <th class="px-3 py-2 text-center whitespace-nowrap">操作</th>
+                <th class="px-3 py-2 text-left whitespace-nowrap">対象キー</th>
+                <th class="px-3 py-2 text-left">変更内容</th>
+              </tr>
+            </thead>
+            <tbody id="audit-table-body"></tbody>
+          </table>
+        </div>
+        <div class="flex items-center justify-between mt-2">
+          <div id="audit-status" class="text-xs text-slate-500"></div>
+          <button id="audit-load-more" class="hidden text-xs text-blue-600 hover:underline">さらに読み込む（100件）</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ========== 経営レポート アップロードモーダル（段階E3: admin専用）========== -->
     <div id="mgmt-upload-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
@@ -741,7 +799,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/crypto.js?v=202606251600"></script>
   <script src="js/mock_data.js?v=202606251600"></script>
-  <script src="js/sync.js?v=202606251600"></script>
+  <script src="js/sync.js?v=202607021028"></script>
   <script src="js/views/pool.js?v=202606251600"></script>
   <script src="js/views/gantt.js?v=202606251600"></script>
   <script src="js/views/dashboard.js?v=202606251600"></script>
@@ -749,11 +807,12 @@
   <script src="js/views/member_add.js?v=202606251600"></script>
   <script src="js/views/orgchart.js?v=202606251600"></script>
   <script src="js/views/accounts.js?v=202606251600"></script>
+  <script src="js/views/audit.js?v=202607021028"></script>
   <script src="js/views/management.js?v=202606251600"></script>
   <script src="js/views/elearning.js?v=202606251600"></script>
   <script src="js/views/board.js?v=202606251600"></script>
   <script src="js/config.js?v=202606251600" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
-  <script src="js/app.js?v=202606251600"></script>
+  <script src="js/app.js?v=202607021028"></script>
   <!-- 統合管理ツールのペット「ピー」（多人数対応・ログイン済みadminのみ表示＝パイロット） -->
   <script src="js/pet-embed.js?v=202606251400"></script>
 </body>

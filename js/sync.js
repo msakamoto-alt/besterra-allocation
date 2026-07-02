@@ -1562,6 +1562,20 @@ const Sync = {
     return { ok: true };
   },
 
+  // ===== 監査ログ（audit_logs・admin のみ＝RLSでもサーバー強制）=====
+  // 記録はDBトリガー（add_audit_logs.sql）が自動で行う。ここは閲覧のみ。
+  // beforeId より古いログを limit 件（id降順＝新しい順）。
+  async fetchAuditLogs({ table = '', op = '', beforeId = null, limit = 100 } = {}) {
+    const sb = this.getSupabase();
+    let q = sb.from('audit_logs').select('*').order('id', { ascending: false }).limit(limit);
+    if (table) q = q.eq('table_name', table);
+    if (op) q = q.eq('op', op);
+    if (beforeId) q = q.lt('id', beforeId);
+    const res = await q;
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return res.data || [];
+  },
+
   // ===== 段階E4a: 安全Eラーニング（quiz_questions / quiz_answers）=====
   // 出題は RLS で「公開問題は全員・非公開は admin のみ」。解答ログは本人INSERT・本人/管理職SELECT。
 
