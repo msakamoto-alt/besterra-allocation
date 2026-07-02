@@ -26,6 +26,9 @@ const GanttView = {
   currentProjectSort: 'start',
   currentProjectSortReversed: false,
 
+  // 現場軸の検索（工事名・工事番号・客先の部分一致で絞り込み。空＝全表示）
+  projectSearchQuery: '',
+
   // 資格軸の区分フィルタ（複数選択可・既定は全表示＝従来どおり）
   qualCategoryFilter: new Set(['現場監督', '準現場監督', '監督サポート']),
 
@@ -185,6 +188,28 @@ const GanttView = {
       reverseBtn.textContent = this.effectiveProjectSortDir() === 'asc' ? '↑' : '↓';
       reverseBtn.title = `現在: ${this.effectiveProjectSortDir() === 'asc' ? '昇順' : '降順'}（クリックで反転）`;
     }
+    // 現場検索は現場軸のみ表示。✕ボタンは入力があるときだけ
+    const searchWrap = document.getElementById('gantt-project-search-wrap');
+    if (searchWrap) searchWrap.style.display = (this.currentAxis === 'project') ? '' : 'none';
+    const searchClear = document.getElementById('gantt-project-search-clear');
+    if (searchClear) searchClear.classList.toggle('hidden', !String(this.projectSearchQuery || '').trim());
+  },
+
+  // 検索用の文字正規化：全角/半角ゆらぎ（ＡＢＣ→ABC等）を吸収し、大小文字・空白を無視
+  normSearchText(s) {
+    return String(s == null ? '' : s).normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+  },
+
+  // 現場軸の検索絞り込み（工事名・工事番号・客先の部分一致）。件数表示も更新する
+  applyProjectSearch(projects) {
+    const q = this.normSearchText(this.projectSearchQuery);
+    const hit = !q ? projects : projects.filter(p =>
+      this.normSearchText(p.name).includes(q) ||
+      this.normSearchText(p.project_id).includes(q) ||
+      this.normSearchText(p.customer).includes(q));
+    const cntEl = document.getElementById('gantt-project-search-count');
+    if (cntEl) cntEl.textContent = q ? `${hit.length}/${projects.length}件` : '';
+    return hit;
   },
 
   // 資格軸の区分トグル：資格軸のときのみ表示し、選択状態を色で反映
@@ -368,6 +393,26 @@ const GanttView = {
       sortReverseBtn.addEventListener('click', () => {
         this.currentProjectSortReversed = !this.currentProjectSortReversed;
         this.updateProjectSortToolbar();
+        this.refresh();
+      });
+    }
+
+    // 現場軸 検索ボックス（工事名・工事番号・客先の部分一致。入力のたび軽いデバウンスで再描画）
+    const searchInput = document.getElementById('gantt-project-search');
+    if (searchInput) {
+      searchInput.value = this.projectSearchQuery;
+      let searchTimer = null;
+      searchInput.addEventListener('input', () => {
+        this.projectSearchQuery = searchInput.value;
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => this.refresh(), 200);
+      });
+    }
+    const searchClear = document.getElementById('gantt-project-search-clear');
+    if (searchClear) {
+      searchClear.addEventListener('click', () => {
+        this.projectSearchQuery = '';
+        if (searchInput) { searchInput.value = ''; searchInput.focus(); }
         this.refresh();
       });
     }
@@ -1103,8 +1148,12 @@ const GanttView = {
       return this.clipRange(s, e, cells);
     });
 
-    // 並び替え（現場軸のみ・現在のソートキーと方向に従う）
-    const visibleProjects = this.sortProjects(visibleProjectsRaw, assignments);
+    // 検索絞り込み（工事名・工事番号・客先）→ 並び替え（現在のソートキーと方向に従う）
+    const searchedProjects = this.applyProjectSearch(visibleProjectsRaw);
+    if (searchedProjects.length === 0 && String(this.projectSearchQuery || '').trim()) {
+      return `<p class="p-4 text-slate-500">「${this.esc(this.projectSearchQuery)}」に一致する現場がありません（表示期間・完成/見込みトグルもご確認ください）</p>`;
+    }
+    const visibleProjects = this.sortProjects(searchedProjects, assignments);
 
     let html = `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>`;
     visibleProjects.forEach(p => {

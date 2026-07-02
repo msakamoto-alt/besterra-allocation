@@ -223,6 +223,15 @@
             見込み案件も表示
           </label>
           <span class="text-xs text-slate-500 ml-auto" id="gantt-today-label"></span>
+          <span id="gantt-project-search-wrap" class="w-full flex items-center gap-1.5" style="display:none">
+            <span class="text-sm text-slate-600">現場検索:</span>
+            <span class="relative inline-flex items-center">
+              <input type="text" id="gantt-project-search" placeholder="工事名・工事番号・客先で絞り込み"
+                class="border rounded pl-2 pr-7 py-1 text-sm w-72">
+              <button id="gantt-project-search-clear" class="hidden absolute right-1.5 text-slate-400 hover:text-slate-600 leading-none" title="クリア">✕</button>
+            </span>
+            <span id="gantt-project-search-count" class="text-xs text-slate-500"></span>
+          </span>
         </div>
         <p class="text-sm text-slate-600 mb-2" id="gantt-description">各現場の工期と配置されている現場監督を時系列で可視化。月ヘッダ「⌄」クリックで該当月を日単位にドリルダウン。</p>
         <div class="bg-white rounded-lg shadow">
@@ -801,7 +810,7 @@
   <script src="js/mock_data.js?v=202606251600"></script>
   <script src="js/sync.js?v=202607021028"></script>
   <script src="js/views/pool.js?v=202606251600"></script>
-  <script src="js/views/gantt.js?v=202606251600"></script>
+  <script src="js/views/gantt.js?v=202607021332"></script>
   <script src="js/views/dashboard.js?v=202606251600"></script>
   <script src="js/views/prospects.js?v=202606162000"></script>
   <script src="js/views/member_add.js?v=202606251600"></script>
