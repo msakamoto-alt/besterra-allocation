@@ -188,9 +188,9 @@ const GanttView = {
       reverseBtn.textContent = this.effectiveProjectSortDir() === 'asc' ? '↑' : '↓';
       reverseBtn.title = `現在: ${this.effectiveProjectSortDir() === 'asc' ? '昇順' : '降順'}（クリックで反転）`;
     }
-    // 現場検索は現場軸のみ表示。✕ボタンは入力があるときだけ
+    // 現場検索は現場軸・事務所軸で表示。✕ボタンは入力があるときだけ
     const searchWrap = document.getElementById('gantt-project-search-wrap');
-    if (searchWrap) searchWrap.style.display = (this.currentAxis === 'project') ? '' : 'none';
+    if (searchWrap) searchWrap.style.display = (this.currentAxis === 'project' || this.currentAxis === 'office') ? '' : 'none';
     const searchClear = document.getElementById('gantt-project-search-clear');
     if (searchClear) searchClear.classList.toggle('hidden', !String(this.projectSearchQuery || '').trim());
   },
@@ -1266,11 +1266,17 @@ const GanttView = {
     const todayMarkerHtml = this.todayMarker(cells);
 
     // 表示範囲・完成/見込みトグルでフィルタ（現場軸と同条件）
-    const visible = projects.filter(p => {
+    const visibleRaw = projects.filter(p => {
       if (p.completed && !this.showCompleted) return false;
       if (p.prospect && !this.showProspects) return false;
       return this.clipRange(this.parseDate(p.start), this.parseDate(p.end), cells);
     });
+
+    // 検索絞り込み（現場軸と共通：工事名・工事番号・客先）。ヒットしない事務所グループは消える
+    const visible = this.applyProjectSearch(visibleRaw);
+    if (visible.length === 0 && String(this.projectSearchQuery || '').trim()) {
+      return `<p class="p-4 text-slate-500">「${this.esc(this.projectSearchQuery)}」に一致する現場がありません（表示期間・完成/見込みトグルもご確認ください）</p>`;
+    }
 
     // 事務所（p.dept＝CL営業管轄）でグルーピング
     const byOffice = {};

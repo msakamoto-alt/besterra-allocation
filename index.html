@@ -193,6 +193,7 @@
           <input type="month" id="gantt-end" class="border rounded px-2 py-1 text-sm">
           <button id="gantt-today" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-sm font-medium">今日へ</button>
           <button id="gantt-reset" class="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded text-sm">期間リセット</button>
+          <span class="text-xs text-slate-500" id="gantt-today-label"></span>
           <span id="gantt-project-sort-wrap" class="ml-2 inline-flex items-center gap-1">
             <span class="text-sm text-slate-600">並び替え:</span>
             <select id="gantt-project-sort" class="border rounded px-2 py-1 text-sm bg-white">
@@ -222,7 +223,6 @@
             <input type="checkbox" id="gantt-show-prospects" class="rounded border-slate-400">
             見込み案件も表示
           </label>
-          <span class="text-xs text-slate-500 ml-auto" id="gantt-today-label"></span>
           <span id="gantt-project-search-wrap" class="w-full flex items-center gap-1.5" style="display:none">
             <span class="text-sm text-slate-600">現場検索:</span>
             <span class="relative inline-flex items-center">
@@ -810,7 +810,7 @@
   <script src="js/mock_data.js?v=202606251600"></script>
   <script src="js/sync.js?v=202607021028"></script>
   <script src="js/views/pool.js?v=202606251600"></script>
-  <script src="js/views/gantt.js?v=202607021332"></script>
+  <script src="js/views/gantt.js?v=202607021345"></script>
   <script src="js/views/dashboard.js?v=202606251600"></script>
   <script src="js/views/prospects.js?v=202606162000"></script>
   <script src="js/views/member_add.js?v=202606251600"></script>
