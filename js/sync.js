@@ -1131,10 +1131,12 @@ const Sync = {
       }
       return {
         emp_no: String(r['社員番号'] || '').trim(),
-        last_name: String(r['姓'] || '').trim(),
-        first_name: String(r['名'] || '').trim(),
-        kana_last: String(r['姓（ヨミガナ）'] || '').trim(),
-        kana_first: String(r['名（ヨミガナ）'] || '').trim(),
+        // SmartHR名簿の列名変更に後方互換で対応：新「ビジネスネーム：姓/名」→旧「姓/名」の順にフォールバック。
+        // どちらか一方でも来れば氏名が埋まる（列名変更で組織図が氏名空になり全消えする事故を防ぐ）。
+        last_name: String(r['ビジネスネーム：姓'] || r['姓'] || '').trim(),
+        first_name: String(r['ビジネスネーム：名'] || r['名'] || '').trim(),
+        kana_last: String(r['ビジネスネーム：姓（ヨミガナ）'] || r['姓（ヨミガナ）'] || '').trim(),
+        kana_first: String(r['ビジネスネーム：名（ヨミガナ）'] || r['名（ヨミガナ）'] || '').trim(),
         email: String(r['メールアドレス'] || '').trim(),
         business: String(r['業務内容'] || '').trim(),
         hire_date: String(r['入社年月日'] || '').trim(),
