@@ -94,11 +94,6 @@ const Sync = {
     return null;
   },
 
-  async fetchSheet(sheetName) {
-    const text = await this.fetchSheetRaw(sheetName);
-    return this.parseCSV(text);
-  },
-
   parseCSV(text) {
     const lines = text.trim().split(/\r?\n/);
     if (lines.length === 0) return [];
@@ -453,14 +448,6 @@ const Sync = {
     return true;
   },
 
-  // 氏名先頭の絵文字から資格を判定（🔴=監理技術者 / 🔵=主任技術者）
-  detectQualMarker(rawName) {
-    if (!rawName) return null;
-    if (rawName.includes('🔴')) return 'Q-DED';   // 監理技術者
-    if (rawName.includes('🔵')) return 'Q-MAIN';  // 主任技術者
-    return null;
-  },
-
   // employees の F列「資格」フィールドから資格マスタと employee_qualifications を派生
   // 複数資格はカンマ/読点/改行/スペース/スラッシュで区切り
   // 既存マスタに無い資格名は自動的にマスタへ追加（社内認定種別として）
@@ -571,45 +558,6 @@ const Sync = {
     if (days <= 30) return { status: 'warn30', days, label: `残${days}日` };
     if (days <= 90) return { status: 'warn90', days, label: `残${days}日` };
     return { status: 'ok', days, label: `残${days}日` };
-  },
-
-  // Salesforce の工事部員絵文字から employee_qualifications を派生
-  // 既存の employee_qualifications にマージ（同一 emp_id × qual_id は重複なし）
-  deriveQualificationsFromSalesforce(sfRows, employees, existingEqs) {
-    const empByName = {};
-    (employees || []).forEach(e => {
-      const key = this.normEmpKey(e.name);
-      if (key) empByName[key] = e;
-    });
-
-    // 各人の所有資格を集約
-    const empQualSet = {};
-    sfRows.forEach(r => {
-      const qualId = this.detectQualMarker(r.emp_name_raw);
-      if (!qualId) return;
-      const empKey = this.normEmpKey(r.emp_name);
-      const emp = empByName[empKey];
-      if (!emp) return;
-      const k = emp.id + '|' + qualId;
-      empQualSet[k] = { emp_id: emp.id, qual_id: qualId };
-    });
-
-    // 既存に無い分だけ追加
-    const existing = new Set((existingEqs || []).map(eq => eq.emp_id + '|' + eq.qual_id));
-    const merged = [...(existingEqs || [])];
-    Object.values(empQualSet).forEach(rec => {
-      const key = rec.emp_id + '|' + rec.qual_id;
-      if (!existing.has(key)) {
-        merged.push({
-          emp_id: rec.emp_id,
-          qual_id: rec.qual_id,
-          acquired: null,
-          expiry: null,
-          source: 'salesforce_marker',
-        });
-      }
-    });
-    return merged;
   },
 
   // 見込み案件（prospects v2）から projects を派生
@@ -954,26 +902,14 @@ const Sync = {
     return working;
   },
 
-  // GAS Web App に POST（配属期間 override の upsert / delete）
-  // Content-Type を text/plain にして CORS preflight を回避
+  // 書込エントリポイント（配属期間 override / 見込み案件 / 案件状態 の upsert / delete）。
+  // supabase-js で直接書き込む。RLS により書込は authenticated（編集ログイン済み）のみ許可される。
+  // ※旧GAS(Apps Script)フォールバックは 2026-07 刷新で削除（Supabase移行済のため）。
   async postOverride(payload) {
-    // 段階B: USE_SUPABASE のときは supabase-js で直接書き込む（GAS不要）。
-    // RLS により書込は authenticated（編集ログイン済み）のみ許可される。
-    if (this.USE_SUPABASE && this.SUPABASE_URL && this.SUPABASE_ANON_KEY) {
-      return await this.writeToSupabase(payload);
+    if (!(this.USE_SUPABASE && this.SUPABASE_URL && this.SUPABASE_ANON_KEY)) {
+      throw new Error('Supabase 未設定です（config.js を確認）');
     }
-    // 従来：Apps Script Web App 経由
-    if (!this.OVERRIDE_API_URL) throw new Error('OVERRIDE_API_URL が未設定です（config.js を確認）');
-    const body = JSON.stringify({ ...payload, token: this.OVERRIDE_TOKEN });
-    const response = await fetch(this.OVERRIDE_API_URL, {
-      method: 'POST',
-      body,
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    });
-    if (!response.ok) throw new Error(`API応答エラー: ${response.status}`);
-    const json = await response.json();
-    if (!json.ok) throw new Error(`API失敗: ${json.error || 'unknown'}`);
-    return json;
+    return await this.writeToSupabase(payload);
   },
 
   // 'P' + 12桁hex（GAS uuidShort 相当・新規 prospect の採番）
@@ -1098,10 +1034,9 @@ const Sync = {
     throw new Error('unknown_action: ' + action);
   },
 
-  // 編集権限（段階B）：USE_SUPABASE のときは編集ログイン済みか、従来は API設定有無で判定
+  // 編集権限：編集ログイン済み（admin / editor）のみ true
   canEdit() {
-    if (this.USE_SUPABASE) return this.role === 'admin' || this.role === 'editor';
-    return !!(this.OVERRIDE_API_URL && this.OVERRIDE_TOKEN);
+    return this.role === 'admin' || this.role === 'editor';
   },
 
   // 参照系テーブル（Sheetsで編集する3つ）の列ホワイトリスト。
@@ -1229,8 +1164,9 @@ const Sync = {
       });
       this.processRawTables();
     } else {
-      this.loadMockData();
-      console.info('SHEET_ID未設定のためモックデータで動作中');
+      // Supabase も SHEET_ID も未設定＝設定不備。空キャッシュのまま警告する
+      // （旧 loadMockData のモック起動経路は削除済み。config.js は常にリポジトリに存在する）。
+      console.error('config.js 未設定: SUPABASE_URL / SHEET_ID のいずれも無いため データを取得できません');
     }
     this.lastSync = new Date();
     return this.cache;
@@ -1916,17 +1852,5 @@ const Sync = {
           console.warn(`⚠ 進行中・今後の案件で氏名が社員名簿と一致しない担当が ${unresolved.length} 件あります（退職者が現役案件に残っている等。監督軸・資格軸・空き判定に出ません）。詳細: Sync.auditUnresolvedAssignments()`, unresolved);
         }
       } catch (e) { /* 監査は副作用なし。失敗しても本処理は継続 */ }
-  },
-
-  loadMockData() {
-    this.cache = {
-      employees: MOCK_DATA.employees,
-      projects: MOCK_DATA.projects,
-      assignments: MOCK_DATA.assignments,
-      qualifications: MOCK_DATA.qualifications,
-      employee_qualifications: MOCK_DATA.employee_qualifications,
-      departments: [],
-      salesforce_imports: [],
-    };
   },
 };
