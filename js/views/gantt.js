@@ -313,7 +313,7 @@ const GanttView = {
     const closeFn = () => { modal.classList.add('hidden'); this.exitEditMode(); };
     document.getElementById('gantt-modal-close').addEventListener('click', closeFn);
     document.getElementById('gantt-modal-close-btn').addEventListener('click', closeFn);
-    modal.addEventListener('click', (e) => { if (e.target === modal) closeFn(); });
+    Util.bindModalClose(modal, closeFn);
 
     // 編集モード切替
     document.getElementById('gantt-modal-edit-btn').addEventListener('click', () => this.enterEditMode());
@@ -745,15 +745,7 @@ const GanttView = {
   },
 
   // ISO yyyy-mm-dd への変換（date input 用）
-  toIsoDate(s) {
-    if (!s) return '';
-    const d = new Date(String(s).replace(/\//g, '-'));
-    if (isNaN(d)) return '';
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  },
+  toIsoDate(s) { return Util.toIsoDate(s); },
 
   // 編集モードへ（人員タイプに応じて役割セレクト選択肢を切替）
   enterEditMode() {
@@ -858,7 +850,7 @@ const GanttView = {
     saveBtn.disabled = true;
 
     // Salesforce 由来表記（YYYY/MM/DD）に統一して保存
-    const toSlash = s => s ? String(s).replace(/-/g, '/') : '';
+    const toSlash = s => Util.toSlash(s);
     const joinSlash = toSlash(join);
     const endSlash = toSlash(end);
     const prepSlash = toSlash(prep);  // 空欄なら '' ＝ 準備期間クリア
@@ -1032,10 +1024,7 @@ const GanttView = {
     }
   },
 
-  esc(text) {
-    if (text == null) return '';
-    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  },
+  esc(text) { return Util.esc(text); },
 
   // ===== プロジェクト状態 override（completed フラグの手動上書き）=====
 
@@ -1223,7 +1212,7 @@ const GanttView = {
     let html = '<tr class="border-t">' +
       `<td class="p-2 sticky left-0 bg-white border-r z-10 align-top" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
         `<div class="font-medium text-sm">${this.esc(p.name)}${this.contractBadge(p.contract_type)}${statusBadge}</div>` +
-        `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ¥${(p.amount / 1e6).toFixed(1)}M / ${this.esc(p.dept)}</div>` +
+        `<div class="text-xs text-slate-500">${this.esc(p.project_id)} / ${Util.fmtMillions(p.amount)} / ${this.esc(p.dept)}</div>` +
         `<div class="text-xs mt-1">${(labelMembers || dispatchNote || placeholderNote) ? (labelMembers + dispatchNote + placeholderNote) : '<span class="text-slate-400">配置未定・不足</span>'}</div>` +
         addBtn + statusBtn +
       '</td>' +
@@ -1309,7 +1298,7 @@ const GanttView = {
       html += '<tr class="bg-slate-800 text-white">' +
         `<td class="p-2 sticky left-0 bg-slate-800 border-r z-10" style="width:${this.LABEL_WIDTH}px;min-width:${this.LABEL_WIDTH}px">` +
           `<div class="font-bold text-sm">${this.esc(office)}</div>` +
-          `<div class="text-xs text-slate-300">管轄工事 ${projs.length}件 / ¥${(amount / 1e6).toFixed(1)}M</div>` +
+          `<div class="text-xs text-slate-300">管轄工事 ${projs.length}件 / ${Util.fmtMillions(amount)}</div>` +
         '</td>' +
         `<td colspan="${colCount}" style="height:36px; padding:0; background:#1e293b"></td>` +
       '</tr>';

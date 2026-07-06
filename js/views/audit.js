@@ -56,7 +56,7 @@ const AuditView = {
     const close = document.getElementById('audit-modal-close');
     if (close) close.addEventListener('click', () => this.close());
     const modal = document.getElementById('audit-modal');
-    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) this.close(); });
+    Util.bindModalClose(modal, () => this.close());
     const ft = document.getElementById('audit-filter-table');
     if (ft) ft.addEventListener('change', () => this.reload());
     const fo = document.getElementById('audit-filter-op');
@@ -112,10 +112,7 @@ const AuditView = {
     if (el) el.textContent = msg || '';
   },
 
-  esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"]/g,
-      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  },
+  esc(s) { return Util.esc(s); },
 
   fmtAt(iso) {
     const d = new Date(iso);
@@ -126,9 +123,8 @@ const AuditView = {
 
   // 操作者：メール→SmartHR名簿(organization)一致で氏名を補足表示
   userLabel(email) {
-    const e = String(email || '').trim().toLowerCase();
-    if (!e) return '（不明）';
-    const org = (Sync.cache.organization || []).find(o => String(o.email || '').trim().toLowerCase() === e);
+    if (!String(email || '').trim()) return '（不明）';
+    const org = Util.orgByEmail(email);
     return org && org.name ? `${org.name}（${email}）` : String(email);
   },
 
