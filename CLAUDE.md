@@ -3,6 +3,8 @@
 ベステラ社内の経営管理プラットフォーム。監督リスト・現場人員配置（ガント）・監督ダッシュボード・
 見込み案件・経営レポート・安全学習・組織図・アカウント管理を1枚のHTMLで提供する。
 本番 = GitHub Pages（mainへのpush＝即デプロイ）。バックエンド = Supabase（Auth＋RLS）。
+**作業拠点 = Box**（2026-07-06 PC移行で移設）: `C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\besterra-allocation`
+検証スクリプトは `C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\`・刷新前バックアップは `保全\` 配下。
 
 ## アーキテクチャ宣言（変更禁止事項）
 
@@ -57,9 +59,9 @@ config.js が Sync に実値を代入してから App.init が走る。分割フ
 ## 検証（改修後は必ず実行）
 
 ```
-python C:\Users\sakamoto\verify_all.py     # 10本直列・基準線 = 124 PASS / 0 FAIL
+python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_all.py"     # 10本直列・基準線 = 124 PASS / 0 FAIL
 ```
-- 基準線: `C:\Users\sakamoto\verify_baseline.txt`（2026-07-06確立）
+- 基準線: `C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_baseline.txt`（2026-07-06確立）
 - 除外: verify_bi_tab.py（feature/bi-tab前提）・verify_prospects.py（CSV検査）・verify_dashboard_sandbox.py（別プロジェクト）
 - デプロイ時は index.html の変更したscriptタグの `?v=` をタイムスタンプ更新（キャッシュバスティング・忘れると旧コードを掴む）
 - 本番push（main）は非軽微変更ならユーザーのゴーサインが必要
