@@ -27,7 +27,7 @@ const MemberAdd = {
 
     // モーダル背景クリックで閉じる
     const modal = document.getElementById('member-add-modal');
-    modal.addEventListener('click', (e) => { if (e.target === modal) this.close(); });
+    Util.bindModalClose(modal, () => this.close());
   },
 
   open(ctx) {
@@ -36,12 +36,7 @@ const MemberAdd = {
     document.getElementById('member-add-project-meta').textContent = ctx.meta || '';
 
     // 既定の期間：現場の工期と一致
-    const toIso = (s) => {
-      if (!s) return '';
-      const d = new Date(String(s).replace(/\//g, '-'));
-      if (isNaN(d)) return '';
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    };
+    const toIso = (s) => Util.toIsoDate(s);
     document.getElementById('member-add-start').value = toIso(ctx.start);
     document.getElementById('member-add-end').value = toIso(ctx.end);
     document.getElementById('member-add-role').value = '副監督';
@@ -247,7 +242,7 @@ const MemberAdd = {
       keySuffix = n === 1 ? `（${role}）` : `（${role}）#${n}`;
     }
 
-    const toSlash = s => s ? String(s).replace(/-/g, '/') : '';
+    const toSlash = s => Util.toSlash(s);
 
     statusEl.textContent = '追加中…';
     statusEl.className = 'text-xs text-slate-500';
@@ -293,8 +288,5 @@ const MemberAdd = {
     return String(name || '').trim() === '配置未定・不足';
   },
 
-  esc(text) {
-    if (text == null) return '';
-    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  },
+  esc(text) { return Util.esc(text); },
 };

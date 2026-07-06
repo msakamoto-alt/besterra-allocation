@@ -312,8 +312,7 @@ const DashboardView = {
         '</tr></thead><tbody>';
       pastAsgs.forEach(a => {
         const proj = projectsMap[a.project_id] || {};
-        const amountM = proj.amount ? (proj.amount / 1e6) : 0;
-        const amountTxt = amountM > 0 ? `¥${amountM.toFixed(1)}M` : '-';
+        const amountTxt = proj.amount > 0 ? Util.fmtMillions(proj.amount) : '-';
         // 期間：YYYY/M〜YYYY/M に省略
         const s = parseStart(a); const e = parseEnd(a);
         const fmtYM = d => d && !isNaN(d) ? `${d.getFullYear()}/${d.getMonth() + 1}` : '-';
@@ -598,10 +597,7 @@ const DashboardView = {
     }
   },
 
-  esc(text) {
-    if (text == null) return '';
-    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  },
+  esc(text) { return Util.esc(text); },
 
   // 表記統一：'2025-07-31' / '2025/07/31' どちらも 'YYYY/MM/DD' で表示
   fmtDate(s) {
@@ -610,10 +606,5 @@ const DashboardView = {
   },
 
   // 'YYYY/MM/DD' や 'YYYY-MM-DD' → date input 用 'YYYY-MM-DD'（空は ''）
-  toIsoDate(s) {
-    if (!s) return '';
-    const d = new Date(String(s).replace(/\//g, '-'));
-    if (isNaN(d)) return '';
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  },
+  toIsoDate(s) { return Util.toIsoDate(s); },
 };

@@ -130,8 +130,5 @@ const PoolView = {
     return '<span class="' + wm.badge + ' px-1.5 py-0.5 rounded text-[10px] font-medium">' + this.escape(wm.short) + '</span>';
   },
 
-  escape(text) {
-    if (text == null) return '';
-    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  },
+  escape(text) { return Util.esc(text); },
 };

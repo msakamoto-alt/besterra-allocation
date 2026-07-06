@@ -74,8 +74,7 @@ const App = {
     let empNo = Sync.empNo;
     // 保存された社員番号が無ければ、ログインメール一致でSmartHR名簿(organization)から導出（自動紐付け）
     if (!empNo && Sync.email) {
-      const e = String(Sync.email).trim().toLowerCase();
-      const o = (Sync.cache.organization || []).find(x => String(x.email || '').trim().toLowerCase() === e);
+      const o = Util.orgByEmail(Sync.email);
       empNo = o ? String(o.emp_no || '') : null;
     }
     // 閲覧者は自分のダッシュボードに限定（社員番号未設定なら何も一致しない値で空表示）

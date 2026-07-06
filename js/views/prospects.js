@@ -27,7 +27,7 @@ const ProspectsView = {
     const closeFn = () => modal.classList.add('hidden');
     document.getElementById('prospect-modal-close').addEventListener('click', closeFn);
     document.getElementById('prospect-modal-cancel').addEventListener('click', closeFn);
-    modal.addEventListener('click', (e) => { if (e.target === modal) closeFn(); });
+    Util.bindModalClose(modal, closeFn);
 
     // 保存
     document.getElementById('prospect-modal-save').addEventListener('click', () => this.save());
@@ -335,16 +335,9 @@ const ProspectsView = {
     }
   },
 
-  toIsoDate(s) {
-    if (!s) return '';
-    const d = new Date(String(s).replace(/\//g, '-'));
-    if (isNaN(d)) return '';
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  },
+  toIsoDate(s) { return Util.toIsoDate(s); },
 
-  toSlashDate(s) {
-    return s ? String(s).replace(/-/g, '/') : '';
-  },
+  toSlashDate(s) { return Util.toSlash(s); },
 
   async save() {
     const statusEl = document.getElementById('prospect-form-status');
@@ -421,8 +414,5 @@ const ProspectsView = {
     }
   },
 
-  esc(text) {
-    if (text == null) return '';
-    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  },
+  esc(text) { return Util.esc(text); },
 };
