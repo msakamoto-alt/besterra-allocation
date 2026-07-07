@@ -35,6 +35,9 @@ const GanttView = {
   // 現場軸の検索（工事名・工事番号・客先の部分一致で絞り込み。空＝全表示）
   projectSearchQuery: '',
 
+  // 監督軸・資格軸の検索（氏名・社員番号の部分一致で絞り込み。空＝全表示）
+  supervisorSearchQuery: '',
+
   // 資格軸の区分フィルタ（複数選択可・既定は全表示＝従来どおり）
   qualCategoryFilter: new Set(['現場監督', '準現場監督', '監督サポート']),
 
@@ -199,6 +202,11 @@ const GanttView = {
     if (searchWrap) searchWrap.style.display = (this.currentAxis === 'project' || this.currentAxis === 'office') ? '' : 'none';
     const searchClear = document.getElementById('gantt-project-search-clear');
     if (searchClear) searchClear.classList.toggle('hidden', !String(this.projectSearchQuery || '').trim());
+    // 監督検索は監督軸・資格軸で表示。✕ボタンは入力があるときだけ
+    const supSearchWrap = document.getElementById('gantt-supervisor-search-wrap');
+    if (supSearchWrap) supSearchWrap.style.display = (this.currentAxis === 'department' || this.currentAxis === 'qualification') ? '' : 'none';
+    const supSearchClear = document.getElementById('gantt-supervisor-search-clear');
+    if (supSearchClear) supSearchClear.classList.toggle('hidden', !String(this.supervisorSearchQuery || '').trim());
   },
 
   // 検索用の文字正規化：全角/半角ゆらぎ（ＡＢＣ→ABC等）を吸収し、大小文字・空白を無視
@@ -215,6 +223,17 @@ const GanttView = {
       this.normSearchText(p.customer).includes(q));
     const cntEl = document.getElementById('gantt-project-search-count');
     if (cntEl) cntEl.textContent = q ? `${hit.length}/${projects.length}件` : '';
+    return hit;
+  },
+
+  // 監督軸・資格軸の検索絞り込み（氏名・社員番号の部分一致）。件数表示も更新する
+  applySupervisorSearch(employees) {
+    const q = this.normSearchText(this.supervisorSearchQuery);
+    const hit = !q ? employees : employees.filter(e =>
+      this.normSearchText(e.name).includes(q) ||
+      this.normSearchText(e.emp_no).includes(q));
+    const cntEl = document.getElementById('gantt-supervisor-search-count');
+    if (cntEl) cntEl.textContent = q ? `${hit.length}/${employees.length}件` : '';
     return hit;
   },
 
@@ -419,6 +438,26 @@ const GanttView = {
       searchClear.addEventListener('click', () => {
         this.projectSearchQuery = '';
         if (searchInput) { searchInput.value = ''; searchInput.focus(); }
+        this.refresh();
+      });
+    }
+
+    // 監督軸・資格軸 検索ボックス（氏名・社員番号の部分一致。入力のたび軽いデバウンスで再描画）
+    const supSearchInput = document.getElementById('gantt-supervisor-search');
+    if (supSearchInput) {
+      supSearchInput.value = this.supervisorSearchQuery;
+      let supSearchTimer = null;
+      supSearchInput.addEventListener('input', () => {
+        this.supervisorSearchQuery = supSearchInput.value;
+        clearTimeout(supSearchTimer);
+        supSearchTimer = setTimeout(() => this.refresh(), 200);
+      });
+    }
+    const supSearchClear = document.getElementById('gantt-supervisor-search-clear');
+    if (supSearchClear) {
+      supSearchClear.addEventListener('click', () => {
+        this.supervisorSearchQuery = '';
+        if (supSearchInput) { supSearchInput.value = ''; supSearchInput.focus(); }
         this.refresh();
       });
     }

@@ -383,7 +383,7 @@ Object.assign(GanttView, {
   // ===== 3. 事務所軸 =====
 
   renderDepartmentAxis() {
-    const employees = (Sync.cache.employees || []).filter(e => e.category === '現場監督' || e.category === '準現場監督');
+    const employeesRaw = (Sync.cache.employees || []).filter(e => e.category === '現場監督' || e.category === '準現場監督');
     const assignments = Sync.cache.assignments || [];
     const projects = Sync.cache.projects || [];
     const cells = this.buildCells();
@@ -391,6 +391,11 @@ Object.assign(GanttView, {
     const colCount = cells.length;
     const todayMarkerHtml = this.todayMarker(cells);
 
+    // 検索絞り込み（氏名・社員番号）。ヒットしない事務所グループは自動的に非表示になる
+    const employees = this.applySupervisorSearch(employeesRaw);
+    if (employees.length === 0 && String(this.supervisorSearchQuery || '').trim()) {
+      return `<p class="p-4 text-slate-500">「${this.esc(this.supervisorSearchQuery)}」に一致する監督がいません（表示期間もご確認ください）</p>`;
+    }
     const empByDept = {};
     employees.forEach(e => {
       if (!empByDept[e.department]) empByDept[e.department] = [];
@@ -628,7 +633,7 @@ Object.assign(GanttView, {
   // ===== 4. 資格軸 =====
 
   renderQualificationGantt() {
-    const employees = (Sync.cache.employees || []).filter(e => e.category !== '対象外');
+    const employeesRaw = (Sync.cache.employees || []).filter(e => e.category !== '対象外');
     const assignments = Sync.cache.assignments || [];
     const projects = Sync.cache.projects || [];
     const quals = Sync.cache.qualifications || [];
@@ -641,6 +646,11 @@ Object.assign(GanttView, {
       return '<p class="p-4 text-slate-500">表示する区分を1つ以上選択してください。</p>';
     }
 
+    // 検索絞り込み（氏名・社員番号）。ヒットしない人は資格グループからも自動的に消える
+    const employees = this.applySupervisorSearch(employeesRaw);
+    if (employees.length === 0 && String(this.supervisorSearchQuery || '').trim()) {
+      return `<p class="p-4 text-slate-500">「${this.esc(this.supervisorSearchQuery)}」に一致する監督がいません（区分・表示期間もご確認ください）</p>`;
+    }
     const empMap = {};
     employees.forEach(e => empMap[e.id] = e);
     const cells = this.buildCells();

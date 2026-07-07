@@ -232,6 +232,15 @@
             </span>
             <span id="gantt-project-search-count" class="text-xs text-slate-500"></span>
           </span>
+          <span id="gantt-supervisor-search-wrap" class="w-full flex items-center gap-1.5" style="display:none">
+            <span class="text-sm text-slate-600">監督検索:</span>
+            <span class="relative inline-flex items-center">
+              <input type="text" id="gantt-supervisor-search" placeholder="氏名・社員番号で絞り込み"
+                class="border rounded pl-2 pr-7 py-1 text-sm w-72">
+              <button id="gantt-supervisor-search-clear" class="hidden absolute right-1.5 text-slate-400 hover:text-slate-600 leading-none" title="クリア">✕</button>
+            </span>
+            <span id="gantt-supervisor-search-count" class="text-xs text-slate-500"></span>
+          </span>
         </div>
         <p class="text-sm text-slate-600 mb-2" id="gantt-description">各現場の工期と配置されている現場監督を時系列で可視化。月ヘッダ「⌄」クリックで該当月を日単位にドリルダウン。</p>
         <div class="bg-white rounded-lg shadow">
@@ -814,9 +823,9 @@
   <script src="js/sync/db.js?v=202607061100"></script>
   <script src="js/sync/auth.js?v=202607061100"></script>
   <script src="js/views/pool.js?v=202607061100"></script>
-  <script src="js/views/gantt.js?v=202607061100"></script>
+  <script src="js/views/gantt.js?v=202607071500"></script>
   <script src="js/views/gantt/modals.js?v=202607061100"></script>
-  <script src="js/views/gantt/axes.js?v=202607061100"></script>
+  <script src="js/views/gantt/axes.js?v=202607071500"></script>
   <script src="js/views/dashboard.js?v=202607061100"></script>
   <script src="js/views/prospects.js?v=202607061100"></script>
   <script src="js/views/member_add.js?v=202607061100"></script>
