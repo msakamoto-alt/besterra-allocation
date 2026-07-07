@@ -14,7 +14,7 @@ const AccountsView = {
     const close = document.getElementById('account-modal-close');
     if (close) close.addEventListener('click', () => this.close());
     const modal = document.getElementById('account-modal');
-    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) this.close(); });
+    Util.bindModalClose(modal, () => this.close());
     const gen = document.getElementById('acc-gen-pw');
     if (gen) gen.addEventListener('click', () => {
       document.getElementById('acc-password').value = this.genPassword();
@@ -28,9 +28,7 @@ const AccountsView = {
 
   // SmartHR名簿(organization)からメール一致で社員番号を引く
   empNoByEmail(email) {
-    const e = String(email || '').trim().toLowerCase();
-    if (!e) return '';
-    const org = (Sync.cache.organization || []).find(o => String(o.email || '').trim().toLowerCase() === e);
+    const org = Util.orgByEmail(email);
     return org ? String(org.emp_no || '') : '';
   },
 
@@ -56,10 +54,7 @@ const AccountsView = {
     return s;
   },
 
-  esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"]/g,
-      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  },
+  esc(s) { return Util.esc(s); },
 
   async refresh() {
     const body = document.getElementById('account-table-body');

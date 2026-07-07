@@ -31,10 +31,7 @@ const ELearningView = {
   },
 
   isAdmin() { return Sync.isAdmin(); },
-  esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"]/g,
-      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  },
+  esc(s) { return Util.esc(s); },
   nl2br(s) { return this.esc(s).replace(/\n/g, '<br>'); },
   shuffle(arr) {
     const a = arr.slice();

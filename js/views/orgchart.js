@@ -253,8 +253,5 @@ const OrgChartView = {
     el.innerHTML = items + '<span class="text-amber-600">* = 手動判定済み</span><span class="text-slate-400">組織名クリックで開閉</span>';
   },
 
-  esc(text) {
-    if (text == null) return '';
-    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  },
+  esc(text) { return Util.esc(text); },
 };

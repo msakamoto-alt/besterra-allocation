@@ -38,6 +38,7 @@ const App = {
     MemberAdd.init();
     OrgChartView.init();
     AccountsView.init();
+    AuditView.init();
     ManagementView.init();
     ELearningView.init();
 
@@ -108,8 +109,7 @@ const App = {
     let empNo = Sync.empNo;
     // 保存された社員番号が無ければ、ログインメール一致でSmartHR名簿(organization)から導出（自動紐付け）
     if (!empNo && Sync.email) {
-      const e = String(Sync.email).trim().toLowerCase();
-      const o = (Sync.cache.organization || []).find(x => String(x.email || '').trim().toLowerCase() === e);
+      const o = Util.orgByEmail(Sync.email);
       empNo = o ? String(o.emp_no || '') : null;
     }
     // 閲覧者は自分のダッシュボードに限定（社員番号未設定なら何も一致しない値で空表示）
@@ -199,18 +199,20 @@ const App = {
     });
   },
 
-  // ヘッダーの admin 専用ボタン（組織図・アカウント管理）を配線
+  // ヘッダーの admin 専用ボタン（組織図・アカウント管理・監査ログ）を配線
   setupOrgButton() {
     const orgBtn = document.getElementById('org-toggle');
     if (orgBtn) orgBtn.addEventListener('click', () => this.activateTab('orgchart'));
     const accBtn = document.getElementById('account-toggle');
     if (accBtn) accBtn.addEventListener('click', () => AccountsView.open());
+    const auditBtn = document.getElementById('audit-toggle');
+    if (auditBtn) auditBtn.addEventListener('click', () => AuditView.open());
   },
 
   updateRoleUI() {
     const badge = document.getElementById('role-badge');
     if (badge) { badge.textContent = Sync.roleLabel(); badge.classList.remove('hidden'); }
-    // 同期（参照データ取込）・アカウント管理は admin のみ。
+    // 同期（参照データ取込）・アカウント管理・監査ログは admin のみ。
     // 組織図ボタンは「組織図を閲覧できるロール」に表示（admin＋経理＝閲覧のみ。編集はcanEditでガード）。
     const adminOnly = Sync.isAdmin();
     const syncBtn = document.getElementById('sync-button');
@@ -219,6 +221,8 @@ const App = {
     if (orgBtn) orgBtn.classList.toggle('hidden', !this.canViewTab('orgchart'));
     const accBtn = document.getElementById('account-toggle');
     if (accBtn) accBtn.classList.toggle('hidden', !adminOnly);
+    const auditBtn = document.getElementById('audit-toggle');
+    if (auditBtn) auditBtn.classList.toggle('hidden', !adminOnly);
   },
 
   showMain() {

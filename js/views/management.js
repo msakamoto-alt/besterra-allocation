@@ -33,7 +33,7 @@ const ManagementView = {
     const upSave = document.getElementById('mgmt-upload-save');
     if (upSave) upSave.addEventListener('click', () => this.doUpload());
     const modal = document.getElementById('mgmt-upload-modal');
-    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) this.closeUpload(); });
+    Util.bindModalClose(modal, () => this.closeUpload());
     const del = document.getElementById('mgmt-delete-btn');
     if (del) del.addEventListener('click', () => this.deleteCurrent());
   },
@@ -41,10 +41,7 @@ const ManagementView = {
   canView() { return Sync.role === 'admin' || Sync.role === 'executive' || Sync.role === 'accounting'; },
   isAdmin() { return Sync.isAdmin(); },
 
-  esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"]/g,
-      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  },
+  esc(s) { return Util.esc(s); },
 
   // 'YYYYMM' → '2026年2月'
   fmtYM(ym) {
