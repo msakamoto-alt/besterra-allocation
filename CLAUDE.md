@@ -62,7 +62,7 @@ config.js が Sync に実値を代入してから App.init が走る。分割フ
 python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_all.py"     # 10本直列・基準線 = 124 PASS / 0 FAIL
 ```
 - 基準線: `C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_baseline.txt`（2026-07-06確立）
-- 除外: verify_bi_tab.py（feature/bi-tab前提）・verify_prospects.py（CSV検査）・verify_dashboard_sandbox.py（別プロジェクト）
+- 除外: verify_prospects.py（CSV検査）・verify_dashboard_sandbox.py（別プロジェクト）。verify_bi_tab.py（20/20）はBI統合main反映（2026-07-08）に伴い個別実行に変更（verify_all.py本体への組込みは未実施）
 - デプロイ時は index.html の変更したscriptタグの `?v=` をタイムスタンプ更新（キャッシュバスティング・忘れると旧コードを掴む）
 - 本番push（main）は非軽微変更ならユーザーのゴーサインが必要
 
@@ -80,14 +80,21 @@ manager=pool・gantt・dash / viewer=gantt・dash(自分のみ) / accounting=man
 - 旧GAS書込経路は2026-07刷新で削除済み。GAS側WebAppの後始末（デプロイのアーカイブ）は別途
 - 未追跡ファイル（build_quals_map.py等）はコミットに巻き込まない（`git add -A`禁止）
 
-## 保留中のブランチ
+## 経営分析BI統合（2026-07-08 main反映済み）
 
-- `feature/bi-tab`(3da51ad): 経営分析BI統合。変更は index.html/app.js/management.js のみ＝本刷新と本質衝突なし。
-  再開時は bi-tab 側で `git merge main`。予想コンフリクト: index.htmlのscriptタグ群vs BIタブmarkup／
-  app.jsのUtil委譲行vs activateTab変更／management.jsのesc委譲行vs BI統合 → いずれも両取りで解消。
+feature/bi-tab（旧a944f70分岐）をmainへfast-forwardマージ。経営レポートタブに「経営分析BI」種別として統合
+（専用タブ・専用Viewは無し＝index.html/app.js/management.jsのみ）。選択すると埋め込まず別タブ全画面
+（?bi=<id>・App.enterBi・sandbox=allow-scripts・iframe src=blob:）。要SQL=supabase/add_bi_report_type.sql
+（実行済み確認済み）。
+- 修正: bi-screen-close（閉じるボタン）は左上固定。右上だとダッシュボード自身のテーマ切替ボタンと重なり、
+  テーマ変更のつもりでクリックするとbi-screen自体が閉じる不具合があった。
+- 中身のPowerBI移行ダッシュボード（経営分析ダッシュボード.html）はcombine_dashboard.py側の管理。
+  同スクリプトはBox移行前の旧ローカルパスがBASE変数にハードコードされたままだと動かない
+  （2026-07-07に修正・再ビルド済み）。テーマ/アクセントが個別レポートに反映されない不具合が起きたら、
+  まずこのビルドが最新か（画面右上のbuild時刻表示）を疑う。
 
 ## 将来の改修候補（刷新で見送ったもの）
 
 - dashboard.populateSelect / member_add.populateEmployeeList の統合（ほぼ同一だが差分精査が必要）
-- 取引先マスタ（MDMハブ）統合・BIタブ本採用
+- 取引先マスタ（MDMハブ）統合
 - 退職者の在籍ステータス管理（organization名簿から外れた過去配置の扱い）
