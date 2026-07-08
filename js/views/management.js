@@ -10,7 +10,7 @@
  *     触れられない。Chart.js CDN は opaque origin でも読み込み・実行できるので表示は問題ない。
  */
 const ManagementView = {
-  TYPE_LABELS: { annual: '年度経営分析レポート', analysis: '月次経営分析レポート', rf: 'ローリングフォーキャスト分析資料', bi: '経営分析ダッシュボード' },
+  TYPE_LABELS: { annual: '年度経営分析レポート', analysis: '月次経営分析レポート', rf: 'ローリングフォーキャスト分析資料', bi: '経営分析BI' },
 
   reports: [],          // メタ一覧（html_content は含まない）
   currentType: 'analysis',
