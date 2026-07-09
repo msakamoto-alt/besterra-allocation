@@ -29,6 +29,10 @@ create table if not exists public.allocation_snapshots (
   created_by   text
 );
 
+-- 既にテーブルが存在する環境向け（create table if not existsは既存テーブルには無効なため、
+-- 列追加は明示的なALTERで担保する。新規作成時は上のcreate table側に列があるため実質no-op）。
+alter table public.allocation_snapshots add column if not exists active_m9 int not null default 0;
+
 -- 同日・同事務所は1行（アプリ側 upsert の onConflict と一対）
 create unique index if not exists uq_alloc_snap on public.allocation_snapshots(taken_on, office);
 
