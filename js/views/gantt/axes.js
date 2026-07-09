@@ -356,7 +356,7 @@ Object.assign(GanttView, {
           `<div class="text-xs text-slate-500">${this.esc(e.department || '')}</div>` +
           `<div class="mt-1 flex flex-wrap items-center gap-1">${PoolView.categoryBadge(e.category)}${special ? this.workModeBadge(e.work_mode) : ''}</div>` +
         '</td>' +
-        `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
+        `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0; vertical-align:top;${tlStyle}">` +
           this.gridDivs(cells, special ? this.workModeLine(e.work_mode) : null) +
           todayMarkerHtml;
 
@@ -473,7 +473,7 @@ Object.assign(GanttView, {
         `<div class="text-sm font-medium">${this.esc(e.name)}</div>` +
         `<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1">${PoolView.categoryBadge(e.category)}${special ? this.workModeBadge(e.work_mode) : ''}</div>` +
       '</td>' +
-      `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
+      `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0; vertical-align:top;${tlStyle}">` +
         this.gridDivs(cells, tintWhole ? this.workModeLine(e.work_mode) : null) +
         todayMarkerHtml +
         (wmPeriod ? this.workModeBandHtml(e, cells) : '') +
@@ -708,7 +708,7 @@ Object.assign(GanttView, {
             `<div class="text-sm font-medium">${this.esc(emp.name)}${expWarn}</div>` +
             `<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1">${this.esc(emp.department || '')} ${PoolView.categoryBadge(emp.category)}${special ? this.workModeBadge(emp.work_mode) : ''}</div>` +
           '</td>' +
-          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
+          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0; vertical-align:top;${tlStyle}">` +
             this.gridDivs(cells, tintWhole ? this.workModeLine(emp.work_mode) : null) +
             todayMarkerHtml +
             (wmPeriod ? this.workModeBandHtml(emp, cells) : '') +

@@ -11,7 +11,8 @@
  *   - 監督者数 = 「〜事務所」所属の現場監督＋準現場監督
  *   - 稼働     = その月に1日でも配置バー（join〜planned_end、無ければ工期末）が重なる監督
  *                完成工事は除外・見込み案件は含む（ガントの既定表示と同じ）
- *   - 時点     = 当月・+3ヶ月・+6ヶ月のローリング（REPORT_OFFSETS）
+ *   - 時点     = 当月・+3/+6/+9ヶ月のローリング（REPORT_OFFSETS）。当月は「稼働」、
+ *                +3/+6/+9ヶ月は未確定の見込みのため見出しに「予定」を付ける（summaryTableHtml）
  *
  * ボード描画はガントのUI状態（表示期間・トグル）に依存させず、
  * withReportDisplayState で「当月〜8ヶ月先・月次・完成除外・見込み含む」に固定して描画する。
@@ -22,7 +23,7 @@ Object.assign(GanttView, {
   // ボードの表示月数（当月〜+8ヶ月＝9列）
   REPORT_MONTH_SPAN: 9,
   // サマリーの時点（当月からの月オフセット）
-  REPORT_OFFSETS: [0, 3, 6],
+  REPORT_OFFSETS: [0, 3, 6, 9],
   // 事務所の表示順（部分一致・前優先。リスト外は末尾で五十音順）
   REPORT_OFFICE_ORDER: ['本社', '千葉', '京浜', '西日本', '九州'],
 
@@ -44,6 +45,8 @@ Object.assign(GanttView, {
     '.report-office-body { border:1px solid #e2e8f0; padding:8px; overflow:hidden; }',
     // html2canvas が flex gap を無視する既知問題への保険（列間はマージンで確保）
     '.report-office-body .gantt-table { margin-right:24px; }',
+    // html2canvasはposition:stickyを正しく描画できず表示がずれるため、レポート内は無効化
+    '.report-root .gantt-table thead, .report-root .sticky { position:static !important; top:auto !important; left:auto !important; z-index:auto !important; }',
     '.report-legend { margin-bottom:16px; }',
     '.report-foot { font-size:11px; color:#64748b; margin-top:8px; }',
     '@media print {',
@@ -221,9 +224,12 @@ Object.assign(GanttView, {
     const rate = (o) => o.supervisors ? Math.round(o.active[0] / o.supervisors * 100) + '%' : '-';
     const row = (o, cls) =>
       `<tr${cls ? ` class="${cls}"` : ''}><td class="rname">${this.esc(shortName(o.name))}</td>` +
-      `<td>${o.supervisors}</td><td>${o.active[0]}</td><td>${rate(o)}</td><td>${o.active[1]}</td><td>${o.active[2]}</td></tr>`;
+      `<td>${o.supervisors}</td><td>${o.active[0]}</td><td>${rate(o)}</td>` +
+      `<td>${o.active[1]}</td><td>${o.active[2]}</td><td>${o.active[3]}</td></tr>`;
+    // 当月は確定値なので「稼働」、+3/+6/+9ヶ月は未確定の見込みなので「稼働予定」と明示する
     return `<table class="report-summary-table${compact ? ' compact' : ''}"><thead><tr>` +
-      `<th></th><th>監督者数</th><th>${m[0].label}稼働</th><th>稼働率</th><th>${m[1].label}稼働</th><th>${m[2].label}稼働</th>` +
+      `<th></th><th>監督者数</th><th>${m[0].label}稼働</th><th>稼働率</th>` +
+      `<th>${m[1].label}稼働予定</th><th>${m[2].label}稼働予定</th><th>${m[3].label}稼働予定</th>` +
       '</tr></thead><tbody>' +
       sum.offices.map(o => row(o)).join('') +
       row(sum.total, 'total') +
@@ -379,6 +385,7 @@ Object.assign(GanttView, {
       active_m0: o.active[0],
       active_m3: o.active[1],
       active_m6: o.active[2],
+      active_m9: o.active[3],
       created_by: 'web',
     }));
     await Sync.saveAllocationSnapshots(rows);

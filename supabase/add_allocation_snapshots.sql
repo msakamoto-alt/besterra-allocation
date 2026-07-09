@@ -6,9 +6,9 @@
 --
 -- 集計定義（js/views/gantt/report.js と一対。変更時は両方を同期すること）:
 --   supervisors = 「〜事務所」所属の現場監督＋準現場監督
---   active_m0/m3/m6 = 当月・+3ヶ月・+6ヶ月に1日でも配置バーが重なる監督数
---                     （完成工事除外・見込み案件含む）
---   month_m0 = 当月（YYYY/MM テキスト）。m3/m6 はここから機械的に導ける
+--   active_m0/m3/m6/m9 = 当月・+3/+6/+9ヶ月に1日でも配置バーが重なる監督数
+--                     （完成工事除外・見込み案件含む）。当月は確定値、+3/+6/+9は稼働予定
+--   month_m0 = 当月（YYYY/MM テキスト）。m3/m6/m9 はここから機械的に導ける
 --
 -- RLS：読=authenticated／書=admin+editor。
 -- 前提：phaseE1a_roles.sql 実行済み（app_role() が存在）。
@@ -22,8 +22,9 @@ create table if not exists public.allocation_snapshots (
   supervisors  int  not null,             -- 監督者数（現場監督＋準現場監督）
   month_m0     text not null,             -- 当月（YYYY/MM）
   active_m0    int  not null,             -- 当月稼働
-  active_m3    int  not null,             -- +3ヶ月稼働
-  active_m6    int  not null,             -- +6ヶ月稼働
+  active_m3    int  not null,             -- +3ヶ月稼働予定
+  active_m6    int  not null,             -- +6ヶ月稼働予定
+  active_m9    int  not null default 0,    -- +9ヶ月稼働予定
   created_at   timestamptz default now(),
   created_by   text
 );
