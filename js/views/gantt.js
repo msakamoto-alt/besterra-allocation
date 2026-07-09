@@ -487,6 +487,9 @@ const GanttView = {
     const today = new Date();
     document.getElementById('gantt-today-label').textContent =
       `今日: ${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
+
+    // 週次レポート出力（gantt/report.js が読み込まれていれば配線）
+    if (this.initReportUi) this.initReportUi();
   },
 
   formatMonth(d) {

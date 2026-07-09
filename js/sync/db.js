@@ -234,6 +234,15 @@ Object.assign(Sync, {
     return { ok: true };
   },
 
+  // 週次レポート（工事部員配置状況）のサマリーを記録（gantt/report.js から）。
+  // 同日・同事務所は上書き（onConflict は add_allocation_snapshots.sql の unique index と一対）。
+  async saveAllocationSnapshots(rows) {
+    const sb = this.getSupabase();
+    const res = await sb.from('allocation_snapshots').upsert(rows, { onConflict: 'taken_on,office' });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true, count: rows.length };
+  },
+
   // 段階D: 階層の手動判定を保存（組織図画面から）。tier は監督リスト表記でよい。
   async setEmployeeTier(empNo, tier) {
     const sb = this.getSupabase();

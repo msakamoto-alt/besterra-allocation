@@ -562,7 +562,8 @@ Object.assign(GanttView, {
   // ===== 事務所モニター（単一事務所・複数列・キオスク）=====
 
   // その事務所の監督を numCols 列に分けて横並びに描画（画面いっぱいに使う）。
-  renderOfficeMonitor(office, numCols) {
+  // opts.legend === false で凡例を省略（週次レポートが複数事務所を連結する際、凡例は末尾に1回だけ出すため）
+  renderOfficeMonitor(office, numCols, opts) {
     const employees = (Sync.cache.employees || []).filter(e =>
       (e.category === '現場監督' || e.category === '準現場監督') && e.department === office);
     const assignments = Sync.cache.assignments || [];
@@ -580,7 +581,8 @@ Object.assign(GanttView, {
       return `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>${body}</tbody></table>`;
     }).join('');
 
-    return `<div class="flex items-start gap-6">${tables}</div>` + this.legendRole() + this.legendWorkMode();
+    const legends = (opts && opts.legend === false) ? '' : this.legendRole() + this.legendWorkMode();
+    return `<div class="flex items-start gap-6">${tables}</div>` + legends;
   },
 
   // 監督1行の高さ（割当数で決まる・列バランス計算と行描画で共通の式）
