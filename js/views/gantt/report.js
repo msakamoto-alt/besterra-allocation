@@ -108,10 +108,28 @@ Object.assign(GanttView, {
 
   // ===== 日付・対象 =====
 
+  // 基準日の上書き（自動実行スクリプト専用）。'YYYY-MM-DD' を設定すると reportToday() がそれを返す。
+  // 手動クリック（ブラウザ操作）では未設定のまま＝常に「押した瞬間の今日」。
+  // 用途：金曜17時に自動実行しても、タイトル・ファイル名・当月判定は「直近の月曜」を基準にするため。
+  reportDateOverride: null,
+
   reportToday() {
+    if (this.reportDateOverride) {
+      const d = new Date(this.reportDateOverride + 'T00:00:00');
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d;
+  },
+
+  // 実際にレポートを生成した時刻（基準日オーバーライドの影響を受けない・常に実時計）。
+  // フッターの「生成日時」表示用。自動実行が金曜夜等でも、いつ作られたかが分かるようにする。
+  reportGeneratedAtLabel() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   },
 
   // タイトル用「2026.7.13」
@@ -251,7 +269,7 @@ Object.assign(GanttView, {
       `<h1>工事部員配置状況（${this.reportDateLabel()}）</h1>` +
       `<div class="report-summary">${this.summaryTableHtml(sum, false)}</div>` +
       boards +
-      '<div class="report-foot">出力元: 統合管理ツール「現場人員配置」／稼働 = その月に1日でも配置がある監督（完成工事除外・見込み案件含む）／ボード表示 = 当月〜8ヶ月先（月次）</div>' +
+      `<div class="report-foot">出力元: 統合管理ツール「現場人員配置」／稼働 = その月に1日でも配置がある監督（完成工事除外・見込み案件含む）／ボード表示 = 当月〜8ヶ月先（月次）／生成日時: ${this.reportGeneratedAtLabel()}</div>` +
       '</div>';
   },
 
