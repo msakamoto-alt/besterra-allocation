@@ -243,6 +243,34 @@ Object.assign(Sync, {
     return { ok: true, count: rows.length };
   },
 
+  // 週次レポートの本文アーカイブ（HTML＋PDF）を保存（gantt/report.js から）。
+  // 同じ週(taken_on)の再出力は上書き（onConflict は add_allocation_reports.sql の unique index と一対）。
+  async saveAllocationReportArchive(row) {
+    const sb = this.getSupabase();
+    const res = await sb.from('allocation_reports').upsert(row, { onConflict: 'taken_on' });
+    if (res.error) throw new Error(res.error.message || JSON.stringify(res.error));
+    return { ok: true };
+  },
+
+  // アーカイブ一覧（メタのみ・本文は含めない・新しい週から順）。
+  async listAllocationReports() {
+    const sb = this.getSupabase();
+    const { data, error } = await sb.from('allocation_reports')
+      .select('id, taken_on, title, created_at, created_by')
+      .order('taken_on', { ascending: false });
+    if (error) throw new Error(error.message || JSON.stringify(error));
+    return data || [];
+  },
+
+  // 指定週の本文（HTML＋PDF）を取得（選択時に遅延ロード）。
+  async fetchAllocationReportContent(id) {
+    const sb = this.getSupabase();
+    const { data, error } = await sb.from('allocation_reports')
+      .select('html_content, pdf_base64, title, taken_on').eq('id', id).maybeSingle();
+    if (error) throw new Error(error.message || JSON.stringify(error));
+    return data || null;
+  },
+
   // 段階D: 階層の手動判定を保存（組織図画面から）。tier は監督リスト表記でよい。
   async setEmployeeTier(empNo, tier) {
     const sb = this.getSupabase();

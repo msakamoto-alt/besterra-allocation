@@ -538,12 +538,16 @@
         <p class="text-xs text-slate-500 mb-3">稼働 = その月に1日でも配置がある監督（完成工事除外・見込み案件含む）。ボードは当月〜8ヶ月先を月次表示。</p>
         <label class="inline-flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer mb-4">
           <input type="checkbox" id="report-save-db" class="rounded border-slate-400">
-          サマリー数値をDBに記録する（時系列保存）<span id="report-save-db-note" class="text-xs text-slate-400"></span>
+          サマリー数値と本文をアーカイブに保存する（時系列保存・下の一覧から後日参照可）<span id="report-save-db-note" class="text-xs text-slate-400"></span>
         </label>
         <div class="flex items-center gap-2 justify-end">
           <span id="report-modal-status" class="text-xs text-slate-500 mr-auto"></span>
           <button id="report-dl-html" class="bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded text-sm font-medium">HTMLをダウンロード</button>
           <button id="report-dl-pdf" class="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded text-sm font-medium">PDFをダウンロード</button>
+        </div>
+        <div class="mt-4 pt-4 border-t border-slate-200">
+          <h4 class="text-sm font-semibold text-slate-700 mb-2">過去のレポート</h4>
+          <div id="report-archive-list" class="max-h-48 overflow-auto border rounded divide-y text-sm"></div>
         </div>
       </div>
     </div>
@@ -854,13 +858,13 @@
   <script src="js/sync.js?v=202607061100"></script>
   <script src="js/sync/sheets.js?v=202607061100"></script>
   <script src="js/sync/derive.js?v=202607061100"></script>
-  <script src="js/sync/db.js?v=202607091200"></script>
+  <script src="js/sync/db.js?v=202607091800"></script>
   <script src="js/sync/auth.js?v=202607061100"></script>
   <script src="js/views/pool.js?v=202607061100"></script>
-  <script src="js/views/gantt.js?v=202607091200"></script>
+  <script src="js/views/gantt.js?v=202607091800"></script>
   <script src="js/views/gantt/modals.js?v=202607061100"></script>
-  <script src="js/views/gantt/axes.js?v=202607091200"></script>
-  <script src="js/views/gantt/report.js?v=202607091200"></script>
+  <script src="js/views/gantt/axes.js?v=202607091800"></script>
+  <script src="js/views/gantt/report.js?v=202607091800"></script>
   <script src="js/views/dashboard.js?v=202607061100"></script>
   <script src="js/views/prospects.js?v=202607061100"></script>
   <script src="js/views/member_add.js?v=202607061100"></script>

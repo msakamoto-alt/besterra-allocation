@@ -5,7 +5,9 @@
  * 現場人員配置タブからワンクリックで出力する。
  *   - 構成 = タイトル＋稼働サマリー表＋全事務所の監督配置ボード（renderOfficeMonitor 再利用・2列）
  *   - 出力 = 自己完結HTML（印刷CSS付き）／PDF（html2canvas＋jsPDF・1枚長尺）
- *   - 同時に事務所別サマリーを allocation_snapshots へ記録（時系列保存・admin/editorのみ）
+ *   - 「アーカイブに保存」チェックON時（admin/editorのみ）は、事務所別サマリーを
+ *     allocation_snapshots へ、本文（HTML＋PDF）を allocation_reports へ記録し、
+ *     モーダル内の「過去のレポート」一覧から後日いつでも参照・再ダウンロードできる
  *
  * 集計定義（会議報告値なので固定・変更時はSQLコメントと突合すること）:
  *   - 監督者数 = 「〜事務所」所属の現場監督＋準現場監督
@@ -77,6 +79,16 @@ Object.assign(GanttView, {
     document.getElementById('report-dl-html').addEventListener('click', () => this.exportReport('html'));
     document.getElementById('report-dl-pdf').addEventListener('click', () => this.exportReport('pdf'));
 
+    const archiveList = document.getElementById('report-archive-list');
+    if (archiveList) {
+      archiveList.addEventListener('click', (e) => {
+        const viewBtn = e.target.closest('[data-archive-view]');
+        if (viewBtn) { this.viewArchiveHtml(viewBtn.dataset.archiveView); return; }
+        const pdfBtn = e.target.closest('[data-archive-pdf]');
+        if (pdfBtn) { this.downloadArchivePdf(pdfBtn.dataset.archivePdf); return; }
+      });
+    }
+
     // モーダル内プレビューとPDF描画が使うレポートCSSを一度だけ注入
     if (!document.getElementById('report-style')) {
       const st = document.createElement('style');
@@ -100,6 +112,7 @@ Object.assign(GanttView, {
     document.getElementById('report-save-db-note').textContent = can ? '' : '（編集権限がないため記録できません）';
     this.setReportStatus('');
     modal.classList.remove('hidden');
+    this.loadReportArchiveList();
   },
 
   setReportStatus(text, isError) {
@@ -145,6 +158,18 @@ Object.assign(GanttView, {
   reportFileStem() {
     const d = this.reportToday();
     return `工事部員配置状況(${String(d.getFullYear()).slice(2)}.${d.getMonth() + 1}.${d.getDate()})`;
+  },
+
+  // DB保存用のISO日付（YYYY-MM-DD）。allocation_snapshots/allocation_reports 共通の taken_on。
+  reportIsoDate() {
+    const d = this.reportToday();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  },
+
+  // 'YYYY-MM-DD' → 「工事部員配置状況(26.7.13)」形式（アーカイブ一覧からの再ダウンロード用）
+  stemFromIsoDate(iso) {
+    const [y, m, d] = String(iso).split('-').map(Number);
+    return `工事部員配置状況(${String(y).slice(2)}.${m}.${d})`;
   },
 
   // 対象事務所 = 現場監督・準現場監督が所属する「〜事務所」。既定順（REPORT_OFFICE_ORDER）で返す
@@ -289,6 +314,18 @@ Object.assign(GanttView, {
       '</head>\n<body class="bg-white">\n' + bodyHtml + '\n</body>\n</html>\n';
   },
 
+  // アプリのCSS(styles.css)を取得してから buildStandaloneHtml を組み立てる（取得失敗時はTailwindのみで継続）。
+  // ダウンロード（'html'）でもアーカイブ保存でも同じ完成形が要るため共通化。
+  async buildStandaloneHtmlWithCss(bodyHtml) {
+    let appCss = '';
+    try {
+      appCss = await (await fetch('css/styles.css')).text();
+    } catch (e) {
+      console.warn('styles.css の取得に失敗（Tailwindのみで出力継続）:', e);
+    }
+    return this.buildStandaloneHtml(bodyHtml, appCss);
+  },
+
   // ===== 出力 =====
 
   downloadBlob(filename, blob) {
@@ -306,26 +343,28 @@ Object.assign(GanttView, {
       this.setReportStatus('レポートを生成しています…');
       const sum = this.buildReportSummary();
       const body = this.buildReportBodyHtml(sum);
+      let htmlDoc = null;
+      let pdfDataUri = null;
 
       if (kind === 'html') {
-        let appCss = '';
-        try {
-          appCss = await (await fetch('css/styles.css')).text();
-        } catch (e) {
-          console.warn('styles.css の取得に失敗（Tailwindのみで出力継続）:', e);
-        }
-        const doc = this.buildStandaloneHtml(body, appCss);
-        this.downloadBlob(this.reportFileStem() + '.html', new Blob([doc], { type: 'text/html;charset=utf-8' }));
+        htmlDoc = await this.buildStandaloneHtmlWithCss(body);
+        this.downloadBlob(this.reportFileStem() + '.html', new Blob([htmlDoc], { type: 'text/html;charset=utf-8' }));
       } else {
-        await this.exportReportPdf(body);
+        pdfDataUri = await this.exportReportPdf(body);
       }
 
-      // サマリーの時系列記録（チェックON かつ 編集権限あり）
+      // アーカイブ保存（チェックON かつ 編集権限あり）：サマリー数値＋本文（HTML＋PDF）を記録。
+      // 一覧からの再現性を優先し、今回のクリックで作らなかった方の成果物も追加生成する
+      // （PDFはブラウザに再ダウンロードさせない＝silent指定）。
       const cb = document.getElementById('report-save-db');
       if (cb && cb.checked && !cb.disabled && Sync.canEdit()) {
-        this.setReportStatus('サマリーをDBに記録しています…');
+        this.setReportStatus('サマリー・アーカイブを保存しています…');
+        if (!htmlDoc) htmlDoc = await this.buildStandaloneHtmlWithCss(body);
+        if (!pdfDataUri) pdfDataUri = await this.exportReportPdf(body, { silent: true });
         await this.recordReportSnapshot(sum);
-        this.setReportStatus('ダウンロードとDB記録が完了しました');
+        await this.recordReportArchive(htmlDoc, pdfDataUri);
+        this.loadReportArchiveList();
+        this.setReportStatus('ダウンロードとアーカイブ保存が完了しました');
       } else {
         this.setReportStatus('ダウンロードが完了しました');
       }
@@ -349,8 +388,40 @@ Object.assign(GanttView, {
     return this._loadedScripts[src];
   },
 
-  // PDF出力 = 画面外に本文を実描画 → html2canvas → 1枚長尺ページのPDF（会議共有の既存PDFと同じ体裁）
-  async exportReportPdf(bodyHtml) {
+  // html2canvasは<table>の行の高さを正しく揃えて描画できない既知の弱点があり、
+  // ラベル列と配置バー列が縦にずれて見える原因になる（DOM自体は正しく配置されている＝
+  // ライブ描画では起きない・html2canvasの再計算だけがずれる）。
+  // ブラウザが実際に計算した各行の高さをpxで明示し、html2canvasの再計算に頼らず確実に揃える。
+  pinTableRowHeights(root) {
+    root.querySelectorAll('table.gantt-table tr').forEach(tr => {
+      const h = tr.getBoundingClientRect().height;
+      if (h > 0) {
+        tr.style.height = h + 'px';
+        Array.from(tr.children).forEach(td => { td.style.height = h + 'px'; });
+      }
+    });
+  },
+
+  // グリッド線・「空き」帯・不在帯・稼働形態の色帯・今日マーカーはCSSの top+bottom で
+  // 縦いっぱいに伸ばす実装だが、html2canvasは bottom 指定の高さ計算を正しく再現できないことがある
+  // （実測でtop+heightにすると解消）。実測値をpxのtop/heightに変換し、bottomへの依存を無くす。
+  pinAbsoluteBands(root) {
+    const sel = '.gantt-gap, .gantt-absence, .gantt-wm-band, [style*="bottom:0"]';
+    root.querySelectorAll(sel).forEach(el => {
+      const parent = el.offsetParent;
+      if (!parent) return;
+      const rect = el.getBoundingClientRect();
+      const parentRect = parent.getBoundingClientRect();
+      el.style.top = (rect.top - parentRect.top) + 'px';
+      el.style.height = rect.height + 'px';
+      el.style.bottom = 'auto';
+    });
+  },
+
+  // PDF出力 = 画面外に本文を実描画 → html2canvas → 1枚長尺ページのPDF（会議報告の既存PDFと同じ体裁）。
+  // opts.silent=true ならブラウザへのファイル保存(pdf.save)を行わず、data URI文字列だけを返す
+  // （アーカイブ保存のためだけにPDFを作る場合に、二重ダウンロードさせないため）。
+  async exportReportPdf(bodyHtml, opts) {
     await Promise.all(this.REPORT_PDF_LIBS.map(u => this.loadScriptOnce(u)));
     const host = document.createElement('div');
     host.style.cssText = 'position:absolute; left:-100000px; top:0; background:#fff;';
@@ -358,6 +429,8 @@ Object.assign(GanttView, {
     document.body.appendChild(host);
     try {
       const root = host.querySelector('.report-root');
+      this.pinTableRowHeights(root);
+      this.pinAbsoluteBands(root);
       const canvas = await html2canvas(root, { scale: 1.5, backgroundColor: '#ffffff', logging: false });
       const pdf = new jspdf.jsPDF({
         orientation: canvas.width >= canvas.height ? 'landscape' : 'portrait',
@@ -366,7 +439,8 @@ Object.assign(GanttView, {
         hotfixes: ['px_scaling'],
       });
       pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, canvas.width, canvas.height);
-      pdf.save(this.reportFileStem() + '.pdf');
+      if (!(opts && opts.silent)) pdf.save(this.reportFileStem() + '.pdf');
+      return pdf.output('datauristring');
     } finally {
       host.remove();
     }
@@ -389,6 +463,72 @@ Object.assign(GanttView, {
       created_by: 'web',
     }));
     await Sync.saveAllocationSnapshots(rows);
+  },
+
+  // 本文アーカイブ（HTML＋PDF）を記録。同じ週(taken_on)は上書き。
+  async recordReportArchive(htmlDoc, pdfDataUri) {
+    await Sync.saveAllocationReportArchive({
+      taken_on: this.reportIsoDate(),
+      title: `工事部員配置状況（${this.reportDateLabel()}）`,
+      html_content: htmlDoc,
+      pdf_base64: pdfDataUri || null,
+      created_by: 'web',
+    });
+  },
+
+  // ===== 過去のレポート一覧（モーダル内） =====
+
+  async loadReportArchiveList() {
+    const listEl = document.getElementById('report-archive-list');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="p-3 text-slate-400 text-xs">読み込み中…</div>';
+    try {
+      const rows = await Sync.listAllocationReports();
+      if (!rows.length) {
+        listEl.innerHTML = '<div class="p-3 text-slate-400 text-xs">まだ保存されたレポートはありません。</div>';
+        return;
+      }
+      listEl.innerHTML = rows.map(r => (
+        '<div class="flex items-center justify-between px-3 py-2">' +
+          `<span>${this.esc(r.title || r.taken_on)}</span>` +
+          '<span class="flex gap-3 flex-none">' +
+            `<button class="text-blue-700 hover:underline text-xs" data-archive-view="${r.id}">表示</button>` +
+            `<button class="text-slate-600 hover:underline text-xs" data-archive-pdf="${r.id}">PDF</button>` +
+          '</span>' +
+        '</div>'
+      )).join('');
+    } catch (e) {
+      listEl.innerHTML = `<div class="p-3 text-red-600 text-xs">読み込み失敗: ${this.esc(e.message || e)}</div>`;
+    }
+  },
+
+  // 過去の週のHTMLを新しいタブで開く（プレビュー相当）
+  async viewArchiveHtml(id) {
+    try {
+      const data = await Sync.fetchAllocationReportContent(id);
+      if (!data) return;
+      const blob = new Blob([data.html_content], { type: 'text/html' });
+      window.open(URL.createObjectURL(blob), '_blank');
+    } catch (e) {
+      this.setReportStatus('表示に失敗しました: ' + (e.message || e), true);
+    }
+  },
+
+  // 過去の週のPDFを再ダウンロード（アーカイブ時にPDFが無い週はスキップしメッセージ表示）
+  async downloadArchivePdf(id) {
+    try {
+      const data = await Sync.fetchAllocationReportContent(id);
+      if (!data) return;
+      if (!data.pdf_base64) {
+        this.setReportStatus('この週はPDFが保存されていません（HTMLのみ）。', true);
+        return;
+      }
+      const res = await fetch(data.pdf_base64);
+      const blob = await res.blob();
+      this.downloadBlob(this.stemFromIsoDate(data.taken_on) + '.pdf', blob);
+    } catch (e) {
+      this.setReportStatus('PDFの取得に失敗しました: ' + (e.message || e), true);
+    }
   },
 
 });
