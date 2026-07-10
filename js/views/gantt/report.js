@@ -12,7 +12,8 @@
  * 集計定義（会議報告値なので固定・変更時はSQLコメントと突合すること）:
  *   - 監督者数 = 「〜事務所」所属の現場監督＋準現場監督
  *   - 稼働     = その月に1日でも配置バー（join〜planned_end、無ければ工期末）が重なる監督
- *                完成工事は除外・見込み案件は含む（ガントの既定表示と同じ）
+ *                完成工事は除外・見込み案件は含む（ガントの既定表示と同じ）。
+ *                専従・派遣（稼働形態）は配置バーが無くても稼働扱い（期間設定があればその期間の月のみ）
  *   - 時点     = 当月・+3/+6/+9ヶ月のローリング（REPORT_OFFSETS）。当月は「稼働」、
  *                +3/+6/+9ヶ月は未確定の見込みのため見出しに「予定」を付ける（summaryTableHtml）
  *
@@ -209,20 +210,36 @@ Object.assign(GanttView, {
 
   // ===== 集計 =====
 
-  // その月に1日でも配置バーが重なる監督の人数（完成工事除外・見込み含む）
+  // その月に「稼働」している監督の人数。稼働の定義（2026-07-10 ユーザー確定）：
+  //   ① その月に1日でも配置バー（join〜planned_end、無ければ工期末）が重なる（完成工事除外・見込み含む）
+  //   ② または 専従・派遣（稼働形態）である＝専従先で働いているため配置バーが無くても稼働扱い。
+  //      稼働形態に表示期間（work_mode_start/end）があればその期間と重なる月のみ、無ければ全月稼働
   reportActiveCount(employees, offsetMonths) {
     const t = this.reportToday();
     const mStart = new Date(t.getFullYear(), t.getMonth() + offsetMonths, 1);
     const mNext = new Date(t.getFullYear(), t.getMonth() + offsetMonths + 1, 1);
     const assignments = (Sync.cache.assignments || []).filter(a => !a.completed);
     const projById = new Map((Sync.cache.projects || []).map(p => [p.project_id, p]));
-    return employees.filter(e => assignments.some(a => {
-      if (a.emp_id !== e.id) return false;
-      const proj = projById.get(a.project_id);
-      const endRaw = a.planned_end || (proj && proj.end);
-      if (!a.join || !endRaw) return false;
-      return this.parseDate(a.join) < mNext && this.parseDate(endRaw) >= mStart;
-    })).length;
+    return employees.filter(e => {
+      if (this.workModeActiveInMonth(e, mStart, mNext)) return true;
+      return assignments.some(a => {
+        if (a.emp_id !== e.id) return false;
+        const proj = projById.get(a.project_id);
+        const endRaw = a.planned_end || (proj && proj.end);
+        if (!a.join || !endRaw) return false;
+        return this.parseDate(a.join) < mNext && this.parseDate(endRaw) >= mStart;
+      });
+    }).length;
+  },
+
+  // 専従・派遣（稼働形態）としてその月に稼働しているか。通常稼働（work_mode空/通常）は false。
+  workModeActiveInMonth(e, mStart, mNext) {
+    if (!(Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(e.work_mode))) return false;
+    const s = e.work_mode_start ? this.parseDate(e.work_mode_start) : null;
+    const en = e.work_mode_end ? this.parseDate(e.work_mode_end) : null;
+    if (s && !isNaN(s) && !(s < mNext)) return false;   // 開始が対象月より後
+    if (en && !isNaN(en) && !(en >= mStart)) return false;  // 終了が対象月より前
+    return true;
   },
 
   buildReportSummary() {
@@ -300,7 +317,7 @@ Object.assign(GanttView, {
       `<h1>工事部員配置状況（${this.reportDateLabel()}）</h1>` +
       `<div class="report-summary">${this.summaryTableHtml(sum, false)}</div>` +
       boards +
-      `<div class="report-foot">出力元: 統合管理ツール「現場人員配置」／稼働 = その月に1日でも配置がある監督（完成工事除外・見込み案件含む）／ボード表示 = 当月〜8ヶ月先（月次）／生成日時: ${this.reportGeneratedAtLabel()}</div>` +
+      `<div class="report-foot">出力元: 統合管理ツール「現場人員配置」／稼働 = その月に1日でも配置がある監督（完成工事除外・見込み案件含む・専従/派遣は稼働に含む）／ボード表示 = 当月〜8ヶ月先（月次）／生成日時: ${this.reportGeneratedAtLabel()}</div>` +
       '</div>';
   },
 
