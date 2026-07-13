@@ -11,8 +11,8 @@
  *
  * 集計定義（会議報告値なので固定・変更時はSQLコメントと突合すること）:
  *   - 監督者数 = 「〜事務所」所属の現場監督＋準現場監督
- *   - 稼働     = その月に1日でも配置バー（join〜planned_end、無ければ工期末）が重なる監督
- *                完成工事は除外・見込み案件は含む（ガントの既定表示と同じ）。
+ *   - 稼働     = その月に1日でも配置バー（prep_start/joinの早い方〜planned_end、無ければ工期末）が
+ *                重なる監督＝準備期間も稼働。完成工事は除外・見込み案件は含む（ガントの既定表示と同じ）。
  *                専従・派遣（稼働形態）は配置バーが無くても稼働扱い（期間設定があればその期間の月のみ）
  *   - 時点     = 当月・+3/+6/+9ヶ月のローリング（REPORT_OFFSETS）。当月は「稼働」、
  *                +3/+6/+9ヶ月は未確定の見込みのため見出しに「予定」を付ける（summaryTableHtml）
@@ -210,8 +210,10 @@ Object.assign(GanttView, {
 
   // ===== 集計 =====
 
-  // その月に「稼働」している監督の人数。稼働の定義（2026-07-10 ユーザー確定）：
-  //   ① その月に1日でも配置バー（join〜planned_end、無ければ工期末）が重なる（完成工事除外・見込み含む）
+  // その月に「稼働」している監督の人数。稼働の定義（2026-07-10確定・07-13準備期間追加）：
+  //   ① その月に1日でも配置バーが重なる（完成工事除外・見込み含む）。
+  //      バーの開始は prep_start（準備期間）と join の早い方＝準備期間も稼働扱い
+  //      （ボードの斜線バー表示・「空き」判定の占有扱いと整合）。終了は planned_end、無ければ工期末
   //   ② または 専従・派遣（稼働形態）である＝専従先で働いているため配置バーが無くても稼働扱い。
   //      稼働形態に表示期間（work_mode_start/end）があればその期間と重なる月のみ、無ければ全月稼働
   reportActiveCount(employees, offsetMonths) {
@@ -227,7 +229,10 @@ Object.assign(GanttView, {
         const proj = projById.get(a.project_id);
         const endRaw = a.planned_end || (proj && proj.end);
         if (!a.join || !endRaw) return false;
-        return this.parseDate(a.join) < mNext && this.parseDate(endRaw) >= mStart;
+        const join = this.parseDate(a.join);
+        const prep = a.prep_start ? this.parseDate(a.prep_start) : null;
+        const start = (prep && !isNaN(prep) && prep < join) ? prep : join;
+        return start < mNext && this.parseDate(endRaw) >= mStart;
       });
     }).length;
   },
@@ -317,7 +322,7 @@ Object.assign(GanttView, {
       `<h1>工事部員配置状況（${this.reportDateLabel()}）</h1>` +
       `<div class="report-summary">${this.summaryTableHtml(sum, false)}</div>` +
       boards +
-      `<div class="report-foot">出力元: 統合管理ツール「現場人員配置」／稼働 = その月に1日でも配置がある監督（完成工事除外・見込み案件含む・専従/派遣は稼働に含む）／ボード表示 = 当月〜8ヶ月先（月次）／生成日時: ${this.reportGeneratedAtLabel()}</div>` +
+      `<div class="report-foot">出力元: 統合管理ツール「現場人員配置」／稼働 = その月に1日でも配置がある監督（準備期間含む・完成工事除外・見込み案件含む・専従/派遣は稼働に含む）／ボード表示 = 当月〜8ヶ月先（月次）／生成日時: ${this.reportGeneratedAtLabel()}</div>` +
       '</div>';
   },
 
