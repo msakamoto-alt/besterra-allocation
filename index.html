@@ -223,6 +223,8 @@
             <input type="checkbox" id="gantt-show-prospects" class="rounded border-slate-400">
             見込み案件も表示
           </label>
+          <button id="gantt-report-btn" class="ml-auto bg-blue-700 hover:bg-blue-800 text-white px-3 py-1.5 rounded text-sm font-medium"
+            title="全体会議用「工事部員配置状況」レポートを出力（HTML / PDF）">📄 週次レポート</button>
           <span id="gantt-project-search-wrap" class="w-full flex items-center gap-1.5" style="display:none">
             <span class="text-sm text-slate-600">現場検索:</span>
             <span class="relative inline-flex items-center">
@@ -522,6 +524,34 @@
     </div>
 
     <!-- ========== ガントバー詳細モーダル ========== -->
+    <!-- 週次レポート出力モーダル（工事部員配置状況・全体会議用） -->
+    <div id="report-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 p-6">
+        <div class="flex justify-between items-start mb-4">
+          <div>
+            <h3 class="text-lg font-bold text-slate-900">週次レポート出力</h3>
+            <p class="text-xs text-slate-500 mt-1">工事部員配置状況（<span id="report-modal-date"></span>）— 稼働サマリー＋全事務所の監督配置ボード</p>
+          </div>
+          <button id="report-modal-close" class="text-slate-400 hover:text-slate-700 text-2xl leading-none">×</button>
+        </div>
+        <div id="report-modal-preview" class="mb-3 overflow-auto"></div>
+        <p class="text-xs text-slate-500 mb-3">稼働 = その月に1日でも配置がある監督（完成工事除外・見込み案件含む・専従/派遣は稼働に含む）。ボードは当月〜8ヶ月先を月次表示。</p>
+        <label class="inline-flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer mb-4">
+          <input type="checkbox" id="report-save-db" class="rounded border-slate-400">
+          サマリー数値と本文をアーカイブに保存する（時系列保存・下の一覧から後日参照可）<span id="report-save-db-note" class="text-xs text-slate-400"></span>
+        </label>
+        <div class="flex items-center gap-2 justify-end">
+          <span id="report-modal-status" class="text-xs text-slate-500 mr-auto"></span>
+          <button id="report-dl-html" class="bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded text-sm font-medium">HTMLをダウンロード</button>
+          <button id="report-dl-pdf" class="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded text-sm font-medium">PDFをダウンロード</button>
+        </div>
+        <div class="mt-4 pt-4 border-t border-slate-200">
+          <h4 class="text-sm font-semibold text-slate-700 mb-2">過去のレポート</h4>
+          <div id="report-archive-list" class="max-h-48 overflow-auto border rounded divide-y text-sm"></div>
+        </div>
+      </div>
+    </div>
+
     <div id="gantt-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div class="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4 p-6">
         <div class="flex justify-between items-start mb-4">
@@ -828,12 +858,13 @@
   <script src="js/sync.js?v=202607061100"></script>
   <script src="js/sync/sheets.js?v=202607061100"></script>
   <script src="js/sync/derive.js?v=202607061100"></script>
-  <script src="js/sync/db.js?v=202607061100"></script>
+  <script src="js/sync/db.js?v=202607091800"></script>
   <script src="js/sync/auth.js?v=202607061100"></script>
   <script src="js/views/pool.js?v=202607061100"></script>
-  <script src="js/views/gantt.js?v=202607071500"></script>
+  <script src="js/views/gantt.js?v=202607091800"></script>
   <script src="js/views/gantt/modals.js?v=202607061100"></script>
-  <script src="js/views/gantt/axes.js?v=202607071500"></script>
+  <script src="js/views/gantt/axes.js?v=202607091800"></script>
+  <script src="js/views/gantt/report.js?v=202607101000"></script>
   <script src="js/views/dashboard.js?v=202607061100"></script>
   <script src="js/views/prospects.js?v=202607061100"></script>
   <script src="js/views/member_add.js?v=202607061100"></script>

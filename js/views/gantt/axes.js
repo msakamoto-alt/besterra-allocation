@@ -356,7 +356,7 @@ Object.assign(GanttView, {
           `<div class="text-xs text-slate-500">${this.esc(e.department || '')}</div>` +
           `<div class="mt-1 flex flex-wrap items-center gap-1">${PoolView.categoryBadge(e.category)}${special ? this.workModeBadge(e.work_mode) : ''}</div>` +
         '</td>' +
-        `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
+        `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0; vertical-align:top;${tlStyle}">` +
           this.gridDivs(cells, special ? this.workModeLine(e.work_mode) : null) +
           todayMarkerHtml;
 
@@ -473,7 +473,7 @@ Object.assign(GanttView, {
         `<div class="text-sm font-medium">${this.esc(e.name)}</div>` +
         `<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1">${PoolView.categoryBadge(e.category)}${special ? this.workModeBadge(e.work_mode) : ''}</div>` +
       '</td>' +
-      `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
+      `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0; vertical-align:top;${tlStyle}">` +
         this.gridDivs(cells, tintWhole ? this.workModeLine(e.work_mode) : null) +
         todayMarkerHtml +
         (wmPeriod ? this.workModeBandHtml(e, cells) : '') +
@@ -562,7 +562,8 @@ Object.assign(GanttView, {
   // ===== 事務所モニター（単一事務所・複数列・キオスク）=====
 
   // その事務所の監督を numCols 列に分けて横並びに描画（画面いっぱいに使う）。
-  renderOfficeMonitor(office, numCols) {
+  // opts.legend === false で凡例を省略（週次レポートが複数事務所を連結する際、凡例は末尾に1回だけ出すため）
+  renderOfficeMonitor(office, numCols, opts) {
     const employees = (Sync.cache.employees || []).filter(e =>
       (e.category === '現場監督' || e.category === '準現場監督') && e.department === office);
     const assignments = Sync.cache.assignments || [];
@@ -580,7 +581,8 @@ Object.assign(GanttView, {
       return `<table class="border-collapse gantt-table" style="width:max-content">${this.headerHtml(cells)}<tbody>${body}</tbody></table>`;
     }).join('');
 
-    return `<div class="flex items-start gap-6">${tables}</div>` + this.legendRole() + this.legendWorkMode();
+    const legends = (opts && opts.legend === false) ? '' : this.legendRole() + this.legendWorkMode();
+    return `<div class="flex items-start gap-6">${tables}</div>` + legends;
   },
 
   // 監督1行の高さ（割当数で決まる・列バランス計算と行描画で共通の式）
@@ -706,7 +708,7 @@ Object.assign(GanttView, {
             `<div class="text-sm font-medium">${this.esc(emp.name)}${expWarn}</div>` +
             `<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-1">${this.esc(emp.department || '')} ${PoolView.categoryBadge(emp.category)}${special ? this.workModeBadge(emp.work_mode) : ''}</div>` +
           '</td>' +
-          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0;${tlStyle}">` +
+          `<td colspan="${colCount}" style="position:relative; height:${rowH}px; padding:0; vertical-align:top;${tlStyle}">` +
             this.gridDivs(cells, tintWhole ? this.workModeLine(emp.work_mode) : null) +
             todayMarkerHtml +
             (wmPeriod ? this.workModeBandHtml(emp, cells) : '') +
