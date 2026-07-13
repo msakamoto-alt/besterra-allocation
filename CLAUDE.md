@@ -31,6 +31,7 @@
 | `js/views/gantt.js` | ガント**コア**: 状態/定数・ツールバー・`refresh`+軸dispatch・日付⇔px変換・描画プリミティブ |
 | `js/views/gantt/modals.js` | 配置編集モーダル・案件状態モーダル（書込を伴う編集操作） |
 | `js/views/gantt/axes.js` | 軸レンダラ5種（現場/事務所/監督/事務所×監督/資格）・稼働形態/不在帯・事務所モニター |
+| `js/views/gantt/report.js` | 週次レポート出力（工事部員配置状況）: 稼働サマリー集計・HTML/PDF生成・スナップショット/アーカイブ記録 |
 | `js/views/*.js` | 各タブのView（pool/dashboard/prospects/member_add/orgchart/accounts/audit/management/elearning/board） |
 | `js/pet-embed.js` | AIペット「ピーちゃん」。**自己完結IIFE・原則触らない**（下記契約参照） |
 | `js/mock_data.js` | `processRawTables`のフォールバック用（Supabase空応答時の保険）。**削除しない** |
@@ -40,7 +41,7 @@
 
 **script読込順（index.html末尾・変更注意）**:
 supabase CDN → mock_data → **util** → **sync → sync/sheets → sync/derive → sync/db → sync/auth**
-→ views(pool → **gantt → gantt/modals → gantt/axes** → dashboard → prospects → member_add → orgchart
+→ views(pool → **gantt → gantt/modals → gantt/axes → gantt/report** → dashboard → prospects → member_add → orgchart
 → accounts → audit → management → elearning → board) → **config** → app → pet-embed。
 config.js が Sync に実値を代入してから App.init が走る。分割ファイルは `Object.assign(Sync|GanttView, {...})` 方式。
 
@@ -92,6 +93,22 @@ feature/bi-tab（旧a944f70分岐）をmainへfast-forwardマージ。経営レ�
   同スクリプトはBox移行前の旧ローカルパスがBASE変数にハードコードされたままだと動かない
   （2026-07-07に修正・再ビルド済み）。テーマ/アクセントが個別レポートに反映されない不具合が起きたら、
   まずこのビルドが最新か（画面右上のbuild時刻表示）を疑う。
+
+## 週次レポート出力（2026-07-13 main反映）
+
+現場人員配置タブの「📄 週次レポート」ボタン→モーダルから、全体会議用「工事部員配置状況（YYYY.M.D）」を
+HTML（自己完結）/PDF（html2canvas＋jsPDF・1枚長尺）でワンクリック生成する（js/views/gantt/report.js）。
+- 稼働定義（2026-07-10確定・変更時はSQLコメントも同期）: その月に1日でも配置バーが重なる監督
+  （完成除外・見込み含む）**または** 専従・派遣（work_mode。期間設定があればその期間の月のみ）。
+  分母（監督者数）=「〜事務所」所属の現場監督＋準現場監督。
+- サマリー時点 = 当月・+3/+6/+9ヶ月ローリング（+3以降は「稼働予定」表記）。
+- 「アーカイブに保存」ON（admin/editor）で allocation_snapshots（数値）＋ allocation_reports
+  （HTML＋PDF base64・taken_on一意）にupsert記録。モーダル内「過去のレポート」一覧から再取得可。
+- `GanttView.reportDateOverride`（'YYYY-MM-DD'）= 自動実行専用の基準日上書き。手動時は未設定＝当日。
+  自動実行スクリプトはリポジトリ外 `..\自動化\週次レポート\weekly_report_autorun.py`（credentials分離のためgit外）。
+- ⚠️PDFのラベル/バーの微妙な縦ズレは html2canvas 自体のテキスト計測誤差（ライブDOMは正常）。
+  ブラウザ印刷への切替は環境依存を理由に不採用（2026-07-09ユーザー判断）＝多少のズレは許容仕様。
+- 検証 = verify_weekly_report.py（個別実行・48 PASS）。
 
 ## 将来の改修候補（刷新で見送ったもの）
 
