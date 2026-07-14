@@ -388,10 +388,22 @@ const ProspectsView = {
     }
   },
 
+  // この見込み案件への手動配置（assignment_overrides）の件数。
+  // アーカイブ/削除の確認ダイアログで「配置も一緒に消える」ことを明示するために使う。
+  linkedOverrideCount(prospectId) {
+    return (Sync.cache.assignment_overrides || [])
+      .filter(o => String(o.project_id) === String(prospectId)).length;
+  },
+
+  linkedOverrideNotice(prospectId) {
+    const n = this.linkedOverrideCount(prospectId);
+    return n ? `\nこの案件への手動配置 ${n}件も一緒に削除されます。` : '';
+  },
+
   async archive(prospectId) {
     const r = this.allRows().find(x => String(x.prospect_id) === String(prospectId));
     if (!r) return;
-    if (!confirm(`「${r.customer} / ${r.project_name}」を受注済みにしてアーカイブしますか？\n（一覧から非表示になります）`)) return;
+    if (!confirm(`「${r.customer} / ${r.project_name}」を受注済みにしてアーカイブしますか？\n（一覧から非表示になります）${this.linkedOverrideNotice(prospectId)}`)) return;
     try {
       await Sync.postOverride({ action: 'prospect_archive', prospect_id: prospectId, updated_by: 'web' });
       if (typeof App !== 'undefined' && typeof App.loadData === 'function') await App.loadData();
@@ -404,7 +416,7 @@ const ProspectsView = {
   async delete(prospectId) {
     const r = this.allRows().find(x => String(x.prospect_id) === String(prospectId));
     if (!r) return;
-    if (!confirm(`「${r.customer} / ${r.project_name}」を完全に削除しますか？\n（取り消しできません）`)) return;
+    if (!confirm(`「${r.customer} / ${r.project_name}」を完全に削除しますか？\n（取り消しできません）${this.linkedOverrideNotice(prospectId)}`)) return;
     try {
       await Sync.postOverride({ action: 'prospect_delete', prospect_id: prospectId });
       if (typeof App !== 'undefined' && typeof App.loadData === 'function') await App.loadData();

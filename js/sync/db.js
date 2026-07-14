@@ -94,7 +94,8 @@ Object.assign(Sync, {
       const id = String(payload.prospect_id || '').trim();
       if (!id) fail('prospect_id required');
       check(await sb.from('prospects').delete().eq('prospect_id', id));
-      return { ok: true, action: 'deleted', prospect_id: id };
+      const n = await this.deleteOverridesForProject(sb, id);
+      return { ok: true, action: 'deleted', prospect_id: id, overrides_deleted: n };
     }
 
     if (action === 'prospect_archive') {
@@ -106,7 +107,8 @@ Object.assign(Sync, {
         updated_by: payload.updated_by || 'web',
         archived: 'TRUE',
       }).eq('prospect_id', id));
-      return { ok: true, action: 'archived', prospect_id: id };
+      const n = await this.deleteOverridesForProject(sb, id);
+      return { ok: true, action: 'archived', prospect_id: id, overrides_deleted: n };
     }
 
     if (action === 'project_status_upsert') {
@@ -135,6 +137,19 @@ Object.assign(Sync, {
     }
 
     throw new Error('unknown_action: ' + action);
+  },
+
+  // 見込み案件のアーカイブ/削除時に、その案件への手動配置（assignment_overrides）も削除する。
+  // 残すと案件不在のまま空き判定・週次レポート稼働数だけに効く「ゴースト配置」になる（2026-07-15調査）。
+  // 戻り値 = 削除件数。失敗時は throw（見込み側の処理は完了済みなので、その旨をメッセージに含める）。
+  async deleteOverridesForProject(sb, projectId) {
+    const res = await sb.from('assignment_overrides')
+      .delete().eq('project_id', projectId).select('override_key');
+    if (res.error) {
+      throw new Error('見込み案件の処理は完了しましたが、配置レコードの削除に失敗しました'
+        + '（残った配置は空き判定に影響します）: ' + res.error.message);
+    }
+    return (res.data || []).length;
   },
 
   // 編集権限：編集ログイン済み（admin / editor）のみ true
