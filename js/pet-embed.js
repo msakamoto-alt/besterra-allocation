@@ -1,8 +1,8 @@
 /* ============================================================================
  * pet-embed.js — 統合管理ツールに住むペット兼エージェント「ピー」（1体）。
  *
- * 起動条件＝ログイン済み かつ PILOT_ROLES に含まれるロール（既定 admin/editor）。対象外/未ログインはno-op。
- *   PILOT_ROLES を null/[] にすると全ログインユーザーに開放（全社展開）。
+ * 起動条件＝ログイン済み全ユーザー（2026-07-15 社長判断で全社開放・PILOT_ROLES=null）。未ログインはno-op。
+ *   パイロットに戻す場合は PILOT_ROLES にロール配列（例 ['admin','editor']）を設定する。
  * デフォルト画像＝assets/pet/pii_front.png（未配置なら仮の代替SVGを表示）。
  *
  * 仕様（すべてツール内で完結）：
@@ -16,7 +16,7 @@
   try {
     // 起動条件はファイル末尾でゲート＝「ログイン済み かつ admin」のときだけ表示（パイロット）。
     // 設定・画像は本番Supabaseの user_pets に本人だけ読み書き（RLS）＝1人1匹。
-    var PILOT_ROLES = ['admin', 'editor', 'accounting'];   // 表示するロール。null か [] にすると全ログインユーザーに開放（全社展開）
+    var PILOT_ROLES = null;   // null/[]＝全ログインユーザーに開放（2026-07-15全社展開）。パイロットに戻すにはロール配列を設定
     // ツールの認証済みSyncを参照（sync.js の Sync はトップレベル const＝window に載らない）
     function SYNC() { return (typeof Sync !== 'undefined') ? Sync : window.Sync; }
 
