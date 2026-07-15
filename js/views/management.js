@@ -153,7 +153,7 @@ const ManagementView = {
     this._blobUrl = URL.createObjectURL(blob);
     const iframe = document.createElement('iframe');
     iframe.src = this._blobUrl;
-    iframe.setAttribute('sandbox', 'allow-scripts');  // allow-same-origin は付けない（親セッション保護）
+    iframe.setAttribute('sandbox', 'allow-scripts allow-downloads');  // allow-same-origin は付けない（親セッション保護）。allow-downloads=レポートのExcel出力用
     iframe.setAttribute('title', '経営レポート');
     iframe.className = 'w-full';
     iframe.style.cssText = 'height: calc(100vh - 290px); min-height: 480px; border: 0; display: block;';

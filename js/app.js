@@ -85,7 +85,7 @@ const App = {
       const blob = new Blob([html], { type: 'text/html' });
       const iframe = document.createElement('iframe');
       iframe.src = URL.createObjectURL(blob);
-      iframe.setAttribute('sandbox', 'allow-scripts');  // allow-same-origin は付けない（親セッション保護）
+      iframe.setAttribute('sandbox', 'allow-scripts allow-downloads');  // allow-same-origin は付けない（親セッション保護）。allow-downloads=レポートのExcel出力用
       iframe.setAttribute('title', '経営分析ダッシュボード');
       iframe.style.cssText = 'width:100%;height:100%;border:0;display:block;';
       body.innerHTML = '';
