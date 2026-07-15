@@ -349,8 +349,27 @@
     // ---------- 移動＆リサイズ（Pointer Events）----------
     function wirePointer() {
       var pet = els.pet, mode = null, sx = 0, sy = 0, ox = 0, oy = 0, startScale = 1;
+      // 保存位置を復元する。画面サイズが変わっていると保存座標が画面外になり得るので必ず画面内へ収める。
+      // ※復元時にクランプしないと、以前ドラッグした位置が現在のビューポート外になり
+      //   「display:flex なのに画面外で見えない」状態になる（ドラッグ中は clamp するが復元は素通しだった）。
+      function clampIntoView() {
+        if (!pet || !pet.style.left || pet.style.left === 'auto') return;  // 右下アンカーのままなら触らない
+        var w = pet.offsetWidth || 80, h = pet.offsetHeight || 80;
+        var x = parseFloat(pet.style.left) || 0, y = parseFloat(pet.style.top) || 0;
+        var cx = Math.max(0, Math.min(Math.max(0, window.innerWidth - w), x));
+        var cy = Math.max(0, Math.min(Math.max(0, window.innerHeight - h), y));
+        if (cx !== x) pet.style.left = cx + 'px';
+        if (cy !== y) pet.style.top = cy + 'px';
+      }
       var pos = JSON.parse(localStorage.getItem('bpet_pos') || 'null');
-      if (pos) { pet.style.right = 'auto'; pet.style.bottom = 'auto'; pet.style.left = pos.x + 'px'; pet.style.top = pos.y + 'px'; }
+      if (pos) {
+        pet.style.right = 'auto'; pet.style.bottom = 'auto';
+        pet.style.left = pos.x + 'px'; pet.style.top = pos.y + 'px';
+        clampIntoView();                                    // 即時（現在の要素サイズで補正）
+        setTimeout(clampIntoView, 300);                     // 画像ロードでサイズ確定後にもう一度
+        if (els.img) els.img.addEventListener('load', clampIntoView);
+      }
+      window.addEventListener('resize', clampIntoView);     // 後からウィンドウが縮んでも画面内へ戻す
       pet.addEventListener('pointerdown', function (e) {
         if (e.target.id === 'bpet-gear' || e.target.id === 'bpet-close' || e.target.id === 'bpet-alert') return;
         sx = e.clientX; sy = e.clientY;

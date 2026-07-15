@@ -60,7 +60,7 @@ config.js が Sync に実値を代入してから App.init が走る。分割フ
 ## 検証（改修後は必ず実行）
 
 ```
-python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_all.py"     # 10本直列・基準線 = 122 PASS / 0 FAIL（2026-07-15 ピーの資格通知廃止で pet_alerts 20→18 に）
+python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_all.py"     # 11本直列・基準線 = 129 PASS / 0 FAIL（2026-07-16 verify_pet_position 追加＝位置クランプ回帰）
 ```
 - 基準線: `C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_baseline.txt`（2026-07-06確立）
 - 除外: verify_prospects.py（CSV検査）・verify_dashboard_sandbox.py（別プロジェクト）。verify_bi_tab.py（20/20）はBI統合main反映（2026-07-08）に伴い個別実行に変更（verify_all.py本体への組込みは未実施）
