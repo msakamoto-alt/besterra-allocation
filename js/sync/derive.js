@@ -155,6 +155,21 @@ Object.assign(Sync, {
     return { projects, assignments: [] };
   },
 
+  // 配置側の completed を案件側に揃える。
+  // 監督軸の表示・空き判定・週次レポート稼働数は assignments 側の completed を見るため、
+  // 手動の状態上書き（案件の修正で進行中に戻す等）が配置に伝播しないと「案件は進行中なのに
+  // 監督軸に出ない・稼働に数えられない」不整合が起きる（2026-07-15 岩国K0002000-01で実害）。
+  // 手動追加(op=add)の配置が一律 completed=false になるズレもここで正規化される。
+  // 案件が見つからない配置（ゴースト等）は元のフラグを保持する。
+  syncAssignmentCompleted(assignments, projects) {
+    const projById = new Map((projects || []).map(p => [p.project_id, p]));
+    return (assignments || []).map(a => {
+      const p = projById.get(a.project_id);
+      if (p && !!a.completed !== !!p.completed) return { ...a, completed: !!p.completed };
+      return a;
+    });
+  },
+
   // Salesforceデータから projects と assignments を派生
   // 完成工事は projects.completed=true でフラグ付与（表示制御はビュー側）
   // 工事番号が空の行はスキップ（parseSalesforceCsv 段階で既に対応）
@@ -515,6 +530,13 @@ Object.assign(Sync, {
         } catch (e) {
           console.error('project_status_overrides マージ失敗:', e);
         }
+      }
+
+      // 配置側の completed を案件側に同期（手動の状態上書きを配置にも伝播させる）
+      try {
+        this.cache.assignments = this.syncAssignmentCompleted(this.cache.assignments, this.cache.projects);
+      } catch (e) {
+        console.error('completed 同期失敗:', e);
       }
 
       // 健全性チェック：氏名照合に失敗した配置（emp_id未解決）を読込時に検出して警告。
