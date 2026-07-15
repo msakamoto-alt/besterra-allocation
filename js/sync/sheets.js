@@ -183,33 +183,30 @@ Object.assign(Sync, {
   },
 
   // 段階C/D/D5: Sheets→Supabase 参照系テーブルの同期（編集者のみ・「同期」ボタンから呼ばれる）。
-  // 同期対象：g_work_logs（勤怠貼付）・salesforce_imports（SF貼付）・organization（01_organization 名簿）・
+  // 同期対象：g_work_logs（勤怠貼付）・organization（01_organization 名簿）・
   //           employee_quals（02_employees 資格）。編集の正は Google Sheets。運用系には一切触れない。
   // ※ 旧 employees(01_employees) は段階D5で廃止し、同期対象から除外。
+  // ※ salesforce_imports は 2026-07-15 に Edge Function sf-import（SF API直結・毎朝6時自動）へ移管。
+  //   ここで同期すると古いSheetsデータでAPI取込分が巻き戻るため対象から除外（09タブは当面残置）。
   async syncReferenceFromSheets() {
     // Sheets から取得（既存の gviz 経路を再利用）
-    const [gwTxt, sfTxt] = await Promise.all([
-      this.fetchSheetWithValidation('g_work_logs'),
-      this.fetchSheetWithValidation('salesforce_imports'),
-    ]);
+    const gwTxt = await this.fetchSheetWithValidation('g_work_logs');
     // 段階D: 組織図名簿（01_organization）／段階D5: 資格マスタ（02_employees）を直接取得
     let orgTxt = null, qualTxt = null;
     try { orgTxt = await this.fetchSheetRaw('01_organization'); } catch (e) { /* タブ未作成は許容 */ }
     try { qualTxt = await this.fetchSheetRaw('02_employees'); } catch (e) { /* タブ未作成は許容 */ }
 
     const gwRows = gwTxt ? this.parseCSV(gwTxt).filter(r => String(r['社員コード'] || '').trim()) : [];
-    const sfRows = sfTxt ? this.parseSalesforceCsv(sfTxt) : [];
     const orgRows = orgTxt ? this.parseOrganizationRows(this.parseCSV(orgTxt)) : [];
     const qualRows = qualTxt ? this.parseCSV(qualTxt).filter(r => String(r['社員番号'] || '').trim()) : [];
 
     // 0件のテーブルは取得失敗の可能性があるので置換しない（誤って空にしない安全策）
     // ※ 段階D5: 旧 employees(01_employees) は廃止につき同期しない。資格は 02_employees→employee_quals へ。
     if (gwRows.length) await this._replaceSupabaseTable('g_work_logs', gwRows);
-    if (sfRows.length) await this._replaceSupabaseTable('salesforce_imports', sfRows);
     if (orgRows.length) await this._replaceSupabaseTable('organization', orgRows);
     if (qualRows.length) await this._replaceSupabaseTable('employee_quals', qualRows);
 
-    return { g_work_logs: gwRows.length, salesforce_imports: sfRows.length, organization: orgRows.length, employee_quals: qualRows.length };
+    return { g_work_logs: gwRows.length, organization: orgRows.length, employee_quals: qualRows.length };
   },
 
   // 参照系テーブルを全置換。書込は authenticated（編集者）のみRLSで許可。
