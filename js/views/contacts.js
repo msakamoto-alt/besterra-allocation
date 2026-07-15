@@ -250,6 +250,17 @@ const ContactsView = {
     this._deptMap = null;    // employees/organization 再同期に追随
     this._emailMap = null;
 
+    // ログイン直後は名簿(organization/employees)の読込完了前に描画されることがあり、
+    // その場合は所属・メール列が空になる → 名簿が届き次第、自動で再描画（最大10回リトライ）
+    if (!(Sync.cache.organization || []).length || !(Sync.cache.employees || []).length) {
+      if ((this._joinRetry || 0) < 10) {
+        this._joinRetry = (this._joinRetry || 0) + 1;
+        setTimeout(() => this.render(), 800);
+      }
+    } else {
+      this._joinRetry = 0;
+    }
+
     const q = this.norm(this.query);
     const asOf = (this.rows.find(r => r.section === 'meta' && r.name === 'as_of') || {}).number || '';
     const branch = this.rows.filter(r => r.section === 'branch');
