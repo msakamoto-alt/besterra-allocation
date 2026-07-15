@@ -752,12 +752,15 @@
             <option value="management_reports">経営レポート</option>
             <option value="quiz_questions">安全学習の問題</option>
             <option value="learning_goals">学習目標</option>
+            <option value="salesforce_imports">SF取込（配置データ）</option>
           </select>
           <select id="audit-filter-op" class="border rounded px-2 py-1.5 text-sm">
             <option value="">すべての操作</option>
             <option value="INSERT">登録</option>
             <option value="UPDATE">更新</option>
             <option value="DELETE">削除</option>
+            <option value="IMPORT">取込</option>
+            <option value="ERROR">取込失敗</option>
           </select>
           <div class="flex-1"></div>
           <button id="audit-csv" class="text-xs text-blue-600 hover:underline">CSVダウンロード（表示中の分）</button>
@@ -898,7 +901,7 @@
   <script src="js/views/member_add.js?v=202607061100"></script>
   <script src="js/views/orgchart.js?v=202607061100"></script>
   <script src="js/views/accounts.js?v=202607061100"></script>
-  <script src="js/views/audit.js?v=202607061100"></script>
+  <script src="js/views/audit.js?v=202607151600"></script>
   <script src="js/views/management.js?v=202607152000"></script>
   <script src="js/views/elearning.js?v=202607061100"></script>
   <script src="js/views/board.js?v=202606251600"></script>

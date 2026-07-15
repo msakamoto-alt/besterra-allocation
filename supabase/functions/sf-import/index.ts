@@ -11,10 +11,16 @@
 //   b) x-import-secret ヘッダが IMPORT_SECRET と一致（スケジュール実行用）
 //      ※どちらの場合も Verify JWT を通すため Authorization には最低 anon キーが必要
 //
+// POST body の source（実行元の名乗り・監査ログの表示に使う）：
+//   cron   … pg_cronの自動実行（sf_import_cron.sql が送る）
+//   script … 手動のsf_import_call.py
+//   なし/未知 … 「実行元不明」と記録（勝手に自動扱いしない）。管理者JWT経由なら本人のメールが残る
+//
 // アクション（POST body の action）：
 //   dry_run … SF取得＋整形まで実行し、現在の salesforce_imports との差分を報告（書込なし・既定）
 //             差分は内容ベース（金額の￥/JPY表記差・日付のゼロ埋め差・空白の全半角差を無視）
 //   import  … salesforce_imports を全置換（先に投入→成功後に旧行削除の安全順）
+//             ＋ audit_logs へ1行サマリー記録（成功=IMPORT／失敗=ERROR。dry_runは記録しない）
 //
 // 必要な Secrets（Edge Functions → Secrets で設定）：
 //   SF_INSTANCE_URL / SF_CLIENT_ID / SF_CLIENT_SECRET / SF_REPORT_ID / IMPORT_SECRET
@@ -232,8 +238,61 @@ function diffMultiset(
   return { added, removed };
 }
 
+// 取込1回につき audit_logs へ1行だけ記録する（成功=IMPORT / 失敗=ERROR）。
+// salesforce_imports は行単位トリガーの対象外（全置換のたび760行のログになるため・add_audit_logs.sql参照）。
+// service_role はRLSを迂回するのでここから直接insertできる。
+// 実行元（呼び出し側が body.source で名乗る）。監査ログの「操作者」「実行契機」の表示に使う。
+// secret経路は cron も手動スクリプトも同じ認証のため、自己申告でしか区別できない
+// ＝ 名乗りが無い/未知なら「不明」と正直に記録する（勝手に自動扱いしない）。
+// 管理者JWT経路は名乗りに関係なく app（本人のメールが残る）。
+const SOURCES: Record<string, { email: string; trigger: string }> = {
+  cron:   { email: 'sf-import（自動実行）',       trigger: '自動（毎朝6時）' },
+  script: { email: 'sf-import（手動スクリプト）', trigger: '手動（スクリプト）' },
+};
+const SOURCE_UNKNOWN = { email: 'sf-import（実行元不明）', trigger: '不明（secret経由）' };
+
+function resolveSource(caller: string, source: unknown) {
+  if (caller !== 'secret') return { email: caller, trigger: '手動（アプリ）', role: 'admin' };
+  const s = SOURCES[String(source || '')] || SOURCE_UNKNOWN;
+  return { ...s, role: 'system' };
+}
+
+// ログ記録の失敗が取込本体を巻き添えにしないよう、失敗はFunctionログに出すだけで投げ直さない
+// （取込は成功しているのにエラーを返すと、cronが失敗と誤認して無用な再実行を招く）。
+// 戻り値＝記録できたか。呼び出し側は応答JSONの audit_logged に載せて可視化する。
+async function logAudit(
+  admin: ReturnType<typeof createClient>,
+  entry: { op: string; caller: string; source: unknown; rowKey: string; changes: Record<string, { new: string }> },
+): Promise<boolean> {
+  const who = resolveSource(entry.caller, entry.source);
+  try {
+    // supabase-js はエラーを throw せず { error } で返すため、必ず中身を見ること
+    const { error } = await admin.from('audit_logs').insert({
+      user_id: null,
+      user_email: who.email,
+      user_role: who.role,
+      table_name: TABLE,
+      op: entry.op,
+      row_key: entry.rowKey,
+      changes: { ...entry.changes, trigger: { new: who.trigger } },
+    });
+    if (error) {
+      console.error('監査ログ記録失敗（取込本体は継続）:', error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('監査ログ記録失敗（取込本体は継続）:', String((e as Error)?.message || e));
+    return false;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+
+  // import の失敗を監査ログに残すための文脈。認証を通り action=import と判明した時点で設定する
+  //（未認証・dry_run の失敗はログに残さない＝ノイズと外部からのログ汚染を防ぐ）。
+  let auditCtx: { admin: ReturnType<typeof createClient>; caller: string; source: unknown } | null = null;
 
   try {
     const url = Deno.env.get('SUPABASE_URL')!;
@@ -262,11 +321,12 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const action = body.action || 'dry_run';
+    if (action === 'import') auditCtx = { admin, caller, source: body.source };
 
     // --- Salesforce から取得・整形（読取のみ） ---
     const { rows, report } = await sfFetchRows();
     if (rows.length === 0) {
-      return json({ error: '取込条件適用後の行が0件です。安全のため処理を中止しました（レポート内容を確認してください）。', report }, 400);
+      throw new Error('取込条件適用後の行が0件です。安全のため処理を中止しました（レポート内容を確認してください）。');
     }
 
     if (action === 'dry_run') {
@@ -290,6 +350,12 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'import') {
+      // 置換前に差分を算出（監査ログに「何件増えて何件減ったか」を残すため）
+      const { data: before, error: befErr } = await admin
+        .from(TABLE).select(COLUMNS.join(',')).order('id', { ascending: true }).limit(10000);
+      if (befErr) throw new Error(`${TABLE} 既存行の取得失敗: ${befErr.message}`);
+      const { added, removed } = diffMultiset(rows, before || [], contentKey);
+
       // 全置換（sync/sheets.js _replaceSupabaseTable と同じ安全順：先に投入→成功後に旧行削除）
       const { data: maxData, error: maxErr } = await admin
         .from(TABLE).select('id').order('id', { ascending: false }).limit(1);
@@ -305,11 +371,39 @@ Deno.serve(async (req) => {
       if (delErr) {
         throw new Error(`${TABLE} 旧行削除失敗: ${delErr.message}（重複が残った可能性。もう一度実行してください）`);
       }
-      return json({ ok: true, action: 'import', caller, report, imported: rows.length, deleted_old: maxOldId });
+
+      const logged = await logAudit(admin, {
+        op: 'IMPORT',
+        caller,
+        source: body.source,
+        rowKey: String(report.name || 'SFレポート'),
+        changes: {
+          imported: { new: String(rows.length) },
+          added:    { new: String(added.length) },
+          removed:  { new: String(removed.length) },
+        },
+      });
+
+      return json({
+        ok: true, action: 'import', caller, report,
+        imported: rows.length, deleted_old: maxOldId,
+        added: added.length, removed: removed.length,
+        audit_logged: logged,
+      });
     }
 
     return json({ error: '不明なアクションです（dry_run / import）' }, 400);
   } catch (e) {
-    return json({ error: String((e as Error)?.message || e) }, 500);
+    const msg = String((e as Error)?.message || e);
+    if (auditCtx) {
+      await logAudit(auditCtx.admin, {
+        op: 'ERROR',
+        caller: auditCtx.caller,
+        source: auditCtx.source,
+        rowKey: '取込失敗',
+        changes: { error: { new: msg.slice(0, 200) } },
+      });
+    }
+    return json({ error: msg }, 500);
   }
 });

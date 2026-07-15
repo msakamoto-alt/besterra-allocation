@@ -58,6 +58,27 @@ python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合�
   `select * from cron.job_run_details order by start_time desc limit 5;`
   `select id, status_code, left(content::text, 200) from net._http_response order by id desc limit 5;`
 
+## 4.5 監査ログ（2026-07-15追加）
+
+取込1回につき `audit_logs` へ**1行だけ**サマリーを記録する（成功=`IMPORT`／失敗=`ERROR`）。
+アプリの「監査ログ」ボタン（admin限定）→ 対象「SF取込（配置データ）」で絞り込める。
+
+- 記録内容＝取込行数・増加・減少・実行契機。失敗時はエラー本文（先頭200字）。
+- **dry_run は記録しない**（読取のみでノイズになるため）。
+- salesforce_imports に行単位トリガーは付けない（全置換のたび760行のログになる・add_audit_logs.sql参照）。
+- **実行元は呼び出し側の名乗り（body.source）で判別**する。secret経路は cron も手動スクリプトも
+  同じ認証のため自己申告でしか区別できない。名乗りが無い/未知なら「実行元不明」と正直に記録する。
+
+  | source | 監査ログ上の操作者 | 実行契機 |
+  |---|---|---|
+  | `cron` | sf-import（自動実行） | 自動（毎朝6時） |
+  | `script` | sf-import（手動スクリプト） | 手動（スクリプト） |
+  | 管理者JWT経由 | 本人のメール | 手動（アプリ） |
+
+- ⚠️**cronのbodyに `"source":"cron"` を入れ忘れると毎朝の実行が「実行元不明」になる**。
+  cron SQLを更新したら `select cron.schedule(...)` を再実行して登録し直すこと（同名なら上書き）。
+- 確認用SQL: `自動化\SF連携検証\sf_import_audit_check.sql`
+
 ## 5. 同期ボタンとの役割分担（2026-07-15切替）
 
 - **salesforce_imports の「編集の正」は Sheets → SF API（sf-import）へ移管済み。**

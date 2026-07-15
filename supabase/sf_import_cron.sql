@@ -22,7 +22,7 @@ select cron.schedule(
       'Authorization', 'Bearer <ANON_KEY>',
       'x-import-secret', '<IMPORT_SECRET>'
     ),
-    body := '{"action":"import"}'::jsonb,
+    body := '{"action":"import","source":"cron"}'::jsonb,
     timeout_milliseconds := 120000
   );
   $$

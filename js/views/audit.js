@@ -18,13 +18,18 @@ const AuditView = {
     management_reports:       '経営レポート',
     quiz_questions:           '安全学習の問題',
     learning_goals:           '学習目標',
+    salesforce_imports:       'SF取込（配置データ）',
   },
 
-  OP_LABELS: { INSERT: '登録', UPDATE: '更新', DELETE: '削除' },
+  // IMPORT / ERROR は Edge Function sf-import が記録するSF取込のサマリー（1実行=1行）。
+  // 行単位のトリガー記録ではないため、他の操作とは別の区分にしている。
+  OP_LABELS: { INSERT: '登録', UPDATE: '更新', DELETE: '削除', IMPORT: '取込', ERROR: '取込失敗' },
   OP_BADGE: {
     INSERT: 'bg-emerald-100 text-emerald-800',
     UPDATE: 'bg-blue-100 text-blue-800',
     DELETE: 'bg-red-100 text-red-800',
+    IMPORT: 'bg-indigo-100 text-indigo-800',
+    ERROR:  'bg-red-100 text-red-800',
   },
 
   // 主要列 → 日本語ラベル（未定義の列は英語名のまま表示）
@@ -45,6 +50,8 @@ const AuditView = {
     correct: '正答', explanation: '解説', source: '出典', active: '公開',
     daily_goal: '1日の目標', weekly_goal: '週の目標',
     updated_by: '操作者', user_id: 'ユーザーID', id: 'ID',
+    // SF取込サマリー（sf-import）
+    imported: '取込行数', added: '増加', removed: '減少', trigger: '実行契機', error: 'エラー',
   },
 
   rows: [],          // 表示中の全行（追加読込で末尾に足す）
