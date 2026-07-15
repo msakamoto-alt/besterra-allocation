@@ -54,13 +54,13 @@ config.js が Sync に実値を代入してから App.init が走る。分割フ
   → **これらを sync/ 配下へ移動してはいけない**
 - テスト依存メソッド名: `ProspectsView.sfCollision` / `fmtAmountStr` / `formatAmountField`、
   `GanttView.renderOfficeMonitor` / `pickColumnCount` / `monthKey` / `refresh` / `currentAxis` / `projectSearchQuery`
-- pet-embed.js が参照するSync契約: `getSupabase` / `isExpiryTracked` / `qualExpiryStatus` / `userId` / `role` / `cache.*`
+- pet-embed.js が参照するSync契約: `getSupabase` / `userId` / `role` / `cache.*`（資格期限通知は2026-07-15に廃止＝isExpiryTracked/qualExpiryStatusはもう参照しない。通知は配置未定・不足のみ）
 - DOM id（例: `#gantt-container` `#gantt-project-search` `#audit-*` `#bpet-alert` `#tab-*` `data-tab`）
 
 ## 検証（改修後は必ず実行）
 
 ```
-python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_all.py"     # 10本直列・基準線 = 124 PASS / 0 FAIL
+python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_all.py"     # 10本直列・基準線 = 122 PASS / 0 FAIL（2026-07-15 ピーの資格通知廃止で pet_alerts 20→18 に）
 ```
 - 基準線: `C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_baseline.txt`（2026-07-06確立）
 - 除外: verify_prospects.py（CSV検査）・verify_dashboard_sandbox.py（別プロジェクト）。verify_bi_tab.py（20/20）はBI統合main反映（2026-07-08）に伴い個別実行に変更（verify_all.py本体への組込みは未実施）

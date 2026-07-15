@@ -36,7 +36,7 @@
     var SMIN = 0.5, SMAX = 2.5;
     var LINES = [
       'やっほー、ここにいるよ。', 'おつかれさま。ひと息どうぞ。', '水分とった？',
-      '配置の画面、見てるね。', '資格の期限、ちゃんと見張ってるよ。', '見込み案件、増えてきた？',
+      '配置の画面、見てるね。', '配置に空きがないか、見てるよ。', '見込み案件、増えてきた？',
       '深呼吸〜。すーっ、はーっ。', '困ったら呼んでね。', 'むりしないでね。',
     ];
 
@@ -176,7 +176,8 @@
     }
 
     // ---------- 実データ通知（ツールが読み込んだ Sync.cache を読むだけ・書き込みなし） ----------
-    // 判定はツール本体と同じ Sync.isExpiryTracked / Sync.qualExpiryStatus を再利用＝ダッシュボードと一致。
+    // 現場単位の「配置未定・不足」のみ通知する。資格期限は人事情報のため、ロールを問わず通知しない
+    // （2026-07-15 方針・閲覧権限にも全員分の資格が読み上げられていた問題への対処）。
     var alerts = { lines: [], idx: 0, badge: 0, summary: '', key: '' };
     // 既読の通知内容（署名）。全件読み終えたら記録し、内容が変わるまでバッジを出さない。
     var ackKey = '';
@@ -192,25 +193,9 @@
     function collectAlerts() {
       // sync.js の Sync はトップレベル const＝window に載らないため typeof で参照
       var S = (typeof Sync !== 'undefined') ? Sync : window.Sync;
-      if (!S || !S.cache || !Array.isArray(S.cache.employees) || !S.cache.employees.length ||
-          typeof S.qualExpiryStatus !== 'function' || typeof S.isExpiryTracked !== 'function') return false;
+      if (!S || !S.cache || !Array.isArray(S.cache.projects) || !Array.isArray(S.cache.assignments)) return false;
 
-      // 1) 資格期限（アラート対象資格のみ）
-      var expired = [], warn30 = [], warn90 = [];
-      S.cache.employees.forEach(function (e) {
-        (e.qual_details || []).forEach(function (q) {
-          if (!S.isExpiryTracked(q.name)) return;
-          var st = S.qualExpiryStatus(q.expiry);
-          var item = { emp: e.name, qual: q.name, days: st.days };
-          if (st.status === 'expired') expired.push(item);
-          else if (st.status === 'warn30') warn30.push(item);
-          else if (st.status === 'warn90') warn90.push(item);
-        });
-      });
-      var byDays = function (a, b) { return a.days - b.days; };
-      expired.sort(byDays); warn30.sort(byDays); warn90.sort(byDays);
-
-      // 2) 配置未定・不足（完成済み・終了日が過去の案件は除外＝現役のみ）
+      // 配置未定・不足（完成済み・終了日が過去の案件は除外＝現役のみ）
       var today = new Date(); today.setHours(0, 0, 0, 0);
       var phByPid = {};
       (S.cache.assignments || []).forEach(function (a) {
@@ -228,25 +213,16 @@
       });
 
       var lines = [];
-      expired.forEach(function (i) { lines.push('⚠ ' + i.emp + 'さんの「' + i.qual + '」が期限切れだよ（' + (-i.days) + '日経過）'); });
-      warn30.forEach(function (i) { lines.push('⏰ ' + i.emp + 'さんの「' + i.qual + '」、期限まであと' + i.days + '日だよ'); });
       shortage.forEach(function (i) { lines.push('🔧 「' + i.name + '」が配置未定・不足' + (i.count > 1 ? '×' + i.count : '') + 'だよ'); });
-      warn90.forEach(function (i) { lines.push('📅 ' + i.emp + 'さんの「' + i.qual + '」、あと' + i.days + '日（90日以内）'); });
 
       alerts.lines = lines;
-      alerts.badge = expired.length + warn30.length + shortage.length;  // 90日以内はバッジに数えない
-      // 通知内容の署名（日数は含めず emp|資格・現場|件数で安定化＝同じ内容なら既読を維持）
-      var newKey = expired.map(function (i) { return 'E' + i.emp + '|' + i.qual; })
-        .concat(warn30.map(function (i) { return 'W' + i.emp + '|' + i.qual; }))
-        .concat(shortage.map(function (i) { return 'S' + i.name + '|' + i.count; })).join('#');
+      alerts.badge = shortage.length;
+      // 通知内容の署名（現場|件数で安定化＝同じ内容なら既読を維持）。資格期限は人事情報のため通知対象外。
+      var newKey = shortage.map(function (i) { return 'S' + i.name + '|' + i.count; }).join('#');
       if (newKey !== alerts.key) { alerts.idx = 0; alerts.key = newKey; }  // 内容が変わったら読み位置リセット
-      var parts = [];
-      if (expired.length) parts.push('期限切れ' + expired.length + '件');
-      if (warn30.length) parts.push('30日以内' + warn30.length + '件');
-      if (shortage.length) parts.push('配置未定' + shortage.length + '件');
       alerts.summary = alerts.badge
-        ? 'きょうのお知らせ：' + parts.join('・') + '。私をタップすると1件ずつ教えるね。'
-        : '資格期限も配置も、いまは問題なさそう！';
+        ? 'きょうのお知らせ：配置未定・不足' + shortage.length + '件。私をタップすると1件ずつ教えるね。'
+        : '配置、いまは問題なさそう！';
       return true;
     }
 
