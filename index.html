@@ -114,6 +114,7 @@
         <button class="tab-btn px-5 py-3 font-medium" data-tab="gantt">現場人員配置</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="dash">監督ダッシュボード</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="prospects">見込み案件</button>
+        <button class="tab-btn px-5 py-3 font-medium" data-tab="contacts">連絡先</button>
         <button class="tab-btn px-5 py-3 font-medium" data-tab="elearning">安全学習</button>
       </div>
     </nav>
@@ -307,6 +308,32 @@
           <span class="text-sm text-slate-500" id="dash-select-count"></span>
         </div>
         <div id="dash-content"></div>
+      </section>
+
+      <!-- ========== タブ：社内連絡先（電話番号表） ========== -->
+      <section id="tab-contacts" class="tab-panel hidden">
+        <div class="flex items-center gap-3 mb-4 flex-wrap">
+          <h2 class="text-xl font-bold">社内連絡先</h2>
+          <div class="relative">
+            <input type="search" id="contacts-search" placeholder="氏名・所属・番号で検索（部分可）" class="border rounded px-3 py-2 text-sm w-64" autocomplete="off">
+            <button id="contacts-search-clear" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-sm" title="検索をクリア">✕</button>
+          </div>
+          <select id="contacts-dept" class="border rounded px-2 py-2 text-sm" title="所属で絞り込み（SmartHR名簿との氏名照合）"></select>
+          <label class="flex items-center gap-1 text-sm text-slate-600 cursor-pointer">
+            <input type="checkbox" id="contacts-show-branch" checked> 事業所
+          </label>
+          <label class="flex items-center gap-1 text-sm text-slate-600 cursor-pointer">
+            <input type="checkbox" id="contacts-show-ext" checked> 内線表
+          </label>
+          <label class="flex items-center gap-1 text-sm text-slate-600 cursor-pointer">
+            <input type="checkbox" id="contacts-show-mob" checked> 携帯番号
+          </label>
+          <label class="flex items-center gap-1 text-sm text-slate-600 cursor-pointer" title="SmartHR名簿との氏名照合で自動付与">
+            <input type="checkbox" id="contacts-show-mail" checked> メール
+          </label>
+          <span class="text-sm text-slate-500" id="contacts-count"></span>
+        </div>
+        <div id="contacts-container"></div>
       </section>
 
       <!-- ========== タブ5：組織図 ========== -->
@@ -867,6 +894,7 @@
   <script src="js/views/gantt/report.js?v=202607131100"></script>
   <script src="js/views/dashboard.js?v=202607061100"></script>
   <script src="js/views/prospects.js?v=202607151030"></script>
+  <script src="js/views/contacts.js?v=202607151800"></script>
   <script src="js/views/member_add.js?v=202607061100"></script>
   <script src="js/views/orgchart.js?v=202607061100"></script>
   <script src="js/views/accounts.js?v=202607061100"></script>
@@ -875,7 +903,7 @@
   <script src="js/views/elearning.js?v=202607061100"></script>
   <script src="js/views/board.js?v=202606251600"></script>
   <script src="js/config.js?v=202607061100" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
-  <script src="js/app.js?v=202607080942"></script>
+  <script src="js/app.js?v=202607151800"></script>
   <!-- 統合管理ツールのペット「ピー」（多人数対応・ログイン済みadminのみ表示＝パイロット） -->
   <script src="js/pet-embed.js?v=202606251400"></script>
 </body>

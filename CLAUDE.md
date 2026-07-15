@@ -71,7 +71,16 @@ python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合�
 
 admin=全部＋同期/アカウント/監査 / editor=pool・gantt(編集可)・dash / executive=management・pool・gantt・dash・prospects /
 manager=pool・gantt・dash / viewer=gantt・dash(自分のみ) / accounting=management・pool・gantt・dash・prospects・orgchart(閲覧のみ)。
-安全学習(elearning)は当面admin限定。組織図はヘッダーの`#org-toggle`ボタンから。
+連絡先(contacts)=全ロール。安全学習(elearning)は当面admin限定。組織図はヘッダーの`#org-toggle`ボタンから。
+
+## 社内連絡先タブ（2026-07-15新設）
+
+総務発行の「電話番号表」PDFを閲覧専用ページ化（js/views/contacts.js・Supabase `contacts` テーブル）。
+- 🔴**実データ（氏名・電話番号）はPublicリポジトリにコミット禁止**。リポジトリには DDL のみ
+  （supabase/add_contacts.sql・書込ポリシーなし=閲覧専用）。seed は
+  `Box\...\ツール【統合管理】\自動化\連絡先取込\seed_contacts_YYYYMMDD.sql`（全置換方式・check_seed.py でPDF照合）。
+- PDF改版時の更新手順: 新PDFから seed を作り直し→check_seed.py で照合→SQL Editor で再実行。
+- 並び順は原本を尊重（内線=番号順・携帯=五十音順）＝ sort_order。携帯・外線は tel: リンク。
 
 ## 触らない・注意するもの
 
