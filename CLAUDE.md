@@ -3,7 +3,8 @@
 ベステラ社内の経営管理プラットフォーム。監督リスト・現場人員配置（ガント）・監督ダッシュボード・
 見込み案件・経営レポート・安全学習・組織図・アカウント管理を1枚のHTMLで提供する。
 本番 = GitHub Pages（mainへのpush＝即デプロイ）。バックエンド = Supabase（Auth＋RLS）。
-**作業拠点 = Box**（2026-07-06 PC移行で移設）: `C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\besterra-allocation`
+**作業拠点 = ローカル**（2026-07-14変更・Box同期が`.git`を破損させたため）: `C:\Users\sakamoto\besterra-allocation`
+⚠️Boxのコピー（`Box\…\ツール【統合管理】\besterra-allocation`）は**2時間ごとのrobocopy /MIRで上書きされるミラー先＝そこで編集すると消える**。編集は必ずローカルで行うこと。
 検証スクリプトは `C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\`・刷新前バックアップは `保全\` 配下。
 
 ## アーキテクチャ宣言（変更禁止事項）
@@ -60,7 +61,7 @@ config.js が Sync に実値を代入してから App.init が走る。分割フ
 ## 検証（改修後は必ず実行）
 
 ```
-python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_all.py"     # 11本直列・基準線 = 129 PASS / 0 FAIL（2026-07-16 verify_pet_position 追加＝位置クランプ回帰）
+python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_all.py"     # 11本直列・基準線 = 130 PASS / 0 FAIL（2026-07-16 組織図全社員開放でaccounting_role 20→21）
 ```
 - 基準線: `C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\検証スクリプト\verify_baseline.txt`（2026-07-06確立）
 - 除外: verify_prospects.py（CSV検査）・verify_dashboard_sandbox.py（別プロジェクト）。verify_bi_tab.py（20/20）はBI統合main反映（2026-07-08）に伴い個別実行に変更（verify_all.py本体への組込みは未実施）
@@ -69,9 +70,10 @@ python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合�
 
 ## ロール×タブ（TAB_ROLES: js/app.js）
 
-admin=全部＋同期/アカウント/監査 / editor=pool・gantt(編集可)・dash / executive=management・pool・gantt・dash・prospects /
-manager=pool・gantt・dash / viewer=gantt・dash(自分のみ) / accounting=management・pool・gantt・dash・prospects・orgchart(閲覧のみ)。
-連絡先(contacts)=全ロール。安全学習(elearning)は当面admin限定。組織図はヘッダーの`#org-toggle`ボタンから。
+admin=全部＋同期/アカウント/監査 / editor=pool・gantt(編集可)・dash・prospects(編集可) / executive=management・pool・gantt・dash・prospects /
+manager=pool・gantt・dash・prospects(閲覧のみ) / viewer=gantt・dash(自分のみ) / accounting=management・pool・gantt・dash・prospects(閲覧のみ)。
+連絡先(contacts)・組織図(orgchart)=全ロール（2026-07-16 組織図を全社員に開放・階層編集はcanEdit=admin/editorのまま）。
+安全学習(elearning)は当面admin限定。組織図はヘッダーの`#org-toggle`ボタンから。
 
 ## 社内連絡先タブ（2026-07-15新設）
 

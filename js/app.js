@@ -13,11 +13,11 @@ const App = {
     pool:       ['admin', 'editor', 'executive', 'manager', 'accounting'],
     gantt:      ['admin', 'editor', 'executive', 'manager', 'viewer', 'accounting'],
     dash:       ['admin', 'editor', 'executive', 'manager', 'viewer', 'accounting'],  // Point2: 閲覧者(工事監督)は自分のダッシュボードのみ
-    prospects:  ['admin', 'editor', 'executive', 'accounting'],
+    prospects:  ['admin', 'editor', 'executive', 'manager', 'accounting'],  // 役職者(manager)は閲覧のみ（編集はcanEdit=admin/editor＋RLSでガード）
     contacts:   ['admin', 'editor', 'executive', 'manager', 'viewer', 'accounting'],  // 社内電話帳＝ログイン済み全ロール
     management: ['admin', 'executive', 'accounting'],   // 段階E3: 経営機密。閲覧は管理者・経営者・経理のみ（RLSでも強制）。経営分析BIもこのタブ内に統合
     elearning:  ['admin'],  // 当面 admin 限定（問題の精査が済むまで一般非公開）。精査後に全ロールへ戻す。
-    orgchart:   ['admin', 'accounting'],  // 経理は閲覧のみ（階層編集は canEdit=admin/editor でガード＋RLSでも書込不可）
+    orgchart:   ['admin', 'editor', 'executive', 'manager', 'viewer', 'accounting'],  // 全社員に開放（階層編集は canEdit=admin/editor でガード＋RLSでも書込不可）
   },
   canViewTab(tab) {
     const allow = this.TAB_ROLES[tab];
