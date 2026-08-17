@@ -420,7 +420,7 @@ const DashboardView = {
     const sekouBadges = String(emp.qualifications_raw || '').split('、').map(s => s.trim()).filter(Boolean)
       .map(t => `<span class="${sekouClass(t)} border px-2 py-0.5 rounded text-xs font-medium">${this.esc(t)}</span>`).join('');
 
-    // 稼働形態（監督派遣/事務所専従/構内専従）。canEdit はプルダウン、閲覧者は設定時のみバッジ表示。
+    // 稼働形態（監督派遣/事務所専従/構内専従/配置キープ）。canEdit はプルダウン、閲覧者は設定時のみバッジ表示。
     const WM = (typeof Sync !== 'undefined' && Sync.WORK_MODES) || {};
     let wmCtrl = '';
     if (canEdit) {
@@ -441,7 +441,7 @@ const DashboardView = {
             '<span class="text-xs text-slate-400">〜</span>' +
             `<input type="date" id="dash-workmode-end" data-emp="${empKey}" value="${isoE}" class="border rounded px-2 py-1 text-sm">` +
           '</div>' +
-          '<div class="text-[11px] text-slate-400 mt-1">※「通常」以外はガントで色帯表示。期間を入れるとその期間だけ色帯（空欄＝全期間）。配置可否・空きには影響しません。</div>' +
+          '<div class="text-[11px] text-slate-400 mt-1">※「通常」以外はガントで色帯表示＋「空き」帯が非表示になります（枠確保の表現）。期間を入れるとその期間だけ色帯（空欄＝全期間）。メンバー追加の候補からは外れません。</div>' +
         '</div>';
     } else if (Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(emp.work_mode)) {
       const wm = WM[emp.work_mode];

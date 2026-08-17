@@ -13,7 +13,7 @@
  *   - 監督者数 = 「〜事務所」所属の現場監督＋準現場監督
  *   - 稼働     = その月に1日でも配置バー（prep_start/joinの早い方〜planned_end、無ければ工期末）が
  *                重なる監督＝準備期間も稼働。完成工事は除外・見込み案件は含む（ガントの既定表示と同じ）。
- *                専従・派遣（稼働形態）は配置バーが無くても稼働扱い（期間設定があればその期間の月のみ）
+ *                専従・派遣・配置キープ（稼働形態）は配置バーが無くても稼働扱い（期間設定があればその期間の月のみ）
  *   - 時点     = 当月・+3/+6/+9ヶ月のローリング（REPORT_OFFSETS）。当月は「稼働」、
  *                +3/+6/+9ヶ月は未確定の見込みのため見出しに「予定」を付ける（summaryTableHtml）
  *
@@ -214,7 +214,7 @@ Object.assign(GanttView, {
   //   ① その月に1日でも配置バーが重なる（完成工事除外・見込み含む）。
   //      バーの開始は prep_start（準備期間）と join の早い方＝準備期間も稼働扱い
   //      （ボードの斜線バー表示・「空き」判定の占有扱いと整合）。終了は planned_end、無ければ工期末
-  //   ② または 専従・派遣（稼働形態）である＝専従先で働いているため配置バーが無くても稼働扱い。
+  //   ② または 専従・派遣・配置キープ（稼働形態）である＝専従先での勤務・枠確保のため配置バーが無くても稼働扱い。
   //      稼働形態に表示期間（work_mode_start/end）があればその期間と重なる月のみ、無ければ全月稼働
   reportActiveCount(employees, offsetMonths) {
     const t = this.reportToday();
@@ -237,7 +237,7 @@ Object.assign(GanttView, {
     }).length;
   },
 
-  // 専従・派遣（稼働形態）としてその月に稼働しているか。通常稼働（work_mode空/通常）は false。
+  // 専従・派遣・配置キープ（稼働形態）としてその月に稼働しているか。通常稼働（work_mode空/通常）は false。
   workModeActiveInMonth(e, mStart, mNext) {
     if (!(Sync.isSpecialWorkMode && Sync.isSpecialWorkMode(e.work_mode))) return false;
     const s = e.work_mode_start ? this.parseDate(e.work_mode_start) : null;
@@ -322,7 +322,7 @@ Object.assign(GanttView, {
       `<h1>工事部員配置状況（${this.reportDateLabel()}）</h1>` +
       `<div class="report-summary">${this.summaryTableHtml(sum, false)}</div>` +
       boards +
-      `<div class="report-foot">出力元: 統合管理ツール「現場人員配置」／稼働 = その月に1日でも配置がある監督（準備期間含む・完成工事除外・見込み案件含む・専従/派遣は稼働に含む）／ボード表示 = 当月〜8ヶ月先（月次）／生成日時: ${this.reportGeneratedAtLabel()}</div>` +
+      `<div class="report-foot">出力元: 統合管理ツール「現場人員配置」／稼働 = その月に1日でも配置がある監督（準備期間含む・完成工事除外・見込み案件含む・専従/派遣/配置キープは稼働に含む）／ボード表示 = 当月〜8ヶ月先（月次）／生成日時: ${this.reportGeneratedAtLabel()}</div>` +
       '</div>';
   },
 

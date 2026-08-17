@@ -170,11 +170,14 @@ Object.assign(Sync, {
   },
 
   // 稼働形態（work_mode）：tier とは独立した運用状態。空/未設定 = 通常（現場配置可）。
-  // ガントでは個人行を背景色＋ラベルで表現し、案件バーは出さない。配色はここで一元管理。
+  // ガントでは個人行を背景色＋バッジで表現（案件バーがあれば重ねて表示）。配色はここで一元管理。
+  // 「配置キープ」= SF・見込み案件に未登録の予定案件のために枠を確保する状態（2026-08-17追加）。
+  //   他の形態と同じく「空き」帯が非表示になる＝枠確保の表現。週次レポートでも稼働扱い。
   WORK_MODES: {
     '監督派遣':   { label: '監督派遣（送出）', short: '派遣中（送出）', bg: '#eef1f5', line: '#cbd5e1', text: '#334155', accent: '#64748b', badge: 'bg-slate-200 text-slate-700 border border-slate-400' },
     '事務所専従': { label: '事務所専従',       short: '事務所専従',     bg: '#dbeafe', line: '#93c5fd', text: '#1d4ed8', accent: '#3b82f6', badge: 'bg-blue-100 text-blue-700 border border-blue-300' },
     '構内専従':   { label: '構内専従',         short: '構内専従',       bg: '#dcfce7', line: '#86efac', text: '#15803d', accent: '#22c55e', badge: 'bg-green-100 text-green-700 border border-green-300' },
+    '配置キープ': { label: '配置キープ（案件予定あり）', short: '配置キープ', bg: '#fef3c7', line: '#fcd34d', text: '#b45309', accent: '#f59e0b', badge: 'bg-amber-100 text-amber-700 border border-amber-300' },
   },
 
   // 不在の種別（employee_absences.kind）。監督ダッシュボードのプルダウンとガントのラベルで使用。
