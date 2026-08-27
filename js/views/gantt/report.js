@@ -72,6 +72,10 @@ Object.assign(GanttView, {
     if (!btn) return;
     btn.addEventListener('click', () => this.openReportModal());
 
+    // 現場別PDF出力（現場軸のときだけ表示される。表示制御は gantt.js updateProjectSortToolbar）
+    const projectPdfBtn = document.getElementById('gantt-project-pdf-btn');
+    if (projectPdfBtn) projectPdfBtn.addEventListener('click', () => this.exportProjectAxisPdf());
+
     const modal = document.getElementById('report-modal');
     if (!modal) return;
     const close = () => modal.classList.add('hidden');
@@ -91,12 +95,15 @@ Object.assign(GanttView, {
     }
 
     // モーダル内プレビューとPDF描画が使うレポートCSSを一度だけ注入
-    if (!document.getElementById('report-style')) {
-      const st = document.createElement('style');
-      st.id = 'report-style';
-      st.textContent = this.REPORT_CSS;
-      document.head.appendChild(st);
-    }
+    this.ensureReportCss();
+  },
+
+  ensureReportCss() {
+    if (document.getElementById('report-style')) return;
+    const st = document.createElement('style');
+    st.id = 'report-style';
+    st.textContent = this.REPORT_CSS;
+    document.head.appendChild(st);
   },
 
   openReportModal() {
@@ -550,6 +557,104 @@ Object.assign(GanttView, {
       this.downloadBlob(this.stemFromIsoDate(data.taken_on) + '.pdf', blob);
     } catch (e) {
       this.setReportStatus('PDFの取得に失敗しました: ' + (e.message || e), true);
+    }
+  },
+
+  // ===== 現場別ガントのPDF出力（印刷用・A3横） =====
+  // 「現場」軸の表示内容（表示期間・検索・並び順・完成/見込みトグル）をそのままカラーPDFにする。
+  // 週次レポートと同じ html2canvas ラスタ方式（ブラウザ印刷は配置バーの背景色が抜けるため）だが、
+  // こちらは紙への印刷が目的なので1枚長尺ではなく A3横のページに「行の境界で」分割し、
+  // 各ページの先頭にタイトル＋列ヘッダーを繰り返す。
+
+  // 出力条件の注記（何を表示した時点のPDFかを紙上に残す）
+  projectPdfConditionNote() {
+    const f = (dt) => `${dt.getFullYear()}/${dt.getMonth() + 1}/${dt.getDate()}`;
+    const parts = [`表示期間: ${f(this.displayStart)}〜${f(this.displayEnd)}`];
+    parts.push(`完成工事: ${this.showCompleted ? '表示' : '非表示'}`);
+    parts.push(`見込み案件: ${this.showProspects ? '表示' : '非表示'}`);
+    const q = String(this.projectSearchQuery || '').trim();
+    if (q) parts.push(`検索: 「${this.esc(q)}」`);
+    return `<p class="report-foot" style="margin:0 0 10px">${parts.join('　/　')}</p>`;
+  },
+
+  async exportProjectAxisPdf() {
+    const btn = document.getElementById('gantt-project-pdf-btn');
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
+    try {
+      this.ensureReportCss();
+      await Promise.all(this.REPORT_PDF_LIBS.map(u => this.loadScriptOnce(u)));
+
+      const d = new Date();
+      const title = `現場人員配置（現場別） ${String(d.getFullYear()).slice(2)}.${d.getMonth() + 1}.${d.getDate()} 時点`;
+      const bodyHtml = `<div class="report-root"><h1>${title}</h1>${this.projectPdfConditionNote()}${this.renderProjectAxis()}</div>`;
+
+      const host = document.createElement('div');
+      host.style.cssText = 'position:absolute; left:-100000px; top:0; background:#fff;';
+      host.innerHTML = bodyHtml;
+      document.body.appendChild(host);
+      try {
+        const root = host.querySelector('.report-root');
+        this.pinTableRowHeights(root);
+        this.pinAbsoluteBands(root);
+
+        // 分割位置はキャンバス化の前にDOM実測で取る（タイトル＋列見出し＝繰り返しヘッダー、以降は行単位）
+        const rootRect = root.getBoundingClientRect();
+        const thead = root.querySelector('table.gantt-table thead');
+        const headerBottomDom = thead ? (thead.getBoundingClientRect().bottom - rootRect.top) : 0;
+        const rowBottomsDom = Array.from(root.querySelectorAll('table.gantt-table tbody tr'))
+          .map(tr => tr.getBoundingClientRect().bottom - rootRect.top);
+        rowBottomsDom.push(rootRect.height);  // 表の後ろ（凡例）＝最後のブロック
+
+        // 印刷用に解像度は週次レポート(1.5)より上げる
+        const canvas = await html2canvas(root, { scale: 2, backgroundColor: '#ffffff', logging: false });
+        const R = canvas.width / rootRect.width;  // DOM px → canvas px
+
+        const pdf = new jspdf.jsPDF({ orientation: 'landscape', unit: 'px', format: 'a3', hotfixes: ['px_scaling'] });
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        const margin = 24;
+        // 幅はページに収まるよう縮小。表が小さいときは引き伸ばしすぎない（0.75 = 表示の1.5倍まで）
+        const drawScale = Math.min((pageW - margin * 2) / canvas.width, 0.75);
+
+        const headerC = Math.round(headerBottomDom * R);
+        const availBody = (pageH - margin * 2) / drawScale - headerC;  // 1ページに入る本文高さ（canvas px）
+
+        // 行の境界でページ割り（1行がページに収まらない場合だけ、その行は単独ページで下端切れを許容）
+        const pages = [];
+        let start = headerC;
+        let prev = headerC;
+        rowBottomsDom.map(b => Math.round(b * R)).forEach(b => {
+          if (b - start > availBody && prev > start) { pages.push([start, prev]); start = prev; }
+          prev = b;
+        });
+        if (prev > start) pages.push([start, prev]);
+
+        pages.forEach(([y0, y1], i) => {
+          if (i > 0) pdf.addPage();
+          const slice = document.createElement('canvas');
+          slice.width = canvas.width;
+          slice.height = headerC + (y1 - y0);
+          const ctx = slice.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, slice.width, slice.height);
+          if (headerC > 0) ctx.drawImage(canvas, 0, 0, canvas.width, headerC, 0, 0, canvas.width, headerC);
+          ctx.drawImage(canvas, 0, y0, canvas.width, y1 - y0, 0, headerC, canvas.width, y1 - y0);
+          pdf.addImage(slice.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, slice.width * drawScale, slice.height * drawScale);
+          pdf.setFontSize(9);
+          pdf.setTextColor(120);
+          pdf.text(`${i + 1} / ${pages.length}`, pageW - margin, pageH - 8, { align: 'right' });
+        });
+
+        pdf.save(`現場人員配置_現場別(${String(d.getFullYear()).slice(2)}.${d.getMonth() + 1}.${d.getDate()}).pdf`);
+      } finally {
+        host.remove();
+      }
+    } catch (e) {
+      console.error('現場別PDF出力失敗:', e);
+      alert('PDF出力に失敗しました: ' + (e.message || e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = orig; }
     }
   },
 

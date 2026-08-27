@@ -192,6 +192,9 @@ const GanttView = {
   updateProjectSortToolbar() {
     const wrap = document.getElementById('gantt-project-sort-wrap');
     if (wrap) wrap.style.display = (this.currentAxis === 'project') ? '' : 'none';
+    // 現場別PDF出力ボタンは現場軸のときだけ表示（本体は report.js exportProjectAxisPdf）
+    const projectPdfBtn = document.getElementById('gantt-project-pdf-btn');
+    if (projectPdfBtn) projectPdfBtn.style.display = (this.currentAxis === 'project') ? '' : 'none';
     const reverseBtn = document.getElementById('gantt-project-sort-reverse');
     if (reverseBtn) {
       reverseBtn.textContent = this.effectiveProjectSortDir() === 'asc' ? '↑' : '↓';
