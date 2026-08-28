@@ -18,6 +18,7 @@ const App = {
     management: ['admin', 'executive', 'accounting'],   // 段階E3: 経営機密。閲覧は管理者・経営者・経理のみ（RLSでも強制）。経営分析BIもこのタブ内に統合
     elearning:  ['admin'],  // 当面 admin 限定（問題の精査が済むまで一般非公開）。精査後に全ロールへ戻す。
     orgchart:   ['admin', 'editor', 'executive', 'manager', 'viewer', 'accounting'],  // 全社員に開放（階層編集は canEdit=admin/editor でガード＋RLSでも書込不可）
+    torihikisaki: ['admin', 'accounting'],  // 取引先マスタ＝経理管轄（口座・与信の機微情報を含むため閲覧も限定。RLSでも強制）
   },
   canViewTab(tab) {
     const allow = this.TAB_ROLES[tab];
@@ -37,6 +38,7 @@ const App = {
     DashboardView.init();
     ProspectsView.init();
     ContactsView.init();
+    TorihikisakiView.init();
     MemberAdd.init();
     OrgChartView.init();
     AccountsView.init();
@@ -205,6 +207,8 @@ const App = {
   setupOrgButton() {
     const orgBtn = document.getElementById('org-toggle');
     if (orgBtn) orgBtn.addEventListener('click', () => this.activateTab('orgchart'));
+    const tmBtn = document.getElementById('torihikisaki-toggle');
+    if (tmBtn) tmBtn.addEventListener('click', () => this.activateTab('torihikisaki'));
     const accBtn = document.getElementById('account-toggle');
     if (accBtn) accBtn.addEventListener('click', () => AccountsView.open());
     const auditBtn = document.getElementById('audit-toggle');
@@ -221,6 +225,8 @@ const App = {
     if (syncBtn) syncBtn.classList.toggle('hidden', !adminOnly);
     const orgBtn = document.getElementById('org-toggle');
     if (orgBtn) orgBtn.classList.toggle('hidden', !this.canViewTab('orgchart'));
+    const tmBtn = document.getElementById('torihikisaki-toggle');
+    if (tmBtn) tmBtn.classList.toggle('hidden', !this.canViewTab('torihikisaki'));
     const accBtn = document.getElementById('account-toggle');
     if (accBtn) accBtn.classList.toggle('hidden', !adminOnly);
     const auditBtn = document.getElementById('audit-toggle');
@@ -249,6 +255,9 @@ const App = {
     if (name === 'gantt') GanttView.refresh();
     if (name === 'prospects') ProspectsView.refresh();
     if (name === 'contacts') ContactsView.refresh();
+    // 取引先管理はモック準拠のフル幅レイアウト＝他タブへ移ったら通常幅へ戻す
+    TorihikisakiView.setFullBleed(name === 'torihikisaki');
+    if (name === 'torihikisaki') TorihikisakiView.refresh();
     if (name === 'orgchart') OrgChartView.refresh();
     if (name === 'management') ManagementView.refresh();
     if (name === 'elearning') ELearningView.refresh();

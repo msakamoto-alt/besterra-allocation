@@ -1,0 +1,245 @@
+/* torihikisaki.css - 取引先管理タブ専用スタイル
+ * 塩田さん画面モック（04_取引先マスタ_画面モック_260812.html）のCSSを
+ * #tab-torihikisaki スコープに移植したもの。見た目はモックが正。
+ * 差分: .side は fixed→sticky（統合管理ツールのヘッダー下に置くため）。
+ */
+#tab-torihikisaki{
+--bg:#f6f7f9;--card:#ffffff;--border:#e2e8f0;--input:#cbd5e1;--muted:#f1f5f9;
+--mf:#64748b;--mf2:#475569;--fg:#1e293b;
+--primary:#b91c1c;--primary-h:#991b1b;--primary-soft:#fecaca;--pf:#ffffff;
+--brand-grad:linear-gradient(135deg,#991b1b 0%,#b91c1c 45%,#7f1d1d 100%);
+--accent:#dc2626;--accent-bg:#fef2f2;--sansan:#0d9488;--sansan-bg:#f0fdfa;--sansan-bd:#99f6e4;
+--amber:#d97706;--amber-bg:#fffbeb;--success:#16a34a;--success-bg:#f0fdf4;
+--radius:8px;--radius-lg:12px;--shadow:0 1px 2px rgba(15,23,42,.06);--shadow-md:0 6px 18px rgba(15,23,42,.12);--shadow-lg:0 24px 60px rgba(15,23,42,.26);--topbar:rgba(246,247,249,.85);
+background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-feature-settings:"palt";}
+#tab-torihikisaki[data-theme="dark"]{--bg:#0d1117;--card:#161b22;--border:#2b3340;--input:#3a4552;--muted:#1a2029;--mf:#9aa6b4;--mf2:#c9d3de;--fg:#e6edf3;--primary-soft:#5b1a1a;--sansan-bg:#0c2b2a;--amber-bg:#2a2410;--success-bg:#0e2a1a;--accent-bg:#2c1414;--topbar:rgba(20,25,32,.86);}
+#tab-torihikisaki[data-theme="dark"] .alert.info{background:#12233e;color:#a9c7f5;border-color:#274672;}
+#tab-torihikisaki[data-theme="dark"] .alert.sansan{color:#5eead4;}
+#tab-torihikisaki[data-theme="dark"] .b-sansan{color:#5eead4;}
+#tab-torihikisaki[data-theme="dark"] .b-red{color:#fca5a5;}
+#tab-torihikisaki[data-theme="dark"] .srch kbd{color:var(--mf);}
+#tab-torihikisaki *{box-sizing:border-box;}
+#tab-torihikisaki button{font-family:inherit;cursor:pointer;}
+#tab-torihikisaki input,#tab-torihikisaki select{font-family:inherit;color:var(--fg);}
+#tab-torihikisaki .tnum{font-variant-numeric:tabular-nums;}
+#tab-torihikisaki .mf{color:var(--mf);}
+#tab-torihikisaki .btn{border:1px solid var(--border);background:var(--card);color:var(--fg);border-radius:var(--radius);padding:6px 12px;font-size:12.5px;font-weight:600;display:inline-flex;gap:6px;align-items:center;transition:.12s;white-space:nowrap;}
+#tab-torihikisaki .btn:hover{background:var(--muted);}
+#tab-torihikisaki .btn:focus-visible{outline:none;box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--primary);}
+#tab-torihikisaki .btn-primary{background:var(--primary);border-color:var(--primary);color:#fff;}
+#tab-torihikisaki .btn-primary:hover{background:var(--primary-h);}
+#tab-torihikisaki .btn-ghost{border-color:transparent;background:transparent;}
+#tab-torihikisaki .btn-ghost:hover{background:var(--muted);}
+#tab-torihikisaki .btn-sm{padding:4px 9px;font-size:11.5px;}
+#tab-torihikisaki .btn-success{background:var(--success);border-color:var(--success);color:#fff;}
+#tab-torihikisaki .btn:disabled{opacity:.45;cursor:default;}
+/* ===== プロトタイプ型レイアウト（左サイド＋トップバー） ===== */
+#tab-torihikisaki .app{display:flex;min-height:calc(100vh - 60px);align-items:stretch;}
+#tab-torihikisaki .side{width:236px;flex:none;background:var(--card);border-right:1px solid var(--border);position:sticky;top:0;height:100vh;display:flex;flex-direction:column;padding:16px 12px;z-index:20;align-self:flex-start;}
+#tab-torihikisaki .main{flex:1;min-width:0;display:flex;flex-direction:column;}
+#tab-torihikisaki .brand{display:flex;align-items:center;gap:11px;padding:4px 6px 14px;border-bottom:1px solid var(--border);}
+#tab-torihikisaki .brand .lg{width:36px;height:36px;border-radius:10px;background:var(--brand-grad);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px;box-shadow:0 4px 12px rgba(153,27,27,.28);}
+#tab-torihikisaki .brand b{font-size:14.5px;font-weight:800;}
+#tab-torihikisaki .brand span{font-size:10px;color:var(--mf);}
+#tab-torihikisaki .snav{display:flex;flex-direction:column;gap:2px;margin-top:10px;}
+#tab-torihikisaki .snav a{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:9px;color:var(--mf2);cursor:pointer;font-size:13px;font-weight:600;transition:.12s;}
+#tab-torihikisaki .snav a:hover{background:var(--muted);color:var(--fg);}
+#tab-torihikisaki .snav a.on{background:var(--accent-bg);color:var(--primary);}
+#tab-torihikisaki .snav a .i{width:17px;text-align:center;font-size:14px;opacity:.9;}
+#tab-torihikisaki .sfoot{margin-top:auto;padding:12px 6px 2px;font-size:10px;color:var(--mf);border-top:1px solid var(--border);}
+#tab-torihikisaki .top{position:sticky;top:0;z-index:15;background:var(--topbar);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:11px 24px;flex-wrap:wrap;}
+#tab-torihikisaki .top h1{font-size:16px;font-weight:800;margin:0;}
+#tab-torihikisaki .top .sp{flex:1;}
+#tab-torihikisaki .srch{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--input);border-radius:10px;padding:7px 12px;width:300px;}
+#tab-torihikisaki .srch input{border:none;outline:none;background:none;flex:1;font-size:12.5px;min-width:0;}
+#tab-torihikisaki .srch kbd{background:var(--muted);border-radius:5px;padding:0 6px;font-size:10px;color:var(--mf);}
+#tab-torihikisaki .wrap{padding:22px 24px 70px;min-width:0;}
+#tab-torihikisaki .grid2{display:grid;grid-template-columns:1fr 336px;gap:16px;align-items:start;}
+#tab-torihikisaki .sec{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 18px;margin-bottom:14px;box-shadow:var(--shadow);}
+#tab-torihikisaki .sec h3{font-size:13px;font-weight:800;margin:0 0 10px;display:flex;align-items:center;gap:8px;}
+#tab-torihikisaki .airow{padding:6px 9px;border-radius:8px;margin-bottom:6px;font-size:11.5px;}
+#tab-torihikisaki .airow.ok{background:var(--success-bg);color:var(--success);}
+#tab-torihikisaki .airow.warn{background:var(--amber-bg);color:var(--amber);}
+#tab-torihikisaki .airow.err{background:var(--accent-bg);color:var(--primary);}
+#tab-torihikisaki .syscard{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow);}
+#tab-torihikisaki .slink{display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:11.5px;border-bottom:1px solid var(--muted);}
+#tab-torihikisaki .slink:last-child{border-bottom:none;}
+#tab-torihikisaki .slink .nm2{flex:1;}
+#tab-torihikisaki h1{font-size:19px;font-weight:800;margin:0 0 3px;}
+#tab-torihikisaki .sub{color:var(--mf);font-size:12px;margin-bottom:14px;max-width:80ch;}
+#tab-torihikisaki .tool{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;position:relative;}
+#tab-torihikisaki .inp{border:1px solid var(--input);border-radius:var(--radius);padding:7px 11px;font-size:12.5px;background:var(--card);outline:none;}
+#tab-torihikisaki .inp:focus{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft);}
+#tab-torihikisaki input.inp{min-width:220px;}
+#tab-torihikisaki select.inp{min-width:0;}
+#tab-torihikisaki .count{margin-left:auto;font-size:11.5px;color:var(--mf);}
+/* table */
+#tab-torihikisaki .tbl{border-collapse:separate;border-spacing:0;width:100%;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;font-size:12.5px;box-shadow:var(--shadow);}
+#tab-torihikisaki .tbl th,#tab-torihikisaki .tbl td{padding:8px 12px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;}
+#tab-torihikisaki .tbl thead th{font-size:10px;text-transform:uppercase;color:var(--mf);font-weight:800;background:var(--muted);}
+#tab-torihikisaki .tbl tbody tr{cursor:pointer;}
+#tab-torihikisaki .tbl tbody tr:hover{background:var(--accent-bg);}
+#tab-torihikisaki .tbl tr:last-child td{border-bottom:none;}
+#tab-torihikisaki .tbl td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--mf);}
+#tab-torihikisaki .tbl .nm{font-weight:600;}
+#tab-torihikisaki .tblwrap{overflow-x:auto;}
+#tab-torihikisaki .badge{display:inline-block;font-size:10px;font-weight:800;border-radius:999px;padding:1.5px 8px;border:1px solid transparent;}
+#tab-torihikisaki .b-sansan{background:var(--sansan-bg);color:#0f766e;border-color:var(--sansan-bd);}
+#tab-torihikisaki .b-amber{background:var(--amber-bg);color:var(--amber);border-color:#fde68a;}
+#tab-torihikisaki .b-slate{background:var(--muted);color:var(--mf2);border-color:var(--border);}
+#tab-torihikisaki .b-red{background:var(--accent-bg);color:var(--primary);border-color:var(--primary-soft);}
+#tab-torihikisaki .b-green{background:var(--success-bg);color:var(--success);border-color:#bbf7d0;}
+#tab-torihikisaki .draftb{font-size:9px;font-weight:800;color:var(--amber);border:1px solid var(--amber);border-radius:5px;padding:0 4px;margin-left:5px;}
+#tab-torihikisaki .pager{display:flex;gap:10px;align-items:center;justify-content:center;margin:14px 0;}
+/* column chooser */
+#tab-torihikisaki .pop{position:absolute;top:42px;left:0;z-index:30;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);width:340px;max-height:60vh;overflow:auto;padding:12px 14px;display:none;}
+#tab-torihikisaki .pop.on{display:block;}
+#tab-torihikisaki .pop h5{margin:10px 0 4px;font-size:10px;text-transform:uppercase;color:var(--mf);font-weight:800;}
+#tab-torihikisaki .pop h5:first-child{margin-top:0;}
+#tab-torihikisaki .ck{display:flex;align-items:center;gap:7px;padding:3px 2px;font-size:12px;}
+#tab-torihikisaki .ck input{width:15px;height:15px;accent-color:var(--primary);}
+/* detail */
+#tab-torihikisaki .dhead{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 18px;box-shadow:var(--shadow);margin-bottom:12px;}
+#tab-torihikisaki .dhead h2{font-size:18px;font-weight:800;margin:0;display:inline;}
+#tab-torihikisaki .dhead .codes{font-size:11.5px;color:var(--mf);margin-top:6px;display:flex;gap:16px;flex-wrap:wrap;}
+#tab-torihikisaki .dhead .codes b{color:var(--fg);font-variant-numeric:tabular-nums;}
+#tab-torihikisaki .tabbar{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:12px;}
+#tab-torihikisaki .tb{border:none;background:none;padding:9px 15px;font-size:12.5px;font-weight:700;color:var(--mf);border-bottom:2.5px solid transparent;}
+#tab-torihikisaki .tb.on{color:var(--primary);border-bottom-color:var(--primary);}
+#tab-torihikisaki .alert{border-radius:var(--radius);padding:9px 13px;font-size:12px;margin-bottom:10px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;}
+#tab-torihikisaki .alert.info{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;}
+#tab-torihikisaki .alert.sansan{background:var(--sansan-bg);color:#0f766e;border:1px solid var(--sansan-bd);}
+#tab-torihikisaki .alert.warn{background:var(--amber-bg);color:var(--amber);border:1px solid #fde68a;}
+/* format switcher */
+#tab-torihikisaki .fmtbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px;background:var(--muted);border:1px solid var(--border);border-radius:var(--radius-lg);padding:8px 10px;}
+#tab-torihikisaki .fmtbar .lb{font-size:11px;font-weight:700;color:var(--mf);margin-right:2px;}
+#tab-torihikisaki .seg{border:1px solid var(--border);background:var(--card);border-radius:7px;padding:5px 11px;font-size:12px;font-weight:700;color:var(--mf2);}
+#tab-torihikisaki .seg.on{background:var(--primary);border-color:var(--primary);color:#fff;}
+#tab-torihikisaki .fmthint{font-size:11px;color:var(--mf);margin-left:auto;}
+/* field renderers */
+#tab-torihikisaki .blkh{font-size:12px;font-weight:800;color:var(--mf2);margin:14px 0 6px;display:flex;gap:8px;align-items:center;}
+#tab-torihikisaki .blkh::before{content:"";width:3px;height:13px;border-radius:2px;background:var(--primary);}
+#tab-torihikisaki .fgrid1{display:block;}
+#tab-torihikisaki .fgrid2{display:grid;grid-template-columns:1fr 1fr;gap:10px 18px;}
+#tab-torihikisaki .ff{margin-bottom:9px;}
+#tab-torihikisaki .ff label{display:block;font-size:11px;font-weight:700;margin-bottom:3px;color:var(--mf2);}
+#tab-torihikisaki .ff label .req{color:var(--accent);margin-left:2px;}
+#tab-torihikisaki .ff .row{display:flex;gap:6px;align-items:center;}
+#tab-torihikisaki .ff input,#tab-torihikisaki .ff select,#tab-torihikisaki .ff textarea{flex:1;border:1px solid var(--input);border-radius:var(--radius);padding:6px 9px;font-size:12.5px;background:var(--card);outline:none;min-width:0;font-family:inherit;color:var(--fg);}
+#tab-torihikisaki .ff input:focus,#tab-torihikisaki .ff select:focus,#tab-torihikisaki .ff textarea:focus{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft);}
+/* disabled でも入力元の背景色（sysf/manf）を残す＝色は「値の出どころ」を表す情報のため。
+   触れないことは下の opacity/破線ボーダーで示す（背景をグレーで潰さない） */
+#tab-torihikisaki .ff input:disabled,#tab-torihikisaki .ff textarea:disabled{color:var(--mf2);}
+/* 編集できない項目（主キー・承認制・1対多）は入力元の色を保ちつつ、触れないことを示す
+   （モックには無い状態＝実DB側の安全機構。色そのものは変えない） */
+#tab-torihikisaki .ff input:disabled,#tab-torihikisaki .ff textarea:disabled,#tab-torihikisaki .xl td input:disabled,#tab-torihikisaki .focus input:disabled{opacity:.62;cursor:not-allowed;border-style:dashed;}
+#tab-torihikisaki .src{font-size:9px;font-weight:800;border-radius:5px;padding:1px 6px;white-space:nowrap;}
+#tab-torihikisaki .src.mig{background:#eef2ff;color:#4338ca;}
+#tab-torihikisaki .src.sansan{background:var(--sansan-bg);color:#0f766e;}
+#tab-torihikisaki .src.edit{background:#f5f3ff;color:#7c3aed;}
+#tab-torihikisaki .src.code{background:var(--amber-bg);color:var(--amber);}
+#tab-torihikisaki .src.api{background:#eff6ff;color:#1d4ed8;}
+#tab-torihikisaki[data-theme="dark"] .src.api{background:#12233e;color:#a9c7f5;}
+#tab-torihikisaki .src.lock{background:var(--accent-bg);color:var(--primary);}
+/* 自動判定＝社名・住所から機械的に決めた値（2026-08-28）。API系(青)と手入力(紫)の中間色 */
+#tab-torihikisaki .src.auto{background:#ecfeff;color:#0e7490;}
+#tab-torihikisaki[data-theme="dark"] .src.auto{background:#0c2b2f;color:#67e8f9;}
+#tab-torihikisaki .src.none{color:var(--input);}
+#tab-torihikisaki .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;}
+#tab-torihikisaki .fcard{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 15px;box-shadow:var(--shadow);}
+#tab-torihikisaki .fcard h4{margin:0 0 8px;font-size:12px;font-weight:800;display:flex;gap:8px;align-items:center;}
+#tab-torihikisaki .fcard h4::before{content:"";width:3px;height:12px;border-radius:2px;background:var(--primary);}
+/* excel grid */
+#tab-torihikisaki .xl{border-collapse:separate;border-spacing:0;width:100%;background:var(--card);border:1px solid var(--input);border-radius:var(--radius);overflow:hidden;font-size:12px;}
+#tab-torihikisaki .xl th,#tab-torihikisaki .xl td{border-right:1px solid var(--border);border-bottom:1px solid var(--border);padding:0;}
+#tab-torihikisaki .xl th{background:var(--muted);font-size:10px;text-transform:uppercase;color:var(--mf);font-weight:800;padding:5px 8px;text-align:left;}
+#tab-torihikisaki .xl td.lbl{padding:5px 9px;background:var(--muted);font-weight:600;color:var(--mf2);width:270px;}
+#tab-torihikisaki .xl td.lbl .no{color:var(--mf);font-size:9.5px;margin-right:5px;}
+#tab-torihikisaki .xl td input{width:100%;border:none;padding:5px 9px;font-size:12.5px;background:transparent;outline:none;}
+#tab-torihikisaki .xl td input:focus{background:var(--sansan-bg);box-shadow:inset 0 0 0 2px var(--primary);}
+#tab-torihikisaki .xl td input:disabled{color:var(--mf);}
+#tab-torihikisaki .xl td.sc{width:74px;text-align:center;}
+/* focus mode */
+#tab-torihikisaki .focus{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:26px 30px;box-shadow:var(--shadow);text-align:center;max-width:560px;margin:0 auto;}
+#tab-torihikisaki .focus .fno{font-size:11px;color:var(--mf);font-weight:700;}
+#tab-torihikisaki .focus .flabel{font-size:17px;font-weight:800;margin:6px 0 14px;}
+#tab-torihikisaki .focus input{width:100%;border:1px solid var(--input);border-radius:var(--radius);padding:11px 13px;font-size:15px;text-align:center;outline:none;background:var(--card);color:var(--fg);}
+#tab-torihikisaki .focus input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft);}
+#tab-torihikisaki .focus input:disabled{background:var(--muted);color:var(--mf);}
+#tab-torihikisaki .focus .navr{display:flex;justify-content:space-between;align-items:center;margin-top:16px;}
+#tab-torihikisaki .focus .prog{font-size:12px;color:var(--mf);font-weight:700;}
+/* type chips */
+#tab-torihikisaki .typechips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:6px;}
+#tab-torihikisaki .tc{border:1.5px solid var(--border);background:var(--card);border-radius:999px;padding:6px 13px;font-size:12px;font-weight:700;color:var(--mf);}
+#tab-torihikisaki .tc.on{border-color:var(--primary);color:var(--primary);background:var(--accent-bg);}
+/* timeline */
+#tab-torihikisaki .tl{position:relative;padding-left:24px;}
+#tab-torihikisaki .tl::before{content:"";position:absolute;left:8px;top:4px;bottom:4px;width:2px;background:var(--border);}
+#tab-torihikisaki .tlrow{position:relative;padding:6px 0;font-size:12px;}
+#tab-torihikisaki .tldot{position:absolute;left:-20px;top:7px;width:16px;height:16px;border-radius:50%;background:var(--mf);box-shadow:0 0 0 3px var(--card);}
+#tab-torihikisaki .tldot.create{background:var(--amber);}
+#tab-torihikisaki .tldot.bot{background:var(--sansan);}
+#tab-torihikisaki .tldot.approve{background:var(--success);}
+#tab-torihikisaki .tlrow .old{text-decoration:line-through;color:var(--mf);}
+#tab-torihikisaki .tlrow .ts{color:var(--mf);font-size:10.5px;}
+/* overlay */
+#tab-torihikisaki .ov{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:60;display:none;align-items:flex-start;justify-content:center;padding:52px 16px;overflow:auto;}
+#tab-torihikisaki .ov.on{display:flex;}
+#tab-torihikisaki .dialog{background:var(--card);border-radius:var(--radius-lg);width:100%;max-width:640px;box-shadow:var(--shadow-lg);animation:tmkpop .16s ease;}
+@keyframes tmkpop{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+#tab-torihikisaki .dhd{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border);}
+#tab-torihikisaki .dhd h3{margin:0;font-size:15px;font-weight:800;}
+#tab-torihikisaki .dhd .x{margin-left:auto;border:none;background:var(--muted);border-radius:50%;width:28px;height:28px;font-size:13px;color:var(--mf);}
+#tab-torihikisaki .dbody{padding:16px 18px;}
+#tab-torihikisaki .chooser{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+#tab-torihikisaki .mcard{border:1px solid var(--border);border-radius:var(--radius-lg);padding:13px 15px;text-align:left;background:var(--card);transition:.12s;}
+#tab-torihikisaki .mcard:hover{border-color:var(--primary);box-shadow:var(--shadow-md);transform:translateY(-1px);}
+#tab-torihikisaki .mcard .t{font-weight:800;font-size:13px;margin-bottom:3px;}
+#tab-torihikisaki .mcard .d{font-size:11px;color:var(--mf);}
+#tab-torihikisaki .cmdrow{padding:8px 12px;border-radius:8px;font-size:12.5px;display:flex;gap:9px;align-items:center;cursor:pointer;}
+#tab-torihikisaki .cmdrow:hover,#tab-torihikisaki .cmdrow.sel{background:var(--muted);}
+#tmk-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(16px);background:#1e293b;color:#f6f7f9;padding:10px 20px;border-radius:11px;font-size:13px;font-weight:700;opacity:0;transition:.25s;z-index:99;pointer-events:none;box-shadow:0 24px 60px rgba(15,23,42,.26);}
+#tmk-toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+/* 未保存バー（実DB版のみ: モックの即時保存の代わりに明示保存） */
+/* 🔴保存バーは常に画面下に貼り付ける（2026-08-28 坂本さん指摘: 一番下までスクロールしないと保存できないのは面倒）。
+   sticky は「親の高さの範囲」で効くため、内側の .savebar ではなく、
+   本文の最後の子である #tmk-savebar 側に掛ける必要がある（旧実装は親が薄く効いていなかった）。 */
+#tab-torihikisaki #tmk-savebar{position:sticky;bottom:14px;z-index:25;}
+#tab-torihikisaki .savebar{display:flex;gap:10px;align-items:center;background:var(--card);border:1.5px solid var(--amber);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);padding:10px 16px;margin-top:14px;}
+#tab-torihikisaki .savebar b{color:var(--amber);}
+@media(max-width:1000px){#tab-torihikisaki .app{display:block;}#tab-torihikisaki .side{display:none;}#tab-torihikisaki .grid2{grid-template-columns:1fr;}}
+@media(max-width:760px){#tab-torihikisaki .chooser{grid-template-columns:1fr;}#tab-torihikisaki .fgrid2{grid-template-columns:1fr;}}
+/* ===== 2026-08-26 未実装項目の実装で追加 ===== */
+/* 複数欄（社名カナ・本社住所・送付先など）: 積み上げ入力＋小ラベル */
+#tab-torihikisaki .subs{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
+#tab-torihikisaki .subrow{display:flex;gap:6px;align-items:center;}
+#tab-torihikisaki .subrow .sublbl{flex:0 0 74px;font-size:10px;font-weight:700;color:var(--mf);text-align:right;}
+#tab-torihikisaki .subrow input,#tab-torihikisaki .subrow select{flex:1;min-width:0;}
+#tab-torihikisaki .sgen{flex:0 0 auto;font-size:10px;padding:3px 8px;white-space:nowrap;}
+#tab-torihikisaki .subnote{font-size:10px;margin-top:2px;}
+/* 種別フラグのチェックボックス */
+#tab-torihikisaki .typeck{flex:1;display:flex;gap:4px 12px;flex-wrap:wrap;padding:4px 0;}
+#tab-torihikisaki .typeck .ck{display:flex;gap:5px;align-items:center;font-size:12px;white-space:nowrap;}
+/* 行編集カード（支払条件・旧社名・文書）と支店詳細 */
+#tab-torihikisaki .rcform,#tab-torihikisaki .bdetail{border:1.5px solid var(--primary);border-radius:8px;padding:9px 11px;margin:4px 0 8px;font-size:12px;background:var(--accent-bg);}
+#tab-torihikisaki .rcform .inp,#tab-torihikisaki .bdetail .inp{border:1px solid var(--input);border-radius:var(--radius);padding:5px 8px;font-size:12px;background:var(--card);color:var(--fg);outline:none;font-family:inherit;}
+#tab-torihikisaki .rcform .inp:focus,#tab-torihikisaki .bdetail .inp:focus{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft);}
+/* Excel風グリッド・フォーカス表示でも複数欄が収まるように */
+#tab-torihikisaki .xl td .subs{padding:3px 0;}
+#tab-torihikisaki .focus .subs{margin-top:4px;}
+/* ===== #86 建設業許可 業種(29業種) チェックグリッド（2026-08-28） ===== */
+#tab-torihikisaki .k29{flex:1;min-width:0;}   /* .ff .row=flex の中で横幅を使い切る */
+#tab-torihikisaki .k29g{display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:4px;}
+#tab-torihikisaki .k29c{display:flex;align-items:center;gap:3px;border:1px solid var(--border);border-radius:7px;padding:3px 6px;background:var(--card);min-width:0;}
+#tab-torihikisaki .k29c.sel{border-color:var(--primary);background:var(--accent-bg);}
+#tab-torihikisaki .k29n{flex:1;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#tab-torihikisaki .k29b{border:1px solid var(--border);background:var(--card);color:var(--mf);border-radius:5px;font-size:10.5px;font-weight:700;padding:1px 5px;line-height:1.5;flex:none;}
+#tab-torihikisaki .k29b:hover{background:var(--muted);}
+#tab-torihikisaki .k29b.on{background:var(--primary);border-color:var(--primary);color:#fff;}
+#tab-torihikisaki .k29b[data-k29v="特"].on{background:var(--amber);border-color:var(--amber);}
+#tab-torihikisaki .k29f{display:flex;gap:12px;align-items:baseline;margin-top:5px;font-size:10.5px;color:var(--mf);flex-wrap:wrap;}
+#tab-torihikisaki .xl td .k29g{grid-template-columns:repeat(auto-fill,minmax(112px,1fr));}
+
+/* ===== Box資料ビュー（2026-08-28）: フォルダをそのまま埋め込む ===== */
+#tab-torihikisaki .boxwrap{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow);height:calc(100vh - 330px);min-height:460px;}
+#tab-torihikisaki .boxwrap iframe{width:100%;height:100%;border:0;display:block;}

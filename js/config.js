@@ -20,3 +20,6 @@ Sync.USE_SUPABASE = true;
 
 // アカウント管理 Edge Function の実デプロイ名（ダッシュボードが付けた名前に合わせる）
 Sync.ADMIN_FN = 'admin-users';
+
+// ※開発用の上書き（取引先マスタの学習用DB接続など）は js/config.local.js に置く。
+//   config.js は追跡ファイルなので、公開してはいけない値をここに書かない。

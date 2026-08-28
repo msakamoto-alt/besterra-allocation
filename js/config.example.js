@@ -20,3 +20,9 @@ Sync.SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 Sync.USE_SUPABASE = true;
 
 Sync.ADMIN_FN = 'admin-users';
+
+// ===== 開発用の上書きは js/config.local.js（.gitignore済み）へ =====
+// 例: 取引先管理タブだけ別のSupabaseプロジェクトに向ける（開発・検証用）
+//   Sync.TORIHIKISAKI_DB = { url: 'https://YOUR_DEV_PROJECT.supabase.co', anonKey: 'YOUR_DEV_ANON_KEY' };
+// 未設定なら本体と同じSupabaseを使う＝本番の形。
+// 🔴 RLSを外した検証用DBのキーは config.js（追跡ファイル）に書かないこと。

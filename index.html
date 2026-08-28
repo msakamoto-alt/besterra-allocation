@@ -7,6 +7,7 @@
   <title>ベステラ 統合管理ツール</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="css/styles.css?v=202606262000">
+  <link rel="stylesheet" href="css/torihikisaki.css?v=202608281520">
 </head>
 <body class="bg-slate-50">
 
@@ -98,6 +99,7 @@
       <div class="flex items-center gap-3 text-sm">
         <span id="role-badge" class="hidden bg-white/20 text-white font-semibold px-2.5 py-1 rounded">—</span>
         <button id="org-toggle" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg>組織図</button>
+        <button id="torihikisaki-toggle" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/><path d="M9 9v.01"/><path d="M9 12v.01"/><path d="M9 15v.01"/><path d="M9 18v.01"/></svg>取引先管理</button>
         <button id="account-toggle" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>アカウント</button>
         <button id="audit-toggle" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>監査ログ</button>
         <button id="sync-button" class="hidden bg-white/15 hover:bg-white/25 border border-white/30 px-3 py-1.5 rounded transition">同期</button>
@@ -311,6 +313,34 @@
         </div>
         <div id="dash-content"></div>
       </section>
+
+      <!-- ========== タブ：取引先管理（取引先マスタ・admin+accounting限定） ==========
+           レイアウト＝塩田さん画面モック（04_取引先マスタ_画面モック_260812.html）を実DB接続で再現。
+           左サイド（会社一覧/新規登録・編集/システム連携/変更履歴）＋トップバー（検索/CSV出力/CSV取込/＋新規登録） -->
+      <section id="tab-torihikisaki" class="tab-panel hidden">
+        <div class="app">
+          <aside class="side">
+            <div class="brand"><div class="lg">B</div><div><b>取引先マスタ</b><br><span>ベステラ・最上位マスタ</span></div></div>
+            <nav class="snav" id="tmk-snav"></nav>
+            <div class="sfoot">実データ <span id="tmk-foot-count">—</span>社 収載 ・ 学習用DB<br>承認フロー: 口座・新規登録は本人以外の承認制<br>
+              <button class="btn btn-sm" id="tmk-theme" style="width:100%;margin-top:8px">◐ テーマ切替</button></div>
+          </aside>
+          <div class="main">
+            <div class="top">
+              <h1 id="tmk-title">会社一覧</h1><div class="sp"></div>
+              <div class="srch"><span class="mf">🔎</span><input id="tmk-q" placeholder="社名・番号・コードで検索" autocomplete="off"><kbd id="tmk-kbd">Ctrl K</kbd></div>
+              <button class="btn" id="tmk-exp">⤓ CSV出力</button>
+              <button class="btn" id="tmk-imp">⤒ CSV取込</button><input type="file" id="tmk-impf" accept=".csv" style="display:none">
+              <button class="btn btn-primary" id="tmk-new">＋ 新規登録</button>
+            </div>
+            <main class="wrap" id="tmk-wrap"></main>
+          </div>
+        </div>
+        <div class="ov" id="tmk-ov-chooser"><div class="dialog"><div class="dhd"><h3>新規登録：入力方法を選ぶ</h3><button class="x" data-tmk-ovclose>✕</button></div><div class="dbody" id="tmk-chooser-body"></div></div></div>
+        <div class="ov" id="tmk-ov-cmd" style="align-items:flex-start;padding-top:80px"><div class="dialog" style="max-width:540px"><div class="dhd" style="padding:10px 14px"><input class="inp" id="tmk-cmd-input" placeholder="会社名・コードで検索…" style="width:100%;border:none;box-shadow:none;font-size:14px" autocomplete="off"></div><div class="dbody" style="padding:8px"><div id="tmk-cmd-list" style="max-height:340px;overflow:auto"></div></div></div></div>
+        <div class="ov" id="tmk-ov-csv"><div class="dialog"><div class="dhd"><h3>CSV取込の確認</h3><button class="x" data-tmk-ovclose>✕</button></div><div class="dbody" id="tmk-csv-body"></div></div></div>
+      </section>
+      <div id="tmk-toast"></div>
 
       <!-- ========== タブ：社内連絡先（電話番号表） ========== -->
       <section id="tab-contacts" class="tab-panel hidden">
@@ -900,6 +930,9 @@
   <script src="js/views/dashboard.js?v=202608171700"></script>
   <script src="js/views/prospects.js?v=202607151030"></script>
   <script src="js/views/contacts.js?v=202607151900"></script>
+  <script src="js/views/torihikisaki_meta.js?v=202608261720"></script>
+  <script src="js/views/torihikisaki_enrich.js?v=202608261720"></script>
+  <script src="js/views/torihikisaki.js?v=202608281520"></script>
   <script src="js/views/member_add.js?v=202607061100"></script>
   <script src="js/views/orgchart.js?v=202607061100"></script>
   <script src="js/views/accounts.js?v=202607061100"></script>
@@ -908,6 +941,8 @@
   <script src="js/views/elearning.js?v=202607061100"></script>
   <script src="js/views/board.js?v=202606251600"></script>
   <script src="js/config.js?v=202607061100" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
+  <!-- 開発用の上書き（.gitignore済み・無くても動く） -->
+  <script src="js/config.local.js?v=202608251900" onerror="console.info('config.local.js なし（本番構成で動作）')"></script>
   <script src="js/app.js?v=202607161030"></script>
   <!-- 統合管理ツールのペット「ピー」（多人数対応・ログイン済みadminのみ表示＝パイロット） -->
   <script src="js/pet-embed.js?v=202607160900"></script>
