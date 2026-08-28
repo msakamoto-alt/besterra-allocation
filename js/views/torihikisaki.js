@@ -188,6 +188,13 @@ const TorihikisakiView = {
       { path: 'company_billing.order_send_to#fax', label: 'FAX', dtype: 'VARCHAR(20)' },
       { path: 'company_billing.order_send_to#email', label: 'メール', dtype: 'VARCHAR(200)' },
     ],
+    // 🔴移行データでは正規化名＝社名・代表者名の**そのままの写し**（2,563社/1,736社で実測）。
+    //   「正規化」の実際の規則（株式会社の除去・空白の扱い等）は設計書に無く未確定＝塩田さん確認事項。
+    //   推測でルールを作らず、写すだけのボタンにしてある（人が手直しできる）。
+    131: [
+      { path: 'company.search_name_normalized', label: '社名（検索用）', dtype: 'VARCHAR(200)', gen: 'searchName', genLabel: '社名から写す' },
+      { path: 'company.search_rep_normalized', label: '代表者名（検索用）', dtype: 'VARCHAR(100)', gen: 'searchRep', genLabel: '代表者名から写す' },
+    ],
     132: [
       { path: 'company.suspend_reason', label: '理由', dtype: 'VARCHAR(200)' },
       { path: 'company.suspend_merged_into', label: '統合先(マスタ番号)', dtype: 'VARCHAR(8)', norm: 'cid' },
@@ -306,6 +313,14 @@ const TorihikisakiView = {
     '信用金庫', '信用組合', '労働金庫'],
   AUTO_BY_NO: { 14: 'entity', 15: 'domestic' },
 
+  // ===== 承認制の印はあるが「手入力を許す」項目（2026-08-28 坂本さん指示） =====
+  // 🔴口座（#66-70）は入れない。口座は承認フロー（本人以外のadmin/accountingが承認）を維持する。
+  //   反社系は確定手段（RoboRobo等の反社チェックAPI）が未契約で、
+  //   #39は設計上の取得元が「手入力」、#41は「社内判断(経理)」＝人が入れる前提なのに欄が無かった。
+  //   誰が変えたかは変更履歴（changed_by）に残るので、履歴で追跡できる。
+  //   ⚠️API自動補完の対象外である点は変えていない（torihikisaki_enrich.js は f.approval で独立に除外）。
+  MANUAL_OK: { 37: 1, 38: 1, 39: 1, 41: 1, 117: 1, 131: 1 },
+
   // 自動判定の本体。get(path)=その時点の値。判定できなければ null（＝埋めない）
   //   戻り値 {val, why}: why はボタンのtitleとトーストで人に理由を見せるため
   autoJudge(no, get) {
@@ -340,6 +355,7 @@ const TorihikisakiView = {
     111: '基幹（teraServation／Salesforce等）からの参照です（「取引履歴」タブ）',
     115: '右の「文書（Boxリンク）」カードで追加できます',
     116: '右の「文書（Boxリンク）」カードで追加できます',
+    117: '右の「文書（Boxリンク）」カードで追加できます（種類＝反社調査票）',
     118: '右の「文書（Boxリンク）」カードで追加できます',
     120: 'システムが自動記録します',
     121: 'システムが自動記録します',
@@ -377,7 +393,7 @@ const TorihikisakiView = {
   // 項目の編集計画。null=編集不可（承認制・システム記録・未定義）
   //   {kind:'single', path, dtype} / {kind:'multi', subs} / {kind:'type'} / {kind:'card', note}
   editPlan(f) {
-    if (f.approval) return null;
+    if (f.approval && !this.MANUAL_OK[f.no]) return null;
     if (this.CARD_NOTE[f.no]) return { kind: 'card', note: this.CARD_NOTE[f.no] };
     if (this.SUBFIELDS[f.no]) return { kind: 'multi', subs: this.SUBFIELDS[f.no] };
     if (f.no === 53) return { kind: 'type' };
@@ -387,7 +403,7 @@ const TorihikisakiView = {
     // #86 業種(29業種)はチェック式（般/特チップ）。パス・保存形式はsingle時代と同一
     if (pm && f.no === 86) return { kind: 'kyoka29', path: `permit_license[${pm[0]}].${pm[1]}`, dtype: f.dtype || 'VARCHAR(200)' };
     if (pm) return { kind: 'single', path: `permit_license[${pm[0]}].${pm[1]}`, dtype: f.dtype || 'VARCHAR(40)' };
-    if (this.isEditable(f)) {
+    if (this.isFormEditable(f)) {
       return { kind: 'single', path: f.col, dtype: f.dtype,
         options: this.CHOICES[f.no], optionLabels: this.CHOICE_LABELS[f.no],
         auto: !!this.AUTO_BY_NO[f.no] };
@@ -846,6 +862,19 @@ const TorihikisakiView = {
   },
 
   // 編集できる項目か（1社1行テーブル・承認不要・非ロック・非JSONB・単一列）
+  // フォーム内で編集できるか。承認制でも MANUAL_OK の項目（反社系）は通す。
+  // 🔴isEditable() 自体は緩めない＝CSV取込の対象列判定にも使われており、
+  //   承認制の項目がCSVで一括更新できるようになるのは意図しないため。
+  MANUAL_TABLES: ['company', 'compliance_check'],
+  isFormEditable(f) {
+    if (this.isEditable(f)) return true;
+    if (!this.MANUAL_OK[f.no]) return false;
+    if (!f.col || f.col === '-.-' || f.col.includes('/')) return false;
+    if (this.LOCKED_COLS.includes(f.col)) return false;
+    if ((f.dtype || '').toUpperCase().includes('JSONB')) return false;
+    return this.MANUAL_TABLES.includes(f.col.split('.')[0]);
+  },
+
   isEditable(f) {
     if (!f.col || f.col === '-.-') return false;
     if (f.approval) return false;
@@ -1196,7 +1225,15 @@ const TorihikisakiView = {
         const targetPath = btn.dataset.gtarget;
         const f = ownerOf[targetPath];
         let out;
-        if (btn.dataset.gen === 'halfKana') {
+        if (btn.dataset.gen === 'searchName' || btn.dataset.gen === 'searchRep') {
+          const srcPath = btn.dataset.gen === 'searchName' ? 'company.official_name' : 'company.representative_name';
+          let src = api.get(srcPath);
+          if (!String(src || '').trim() && this.detail && this.detail.company) {
+            src = this.detail.company[srcPath.replace('company.', '')];
+          }
+          if (!String(src || '').trim()) { this.toast(btn.dataset.gen === 'searchName' ? '正式社名が空です' : '代表者名が空です'); return; }
+          out = String(src).trim();
+        } else if (btn.dataset.gen === 'halfKana') {
           const src = api.get('company.name_kana');
           if (!String(src || '').trim()) { this.toast('先に全角カナを入れてください'); return; }
           out = this.toHalfKana(src);
@@ -1510,6 +1547,13 @@ const TorihikisakiView = {
       if (this.sameVal(oldV, newV)) return;
       changes.push({ path, p, f: meta.f, label: meta.label, oldV, newV });
     });
+    // 🔴compliance_check.checked_on は NOT NULL。行がまだ無い会社で「結果」「有効期限」だけを
+    //   保存しようとすると insert が失敗するため、保存前に分かる言葉で止める。
+    const ccCh = changes.filter(c => c.p.table === 'compliance_check');
+    if (ccCh.length && !(this.detail.compliance_check || []).length
+        && !ccCh.some(c => c.p.column === 'checked_on' && c.newV)) {
+      errs.push('・反社チェック: 先に「反社チェック実施日」を入れてください（実施日がないと記録を作れません）');
+    }
     if (errs.length) { alert('入力を確認してください。\n\n' + errs.join('\n')); return; }
     if (!changes.length && !typeChange) { this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.renderSavebar(); return; }
 
@@ -1987,7 +2031,7 @@ const TorihikisakiView = {
     document: {
       pk: ['document_id'],
       cols: [
-        { c: 'doc_type', l: '種類', dt: 'VARCHAR(30)', req: true, options: ['permit', 'contract', 'meishi'] },
+        { c: 'doc_type', l: '種類', dt: 'VARCHAR(30)', req: true, options: ['permit', 'contract', 'meishi', 'survey'] },
         { c: 'file_url', l: 'URL（Boxの共有リンク）', dt: 'VARCHAR(500)', req: true },
         { c: 'valid_until', l: '有効期限', dt: 'DATE' },
       ],
