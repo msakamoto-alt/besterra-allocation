@@ -216,6 +216,8 @@ const TorihikisakiView = {
     46: ['普通', '臨時'],                        // 項目名「与信種類(普通/臨時)」
     56: ['工事', '非工事'],                      // 項目名「工事/非工事 区分」
     99: ['外注', '常用'],                        // 項目名「外注/常用区分」
+    12: ['上場', '非上場'],                       // 坂本さん指示(2026-08-28)。実データは「上場」9社のみで
+                                                //  「非上場」の実例は無いが、区分の対として運用で使う
     122: ['migration', 'sansan', 'hojin', 'dup', 'quick'],   // 実装の作成経路（NEW_METHOD_LABELS＋移行）
   },
   // データ出所は内部コードで持つため、表示名を別に持つ（#122）
@@ -312,6 +314,21 @@ const TorihikisakiView = {
     '生活協同組合', '農業協同組合', '協同組合', '有限責任事業組合', '共済組合', '組合',
     '信用金庫', '信用組合', '労働金庫'],
   AUTO_BY_NO: { 14: 'entity', 15: 'domestic' },
+
+  // ===== 他の項目の値で入力できなくなる項目（2026-08-28 坂本さん指示） =====
+  // 例: 上場区分が「非上場」なら 上場市場 は入れられない（矛盾した値を作らせない）。
+  // 🔴既に入っている値は消さない（グレーにするだけ）。値を消すかどうかは人が決めること。
+  //   ただし**その場で入力中だった未保存の変更は取り消す**（入力できない欄の編集を保存させないため）。
+  LINKED_DISABLE: {
+    13: { by: 'company.listing_class', when: ['非上場'], why: '上場区分が「非上場」のため入力できません' },
+  },
+  // その項目がいま入力できない状態か（api.get で「未保存を重ねた現在値」を見る）
+  linkedOff(f, api) {
+    const d = this.LINKED_DISABLE[f.no];
+    if (!d) return null;
+    const cur = String(api.get(d.by) === undefined || api.get(d.by) === null ? '' : api.get(d.by)).trim();
+    return d.when.indexOf(cur) >= 0 ? d : null;
+  },
 
   // ===== 承認制の印はあるが「手入力を許す」項目（2026-08-28 坂本さん指示） =====
   // 🔴口座（#66-70）は入れない。口座は承認フロー（本人以外のadmin/accountingが承認）を維持する。
@@ -1032,30 +1049,32 @@ const TorihikisakiView = {
   // 🔴背景色（入力元の色分け）は廃止（坂本さん指示 2026-08-26）。
   //   色は「設計上の取得元」を表していたが、実際の出所は右の出所バッジが正となったため、
   //   二重の表現をやめて入力欄は白に統一する。
-  inputByDtype(path, dtype, val, opts) {
+  inputByDtype(path, dtype, val, opts, off) {
     const dt = (dtype || '').toUpperCase();
     const p = this.esc(path);
     const v = val === null || val === undefined ? '' : String(val);
     const o = opts || {};
+    // 連動グレーアウト（他項目の値で入力できない）。値は残したまま操作だけ止める
+    const dis = off ? ' disabled' : '';
     if (dt.startsWith('BOOLEAN')) {
       const cur = v === 'true' || v === 'はい' ? 'true' : (v === 'false' || v === 'いいえ' ? 'false' : '');
-      return `<select data-path="${p}">` +
+      return `<select data-path="${p}"${dis}>` +
         `<option value=""${cur === '' ? ' selected' : ''}>（未設定）</option>` +
         `<option value="true"${cur === 'true' ? ' selected' : ''}>はい</option>` +
         `<option value="false"${cur === 'false' ? ' selected' : ''}>いいえ</option></select>`;
     }
-    if (dt.startsWith('DATE') && !dt.startsWith('DATETIME')) return `<input type="date" data-path="${p}" value="${this.esc(v.slice(0, 10))}">`;
+    if (dt.startsWith('DATE') && !dt.startsWith('DATETIME')) return `<input type="date" data-path="${p}" value="${this.esc(v.slice(0, 10))}"${dis}>`;
     if (o.options) {
       // 🔴選択肢に無い既存値は必ず option として残す。消すと編集した瞬間に元の値が失われる
       //   （移行データには不正値も混じっている＝見えるようにして人が直せる状態にする）
       const lbl = x => (o.optionLabels && o.optionLabels[x]) || x;
       const unknown = v !== '' && o.options.indexOf(v) < 0;
-      return `<select data-path="${p}"><option value=""${v === '' ? ' selected' : ''}>（未設定）</option>` +
+      return `<select data-path="${p}"${dis}><option value=""${v === '' ? ' selected' : ''}>（未設定）</option>` +
         (unknown ? `<option value="${this.esc(v)}" selected>${this.esc(v)}（現在値・選択肢外）</option>` : '') +
         o.options.map(x => `<option value="${this.esc(x)}"${v === x ? ' selected' : ''}>${this.esc(lbl(x))}</option>`).join('') + '</select>';
     }
     const m = dt.match(/^(?:VARCHAR|CHAR)\((\d+)\)/);
-    return `<input type="text" data-path="${p}" value="${this.esc(v)}" ${m ? `maxlength="${m[1]}"` : ''}>`;
+    return `<input type="text" data-path="${p}" value="${this.esc(v)}" ${m ? `maxlength="${m[1]}"` : ''}${dis}>`;
   },
   // 🔴DBの日時列は TIMESTAMP（タイムゾーンなし）で、Supabaseの now() は **UTC** で入る。
   //   そのまま出すと9時間前にずれる（2026-08-28に坂本さん指摘→実測で確認）ため、
@@ -1124,9 +1143,11 @@ const TorihikisakiView = {
     if (!plan) return this.roInput(api.val(f));
     if (plan.kind === 'card') return this.roInput(api.val(f)) + `<div class="mf subnote">${this.esc(plan.note)}</div>`;
     if (plan.kind === 'single') {
+      const off = this.linkedOff(f, api);
       const inp = this.inputByDtype(plan.path, plan.dtype, api.get(plan.path),
-        plan.options ? { options: plan.options, optionLabels: plan.optionLabels } : null);
-      return inp;   // 自動判定の説明は出所バッジ「自動判定」だけでよい（坂本さん指示 2026-08-28）
+        plan.options ? { options: plan.options, optionLabels: plan.optionLabels } : null, off);
+      // 自動判定の説明は出所バッジ「自動判定」だけでよい（坂本さん指示 2026-08-28）
+      return off ? inp + `<div class="mf subnote">${this.esc(off.why)}</div>` : inp;
     }
     if (plan.kind === 'kyoka29') return this.k29ControlHtml(plan.path, api.get(plan.path));
     if (plan.kind === 'multi') {
@@ -1204,10 +1225,43 @@ const TorihikisakiView = {
       const badge = host.querySelector(`.src[data-src="${CSS.escape(f.col)}"]`);
       if (badge) { const [sc, sl] = api.srcOf(f); badge.className = 'src ' + sc; badge.textContent = sl; }
     };
+    // 連動グレーアウトの反映。再描画せずDOMだけ触る（入力中のフォーカスを奪わないため）
+    const syncLinked = () => {
+      fields.forEach(f => {
+        if (!this.LINKED_DISABLE[f.no]) return;
+        const plan = this.editPlan(f);
+        if (!plan || plan.kind !== 'single') return;
+        const el = host.querySelector(`[data-path="${CSS.escape(plan.path)}"]`);
+        if (!el) return;
+        const off = this.linkedOff(f, api);
+        if (!!el.disabled === !!off) return;                 // 変化なし
+        el.disabled = !!off;
+        if (off) {
+          // 入力できない欄の未保存の編集は取り消す（保存に乗せない）。保存済みの値は消さない。
+          // 新規登録フォームには「保存済みの値」が無いので空に戻す
+          const back = this.isNew ? '' : (this.editValOf(plan.path) || '');
+          api.set(f, plan.path, back);
+          el.value = back;
+        }
+        refreshBadge(f);
+        const row = el.closest('.ff') || el.parentElement;
+        const note = row && row.querySelector('.subnote');
+        if (off && !note && row) {
+          const dv = document.createElement('div');
+          dv.className = 'mf subnote';
+          dv.textContent = off.why;
+          (el.parentElement || row).appendChild(dv);
+        } else if (!off && note) { note.remove(); }
+      });
+    };
+
     host.querySelectorAll('[data-path]').forEach(inp => {
       const f = ownerOf[inp.dataset.path];
       if (!f) return;
-      const handler = () => { api.set(f, inp.dataset.path, inp.value); refreshBadge(f); };
+      const handler = () => {
+        api.set(f, inp.dataset.path, inp.value); refreshBadge(f);
+        syncLinked();                       // 連動でグレーになる欄をその場で切り替える
+      };
       inp.addEventListener('input', handler);
       if (inp.tagName === 'SELECT') inp.addEventListener('change', handler);
       if (this.fmt === 'Excel風グリッド') inp.addEventListener('keydown', e => {
