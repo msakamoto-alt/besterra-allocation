@@ -265,6 +265,39 @@ const TorihikisakiView = {
     { t: '清', n: '清掃施設', full: '清掃施設工事業' },
     { t: '解', n: '解体', full: '解体工事業' },
   ],
+  // ===== #93 対応地域(47都道府県) チェック式入力（2026-08-28 坂本さん指示） =====
+  // 「後で集計しやすいように」＝**都道府県名をそのままセミコロン区切りで保存**する。
+  //   コードや記号にせず名前で持つので、CSVやSQLでそのまま数えられる（LIKE '%東京都%' で足りる）。
+  // 🔴文字数の裏取り: 47都道府県の名前は合計144文字＋区切り46＝**全選択でも190文字**。
+  //   列は VARCHAR(200) なので収まる（余裕10文字）。超えた場合は既存の文字数検証が止める。
+  // 🔴実データは空（company_subcontractor は1行のみ・service_areas は全て空）＝
+  //   移行データの形式に合わせる制約が無いので、素直に読める形式を選べる。
+  // 地方でまとめて選べるようにする（1つずつ47回押させない）。並びは北から南。
+  AREA_GROUPS: [
+    ['北海道', ['北海道']],
+    ['東北', ['青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県']],
+    ['関東', ['茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県']],
+    ['中部', ['新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県', '岐阜県', '静岡県', '愛知県']],
+    ['近畿', ['三重県', '滋賀県', '京都府', '大阪府', '兵庫県', '奈良県', '和歌山県']],
+    ['中国', ['鳥取県', '島根県', '岡山県', '広島県', '山口県']],
+    ['四国', ['徳島県', '香川県', '愛媛県', '高知県']],
+    ['九州・沖縄', ['福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県']],
+  ],
+  // 「都道府県名;都道府県名;…」→ { set:{名:true}, extra:[選択肢外] }
+  areaParse(val) {
+    const set = {}, extra = [];
+    String(val || '').split(/[;；,、]/).forEach(t => {
+      const v = t.trim();
+      if (!v) return;
+      if (this.PREFS.indexOf(v) >= 0) set[v] = true;
+      else extra.push(v);       // 🔴選択肢外の値は消さない（既存の原則）
+    });
+    return { set, extra };
+  },
+  areaSerialize(set, extra) {
+    return this.PREFS.filter(x => set[x]).concat(extra || []).join(';');
+  },
+
   // 移行の旧列（学習用153/153行で現行「と」「解」と完全重複を実測）。元の値に存在した場合のみ
   // 現行トークンと同値で連動保存する（新規入力では作らない）。塩田さんへ列廃止の確認事項あり。
   K29_LEGACY: { 'とび土工(旧列)': 'と', '解体(旧列)': '解' },
@@ -420,6 +453,8 @@ const TorihikisakiView = {
     // #86 業種(29業種)はチェック式（般/特チップ）。パス・保存形式はsingle時代と同一
     if (pm && f.no === 86) return { kind: 'kyoka29', path: `permit_license[${pm[0]}].${pm[1]}`, dtype: f.dtype || 'VARCHAR(200)' };
     if (pm) return { kind: 'single', path: `permit_license[${pm[0]}].${pm[1]}`, dtype: f.dtype || 'VARCHAR(40)' };
+    // #93 対応地域(47都道府県)もチェック式。パス・保存形式は従来の1列のまま
+    if (f.no === 93 && this.isFormEditable(f)) return { kind: 'area47', path: f.col, dtype: f.dtype || 'VARCHAR(200)' };
     if (this.isFormEditable(f)) {
       return { kind: 'single', path: f.col, dtype: f.dtype,
         options: this.CHOICES[f.no], optionLabels: this.CHOICE_LABELS[f.no],
@@ -432,7 +467,7 @@ const TorihikisakiView = {
   fieldPaths(f) {
     const plan = this.editPlan(f);
     if (!plan) return [];
-    if (plan.kind === 'single' || plan.kind === 'kyoka29') return [plan.path];
+    if (plan.kind === 'single' || plan.kind === 'kyoka29' || plan.kind === 'area47') return [plan.path];
     if (plan.kind === 'multi') return plan.subs.map(s => s.path);
     if (plan.kind === 'type') return ['company_type'];
     return [];
@@ -1137,6 +1172,30 @@ const TorihikisakiView = {
       `<div class="k29f"><span class="k29cnt"></span>${notes.length ? `<span class="k29lg">${notes.join(' ／ ')}</span>` : ''}</div></div>`;
   },
 
+  // #93 47都道府県のチェックグリッド。値は hidden input（data-path）に
+  // 「都道府県名;都道府県名;…」で持ち、操作のたびに再直列化して既存の pending/保存/履歴に乗せる。
+  area47ControlHtml(path, val) {
+    const st = this.areaParse(val);
+    const v = val === null || val === undefined ? '' : String(val);
+    const groups = this.AREA_GROUPS.map(([g, prefs]) => {
+      const on = prefs.filter(x => st.set[x]).length;
+      const all = on === prefs.length;
+      return `<div class="a47g"><button type="button" class="a47h${all ? ' on' : (on ? ' part' : '')}" data-a47g="${this.esc(g)}"` +
+        ` title="${this.esc(g)}をまとめて選ぶ／外す">${this.esc(g)}<span class="a47n">${on}/${prefs.length}</span></button>` +
+        '<div class="a47p">' + prefs.map(x =>
+          `<button type="button" class="a47b${st.set[x] ? ' on' : ''}" data-a47="${this.esc(x)}">${this.esc(x)}</button>`).join('') +
+        '</div></div>';
+    }).join('');
+    const note = st.extra.length
+      ? `<span class="a47x">選択肢外の値（そのまま保持）: ${this.esc(st.extra.join(';'))}</span>` : '';
+    return `<div class="a47" data-a47-extra="${this.esc(JSON.stringify(st.extra))}">` +
+      `<input type="hidden" data-path="${this.esc(path)}" value="${this.esc(v)}">` +
+      '<div class="a47t"><button type="button" class="btn btn-sm" data-a47all="1">全国（47件）</button>' +
+      '<button type="button" class="btn btn-sm" data-a47all="0">すべて外す</button>' +
+      `<span class="a47c"></span>${note}</div>` +
+      `<div class="a47gs">${groups}</div></div>`;
+  },
+
   // 項目の値エリア（編集計画に応じて出し分け）
   fieldControl(f, api) {
     const plan = this.editPlan(f);
@@ -1150,6 +1209,7 @@ const TorihikisakiView = {
       return off ? inp + `<div class="mf subnote">${this.esc(off.why)}</div>` : inp;
     }
     if (plan.kind === 'kyoka29') return this.k29ControlHtml(plan.path, api.get(plan.path));
+    if (plan.kind === 'area47') return this.area47ControlHtml(plan.path, api.get(plan.path));
     if (plan.kind === 'multi') {
       return '<div class="subs">' + plan.subs.map(s => {
         const opts = s.optionsFrom ? { options: this[s.optionsFrom] } : {};
@@ -1310,6 +1370,45 @@ const TorihikisakiView = {
         if (f) refreshBadge(f);
       });
     });
+    // #93 47都道府県のチェックグリッド（県ボタン／地方まとめ／全国／全解除）
+    host.querySelectorAll('.a47').forEach(box => {
+      const inp = box.querySelector('input[data-path]');
+      const apply = () => {
+        const set = {};
+        box.querySelectorAll('.a47b.on').forEach(b => { set[b.dataset.a47] = true; });
+        let extra = [];
+        try { extra = JSON.parse(box.dataset.a47Extra || '[]'); } catch (e) { /* 属性破損時は空扱い */ }
+        this.AREA_GROUPS.forEach(([g, prefs]) => {
+          const on = prefs.filter(x => set[x]).length;
+          const h = box.querySelector(`[data-a47g="${CSS.escape(g)}"]`);
+          if (!h) return;
+          h.classList.toggle('on', on === prefs.length);
+          h.classList.toggle('part', on > 0 && on < prefs.length);
+          const nn = h.querySelector('.a47n');
+          if (nn) nn.textContent = `${on}/${prefs.length}`;
+        });
+        const c = box.querySelector('.a47c');
+        const n = Object.keys(set).length;
+        if (c) c.textContent = n ? `選択中: ${n}都道府県` : '未選択';
+        inp.value = this.areaSerialize(set, extra);
+        inp.dispatchEvent(new Event('input'));   // 既存の[data-path]ハンドラ（pending）に乗せる
+      };
+      box.querySelectorAll('.a47b').forEach(b => b.addEventListener('click', () => {
+        b.classList.toggle('on'); apply();
+      }));
+      box.querySelectorAll('[data-a47g]').forEach(h => h.addEventListener('click', () => {
+        const prefs = (this.AREA_GROUPS.find(x => x[0] === h.dataset.a47g) || [null, []])[1];
+        const all = prefs.every(x => box.querySelector(`[data-a47="${CSS.escape(x)}"]`).classList.contains('on'));
+        prefs.forEach(x => box.querySelector(`[data-a47="${CSS.escape(x)}"]`).classList.toggle('on', !all));
+        apply();
+      }));
+      box.querySelectorAll('[data-a47all]').forEach(b => b.addEventListener('click', () => {
+        const on = b.dataset.a47all === '1';
+        box.querySelectorAll('.a47b').forEach(x => x.classList.toggle('on', on));
+        apply();
+      }));
+      apply();
+    });
     // #86 29業種チェックグリッド（般/特チップ。同じチップ再クリックで解除）
     host.querySelectorAll('.k29').forEach(box => {
       const inp = box.querySelector('input[data-path]');
@@ -1462,7 +1561,7 @@ const TorihikisakiView = {
     for (const f of TM_META.FIELDS) {
       const plan = this.editPlan(f);
       if (!plan) continue;
-      if ((plan.kind === 'single' || plan.kind === 'kyoka29') && plan.path === path) return { f, dtype: plan.dtype, label: f.name };
+      if ((plan.kind === 'single' || plan.kind === 'kyoka29' || plan.kind === 'area47') && plan.path === path) return { f, dtype: plan.dtype, label: f.name };
       if (plan.kind === 'multi') {
         const s = plan.subs.find(x => x.path === path);
         if (s) return { f, dtype: s.dtype, label: `${f.name}（${s.label}）`, norm: s.norm };
