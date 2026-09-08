@@ -35,6 +35,9 @@ const TorihikisakiView = {
   PER: 50,
   colPopOpen: false,
   stateFilter: 'active',   // active / suspended / temp / all（実装側の追加機能・モックには無い）
+  typeFilter: '',          // 種別で絞り込み（type_code・空＝すべて）（2026-09-08 坂本さん指示）
+  sortNo: null,            // 一覧のソート列（項目No・1＝取引先マスタ番号・null＝並べ替えなし）
+  sortDir: 1,              // 1＝昇順 / -1＝降順
   pending: {},          // 詳細の未保存編集 col -> 入力文字列
   autoPaths: {},        // そのうち「自動判定」で入れたパス（履歴のchanged_byに印を付ける）
   autoWhy: {},          // その判定理由（画面の注記に出す） path -> 理由
@@ -705,6 +708,7 @@ const TorihikisakiView = {
     if (this.stateFilter === 'active' && r.is_suspended) return false;
     if (this.stateFilter === 'suspended' && !r.is_suspended) return false;
     if (this.stateFilter === 'temp' && (r.registration_stage !== 'temp' || r.is_suspended)) return false;
+    if (this.typeFilter && !(this.typesByCid[r.company_id] || []).includes(this.typeFilter)) return false;
     if (!q) return true;
     const code = (this.codesByCid[r.company_id] || {}).tera || '';
     return this.norm(r.official_name).includes(q) || this.norm(r.name_kana).includes(q)
@@ -714,7 +718,22 @@ const TorihikisakiView = {
 
   filtered() {
     const q = this.norm(this.filtQ);
-    return (this.rows || []).filter(r => this.matches(r, q));
+    const a = (this.rows || []).filter(r => this.matches(r, q));
+    // 列見出しクリックのソート（空は末尾・数値は数値順・文字は日本語順）
+    if (this.sortNo) {
+      const f = this.sortNo === 1 ? null : this.fieldByNo(this.sortNo);
+      const key = r => this.sortNo === 1 ? +r.company_id : (f ? this.getListVal(r, f) : null);
+      const empty = v => v === null || v === undefined || v === '';
+      const dir = this.sortDir;
+      a.sort((x, y) => {
+        const kx = key(x), ky = key(y);
+        if (empty(kx)) return empty(ky) ? 0 : 1;
+        if (empty(ky)) return -1;
+        if (typeof kx === 'number' && typeof ky === 'number') return (kx - ky) * dir;
+        return String(kx).localeCompare(String(ky), 'ja') * dir;
+      });
+    }
+    return a;
   },
 
   // ===== 会社一覧 =====
@@ -728,7 +747,9 @@ const TorihikisakiView = {
     if (this.page < 0) this.page = 0;
     const cols = this.listCols.map(no => this.fieldByNo(no)).filter(Boolean);
 
-    let html = `<div class="sub">棚卸で洗い出した <b>${this.rows.length.toLocaleString()}社</b>を全件収載（50社/ページ）。表示列は「表示列」で自由に選択。取引先マスタ番号＝通し番号（1〜）、コード＝teraServation／勘定奉行／Bill One 共通のシステムコード（マスタ番号とは別物）。</div>
+    const sortMark = no => this.sortNo === no ? (this.sortDir > 0 ? ' ▲' : ' ▼') : '';
+    const thCls = no => 'sortable' + (this.sortNo === no ? ' sorted' : '');
+    let html = `<div class="sub">棚卸で洗い出した <b>${this.rows.length.toLocaleString()}社</b>を全件収載（50社/ページ）。表示列は「表示列」で自由に選択。列見出しをクリックすると並べ替え（昇順→降順→解除）。取引先マスタ番号＝通し番号（1〜）、コード＝teraServation／勘定奉行／Bill One 共通のシステムコード（マスタ番号とは別物）。</div>
     <div class="tool">
       <button class="btn" id="tmk-colbtn">▤ 表示列（${cols.length}）</button>
       <select class="inp" id="tmk-state" title="状態で絞り込み">
@@ -737,10 +758,14 @@ const TorihikisakiView = {
         <option value="temp"${this.stateFilter === 'temp' ? ' selected' : ''}>申請中のみ</option>
         <option value="all"${this.stateFilter === 'all' ? ' selected' : ''}>すべて</option>
       </select>
+      <select class="inp" id="tmk-type" title="種別で絞り込み">
+        <option value=""${this.typeFilter === '' ? ' selected' : ''}>すべての種別</option>
+        ${Object.keys(TM_META.TYPE_CODES).map(c => `<option value="${c}"${this.typeFilter === c ? ' selected' : ''}>${this.esc(TM_META.TYPE_CODES[c])}</option>`).join('')}
+      </select>
       <span class="count">${a.length.toLocaleString()} 社</span>
       <div class="pop ${this.colPopOpen ? 'on' : ''}" id="tmk-colpop"></div>
     </div>
-    <div class="tblwrap"><table class="tbl"><thead><tr><th>取引先マスタ番号</th>${cols.map(f => `<th>${this.esc(f.name)}</th>`).join('')}</tr></thead><tbody>`;
+    <div class="tblwrap"><table class="tbl"><thead><tr><th class="${thCls(1)}" data-sort="1" title="クリックで並べ替え">取引先マスタ番号${sortMark(1)}</th>${cols.map(f => `<th class="${thCls(f.no)}" data-sort="${f.no}" title="クリックで並べ替え">${this.esc(f.name)}${sortMark(f.no)}</th>`).join('')}</tr></thead><tbody>`;
     a.slice(this.page * this.PER, (this.page + 1) * this.PER).forEach(r => {
       const stateB = r.is_suspended ? '<span class="badge b-red" style="margin-left:5px">欠番</span>'
         : r.registration_stage === 'temp' ? '<span class="draftb">申請中</span>' : '';
@@ -758,6 +783,13 @@ const TorihikisakiView = {
     this.el('tmk-colbtn').onclick = e => { e.stopPropagation(); this.colPopOpen = !this.colPopOpen; this.renderList(); };
     if (this.colPopOpen) this.renderColPop();
     this.el('tmk-state').onchange = e => { this.stateFilter = e.target.value; this.page = 0; this.renderList(); };
+    this.el('tmk-type').onchange = e => { this.typeFilter = e.target.value; this.page = 0; this.renderList(); };
+    wrap.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
+      const no = +th.dataset.sort;
+      if (this.sortNo === no) { if (this.sortDir === 1) this.sortDir = -1; else { this.sortNo = null; this.sortDir = 1; } }
+      else { this.sortNo = no; this.sortDir = 1; }
+      this.page = 0; this.renderList();
+    });
     wrap.querySelectorAll('tr[data-cid]').forEach(tr => tr.onclick = () => this.openDetail(tr.dataset.cid));
     this.el('tmk-pgp').onclick = () => { this.page--; this.renderList(); };
     this.el('tmk-pgn').onclick = () => { this.page++; this.renderList(); };
@@ -1108,6 +1140,8 @@ const TorihikisakiView = {
         (unknown ? `<option value="${this.esc(v)}" selected>${this.esc(v)}（現在値・選択肢外）</option>` : '') +
         o.options.map(x => `<option value="${this.esc(x)}"${v === x ? ' selected' : ''}>${this.esc(lbl(x))}</option>`).join('') + '</select>';
     }
+    // 自由記述（TEXT）は3行のテキストエリア＝改行して書ける（2026-09-08 坂本さん指示・備考など）
+    if (dt === 'TEXT') return `<textarea data-path="${p}" rows="3"${dis}>${this.esc(v)}</textarea>`;
     const m = dt.match(/^(?:VARCHAR|CHAR)\((\d+)\)/);
     return `<input type="text" data-path="${p}" value="${this.esc(v)}" ${m ? `maxlength="${m[1]}"` : ''}${dis}>`;
   },
@@ -1223,7 +1257,7 @@ const TorihikisakiView = {
       return '<div class="typeck">' + TM_META.TYPES.map(t => {
         const code = Object.keys(TM_META.TYPE_CODES).find(c => TM_META.TYPE_CODES[c] === t);
         return `<label class="ck"><input type="checkbox" data-tmk-type="${this.esc(code)}" ${cur.includes(t) ? 'checked' : ''}>${this.esc(t)}</label>`;
-      }).join('') + '</div><div class="mf subnote">外した種別の入力値は消えませんが、画面に表示されなくなります（保存で確定）</div>';
+      }).join('') + '</div>';
     }
     return this.roInput(api.val(f));
   },

@@ -20,7 +20,7 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki[data-theme="dark"] .srch kbd{color:var(--mf);}
 #tab-torihikisaki *{box-sizing:border-box;}
 #tab-torihikisaki button{font-family:inherit;cursor:pointer;}
-#tab-torihikisaki input,#tab-torihikisaki select{font-family:inherit;color:var(--fg);}
+#tab-torihikisaki input,#tab-torihikisaki select,#tab-torihikisaki textarea{font-family:inherit;color:var(--fg);}
 #tab-torihikisaki .tnum{font-variant-numeric:tabular-nums;}
 #tab-torihikisaki .mf{color:var(--mf);}
 #tab-torihikisaki .btn{border:1px solid var(--border);background:var(--card);color:var(--fg);border-radius:var(--radius);padding:6px 12px;font-size:12.5px;font-weight:600;display:inline-flex;gap:6px;align-items:center;transition:.12s;white-space:nowrap;}
@@ -77,6 +77,9 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki .tbl{border-collapse:separate;border-spacing:0;width:100%;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;font-size:12.5px;box-shadow:var(--shadow);}
 #tab-torihikisaki .tbl th,#tab-torihikisaki .tbl td{padding:8px 12px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;}
 #tab-torihikisaki .tbl thead th{font-size:10px;text-transform:uppercase;color:var(--mf);font-weight:800;background:var(--muted);}
+#tab-torihikisaki .tbl thead th.sortable{cursor:pointer;user-select:none;}
+#tab-torihikisaki .tbl thead th.sortable:hover{color:var(--primary);}
+#tab-torihikisaki .tbl thead th.sorted{color:var(--primary);}
 #tab-torihikisaki .tbl tbody tr{cursor:pointer;}
 #tab-torihikisaki .tbl tbody tr:hover{background:var(--accent-bg);}
 #tab-torihikisaki .tbl tr:last-child td{border-bottom:none;}
@@ -159,6 +162,11 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki .xl td input{width:100%;border:none;padding:5px 9px;font-size:12.5px;background:transparent;outline:none;}
 #tab-torihikisaki .xl td input:focus{background:var(--sansan-bg);box-shadow:inset 0 0 0 2px var(--primary);}
 #tab-torihikisaki .xl td input:disabled{color:var(--mf);}
+#tab-torihikisaki .xl td textarea{display:block;width:100%;border:none;padding:5px 9px;font-size:12.5px;background:transparent;outline:none;resize:vertical;min-height:3.9em;line-height:1.45;}
+#tab-torihikisaki .xl td textarea:focus{background:var(--sansan-bg);box-shadow:inset 0 0 0 2px var(--primary);}
+#tab-torihikisaki .xl td textarea:disabled{color:var(--mf);}
+#tab-torihikisaki .ff textarea,#tab-torihikisaki .focus textarea{resize:vertical;min-height:3.9em;line-height:1.45;width:100%;}
+#tab-torihikisaki .focus textarea{border:1px solid var(--input);border-radius:var(--radius);padding:6px 9px;font-size:12.5px;background:var(--card);outline:none;}
 #tab-torihikisaki .xl td.sc{width:74px;text-align:center;}
 /* focus mode */
 #tab-torihikisaki .focus{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:26px 30px;box-shadow:var(--shadow);text-align:center;max-width:560px;margin:0 auto;}
