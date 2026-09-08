@@ -797,11 +797,11 @@ const TM_META = {
   "no": 55,
   "block": "種別・状態",
   "name": "取引先大区分",
-  "must": "必須",
-  "must3": "②種別別必須",
+  "must": "任意",
+  "must3": "任意",
   "col": "company.major_class",
   "dtype": "VARCHAR(20)",
-  "source": "社内判断(経理)",
+  "source": "種別から自動（顧客・施主=入金先／支払先系・販管費先=支払先）※2026-09-08 坂本さん指示で表示専用・必須解除",
   "sansan": "×",
   "types": [
    "*"

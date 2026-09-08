@@ -444,6 +444,17 @@ const TorihikisakiView = {
     return p.column;
   },
 
+  // #55 取引先大区分＝種別から自動で決める表示専用の項目（坂本さん 2026-09-08）。
+  //   顧客・施主 → 入金先／支払先系8種別＋販管費先 → 支払先／両方 → 入金先・支払先／種別なし → 空。
+  //   DB の company.major_class は種別の保存時に同期する（一覧・配信用）。手入力はしない。
+  PAYEE_CODES: ['subcontractor', 'survey3d', 'analysis', 'waste', 'lease', 'material', 'fuel', 'security', 'sga'],
+  majorClassOf(codes) {
+    const cs = codes || [];
+    const inn = cs.some(c => c === 'customer' || c === 'owner');
+    const out = cs.some(c => this.PAYEE_CODES.includes(c));
+    return inn && out ? '入金先・支払先' : inn ? '入金先' : out ? '支払先' : null;
+  },
+
   // 項目の編集計画。null=編集不可（承認制・システム記録・未定義）
   //   {kind:'single', path, dtype} / {kind:'multi', subs} / {kind:'type'} / {kind:'card', note}
   editPlan(f) {
@@ -451,6 +462,7 @@ const TorihikisakiView = {
     if (this.CARD_NOTE[f.no]) return { kind: 'card', note: this.CARD_NOTE[f.no] };
     if (this.SUBFIELDS[f.no]) return { kind: 'multi', subs: this.SUBFIELDS[f.no] };
     if (f.no === 53) return { kind: 'type' };
+    if (f.no === 55) return { kind: 'card', note: '種別から自動で決まります（顧客・施主＝入金先／支払先系・販管費先＝支払先）' };
     const sys = this.SYSTEM_BY_NO[f.no];
     if (sys) return { kind: 'single', path: `system_code[${sys}].code`, dtype: 'VARCHAR(20)' };
     const pm = this.PERMIT_BY_NO[f.no];
@@ -699,6 +711,7 @@ const TorihikisakiView = {
     if (this.SYSTEM_BY_NO[f.no]) return (this.codesByCid[row.company_id] || {})[this.SYSTEM_BY_NO[f.no]] || null;
     if (f.col === 'company_type.type_code')
       return (this.typesByCid[row.company_id] || []).map(t => TM_META.TYPE_CODES[t] || t).join('・') || null;
+    if (f.no === 55) return this.majorClassOf(this.typesByCid[row.company_id] || []);
     const m = (f.col || '').match(/^company\.(.+)$/);
     if (!m) return null;                                                  // 1対多テーブルの項目は一覧では出せない（詳細で確認）
     const vals = m[1].split('/').map(s => this.fmtVal(row[s.trim()])).filter(Boolean);
@@ -1069,6 +1082,7 @@ const TorihikisakiView = {
     // 自動判定で入った（人が触っていない）未保存値は「自動判定」と見せる。人が触れば「編集中」
     if (pend.length) return pend.every(p => this.autoPaths[p]) ? ['auto', '自動判定'] : ['edit', '編集中'];
     if (f.no === 1) return ['code', 'コード'];
+    if (f.no === 55) return this.majorClassOf(this.pendingTypeCodes()) ? ['auto', '種別から自動'] : ['none', '—'];
     const v = this.fieldDisplay(f, d);
     if (v === null || String(v).trim() === '') return ['none', '—'];
     // 値がある → 実際の出所を履歴から判定。履歴が無ければ移行データのまま
@@ -1080,6 +1094,7 @@ const TorihikisakiView = {
 
   // 項目の表示値（読み取り用）。編集パスがある項目は各パスの生値・無ければ resolveField
   fieldDisplay(f, d) {
+    if (f.no === 55) return this.majorClassOf(this.pendingTypeCodes());
     const plan = this.editPlan(f);
     if (plan && plan.kind === 'single') return this.fmtVal(this.rawByPath(plan.path, d));
     if (plan && plan.kind === 'multi') {
@@ -1799,6 +1814,8 @@ const TorihikisakiView = {
       // 自動判定で入れた値は印を残す → 出所バッジが「自動判定」になる（人が直せば次は印なし＝手入力）
       changed_by: this.autoPaths[c.path] ? who + '(自動判定)' : who,
     }));
+    // #55 取引先大区分は種別から自動＝種別が変わったら company.major_class も同期（表示は常に種別から導く）
+    if (typeChange) (plainPatch['company'] = plainPatch['company'] || {}).major_class = this.majorClassOf(typeChange.next);
     if (typeChange) histRows.push({
       company_id: cid, table_name: 'company_type', column_name: 'type_code',
       old_value: typeChange.oldL, new_value: typeChange.newL, changed_by: who,
