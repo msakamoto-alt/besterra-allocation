@@ -1206,7 +1206,7 @@ const TorihikisakiView = {
     return `<div class="k29" data-k29-legacy="${this.esc(JSON.stringify(st.legacy))}" data-k29-extra="${this.esc(JSON.stringify(st.extra))}">` +
       `<input type="hidden" data-path="${this.esc(path)}" value="${this.esc(v)}">` +
       `<div class="k29g">${cells}</div>` +
-      `<div class="k29f"><span class="k29cnt"></span>${notes.length ? `<span class="k29lg">${notes.join(' ／ ')}</span>` : ''}</div></div>`;
+      `<div class="k29f"><span class="k29cnt"></span><span class="k29lg">未＝許可あり・一般／特定は未確認</span>${notes.length ? `<span class="k29lg">${notes.join(' ／ ')}</span>` : ''}</div></div>`;
   },
 
   // #93 47都道府県のチェックグリッド。値は hidden input（data-path）に
