@@ -247,6 +247,7 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki .k29b:hover{background:var(--muted);}
 #tab-torihikisaki .k29b.on{background:var(--primary);border-color:var(--primary);color:#fff;}
 #tab-torihikisaki .k29b[data-k29v="特"].on{background:var(--amber);border-color:var(--amber);}
+#tab-torihikisaki .k29b[data-k29v="未"].on{background:var(--mf);border-color:var(--mf);}
 #tab-torihikisaki .k29f{display:flex;gap:12px;align-items:baseline;margin-top:5px;font-size:10.5px;color:var(--mf);flex-wrap:wrap;}
 #tab-torihikisaki .xl td .k29g{grid-template-columns:repeat(auto-fill,minmax(112px,1fr));}
 

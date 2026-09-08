@@ -235,6 +235,7 @@ const TorihikisakiView = {
 
   // ===== #86 建設業許可 業種(29業種) チェック式入力（2026-08-28 坂本さん指示） =====
   // 保存形式は移行データと同じ「略号=般;略号=特;…」の文字列（DB・履歴・CSVは従来のまま）。
+  // 2026-09-08 坂本さん指示: 般／特が分からない業種は「未」（略号=未）で持つ＝Pleasanter（新規取引会社一覧）由来の許可は般／特の情報が無いため。ボタンは 未・般・特 の3つ。
   // t=保存トークン（移行データの略号が正。🔴タイルは漢字の「夕」=移行元Excel準拠。カタカナ「タ」も読取は受ける）
   // n=表示名／full=正式名（title表示）。並びは経審の29業種順（土建大左と…清解）。経審コード01〜29は扱わない。
   K29: [
@@ -305,7 +306,7 @@ const TorihikisakiView = {
   // 現行トークンと同値で連動保存する（新規入力では作らない）。塩田さんへ列廃止の確認事項あり。
   K29_LEGACY: { 'とび土工(旧列)': 'と', '解体(旧列)': '解' },
 
-  // 「略号=般;…」→ { map: {トークン: '般'|'特'}, legacy: {旧列名: true}, extra: [選択肢外トークン] }
+  // 「略号=般;…」→ { map: {トークン: '未'|'般'|'特'}, legacy: {旧列名: true}, extra: [選択肢外トークン] }
   k29Parse(val) {
     const map = {}, legacy = {}, extra = [];
     String(val || '').split(';').forEach(tok => {
@@ -316,7 +317,7 @@ const TorihikisakiView = {
       const v = i < 0 ? '' : t.slice(i + 1);
       if (this.K29_LEGACY[k] !== undefined) { legacy[k] = true; return; }
       const key = k === 'タ' ? '夕' : k;
-      if (this.K29.some(x => x.t === key) && (v === '般' || v === '特')) { map[key] = v; return; }
+      if (this.K29.some(x => x.t === key) && (v === '未' || v === '般' || v === '特')) { map[key] = v; return; }
       extra.push(t);   // 🔴選択肢外の値は消さない（既存プルダウンと同じ原則）
     });
     return { map, legacy, extra };
@@ -1196,7 +1197,7 @@ const TorihikisakiView = {
       const cur = st.map[k.t] || '';
       return `<div class="k29c${cur ? ' sel' : ''}" data-k29t="${this.esc(k.t)}" title="${this.esc(k.full)}">` +
         `<span class="k29n">${this.esc(k.n)}</span>` +
-        ['般', '特'].map(x => `<button type="button" class="k29b${cur === x ? ' on' : ''}" data-k29v="${x}">${x}</button>`).join('') +
+        ['未', '般', '特'].map(x => `<button type="button" class="k29b${cur === x ? ' on' : ''}" data-k29v="${x}" title="${x === '未' ? '許可あり・一般か特定かは未確認' : x === '般' ? '一般建設業' : '特定建設業'}">${x}</button>`).join('') +
         '</div>';
     }).join('');
     const notes = [];
