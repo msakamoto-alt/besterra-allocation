@@ -1015,6 +1015,7 @@ const TorihikisakiView = {
       '<b>データの出所:</b>' +
       '<span><span class="src mig">移行</span> 棚卸2026の移行データのまま</span>' +
       '<span><span class="src edit">手入力</span> 画面・CSVで人が入力</span>' +
+      '<span><span class="src pleasanter">Pleasanter</span> 新規取引会社一覧（Pleasanter）から取込</span>' +
       '<span><span class="src api">gBizINFO API</span> 外部APIから取得（人が採用）</span>' +
       '<span><span class="src code">コード</span> 会社マスタIDの採番・各システム側のコード</span>' +
       '<span class="mf">🔒＝承認が必要な項目（右の口座カードから申請）</span></div>';
@@ -1033,6 +1034,7 @@ const TorihikisakiView = {
     if (/\(Sansan/i.test(s)) return ['api', 'Sansan API'];
     if (/\(国税庁|\(invoice/i.test(s)) return ['api', '国税庁API'];
     if (/\(自動判定\)/.test(s)) return ['auto', '自動判定'];
+    if (/Pleasanter/i.test(s)) return ['pleasanter', 'Pleasanter'];   // 新規取引会社一覧（Pleasanter）からの取込（2026-09-08）
     if (/migration/i.test(s)) return ['mig', '移行'];
     return ['edit', '手入力'];   // 人名（画面編集・手動CSV取込）
   },

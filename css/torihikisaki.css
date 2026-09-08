@@ -141,6 +141,7 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki .src.mig{background:#eef2ff;color:#4338ca;}
 #tab-torihikisaki .src.sansan{background:var(--sansan-bg);color:#0f766e;}
 #tab-torihikisaki .src.edit{background:#f5f3ff;color:#7c3aed;}
+#tab-torihikisaki .src.pleasanter{background:#fff1f2;color:#be123c;}
 #tab-torihikisaki .src.code{background:var(--amber-bg);color:var(--amber);}
 #tab-torihikisaki .src.api{background:#eff6ff;color:#1d4ed8;}
 #tab-torihikisaki[data-theme="dark"] .src.api{background:#12233e;color:#a9c7f5;}
