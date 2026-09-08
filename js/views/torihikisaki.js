@@ -1517,8 +1517,7 @@ const TorihikisakiView = {
         <h2>${this.esc(c.official_name || '')}</h2>${stateB}${approveBtn}
         <button class="btn btn-sm" id="tmk-dup" style="float:right" title="この会社の枠組みを複製して新規登録">⧉ 複製</button>
         <div class="codes"><span>取引先マスタ番号 <b>${+c.company_id || '—'}</b></span>
-          <span>取引先コード <b>${this.esc(code || '未採番')}</b> <span class="mf">（teraServation・勘定奉行オンプレで共通。各システムへは手動転記）</span></span>
-          <span>データ出所 <b>${this.esc(c.data_source === 'migration' ? '移行(棚卸2026)' : (this.NEW_METHOD_LABELS[c.data_source] || c.data_source || '—'))}</b></span></div>
+          <span>取引先コード <b>${this.esc(code || '未採番')}</b></span></div>
       </div>
       <div class="tabbar">
         <button class="tb ${this.dtab === 'basic' ? 'on' : ''}" data-t="basic">基本情報（項目）</button>
