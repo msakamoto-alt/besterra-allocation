@@ -653,6 +653,9 @@ const TorihikisakiView = {
         this.rows = companies;
         const fc = this.el('tmk-foot-count');
         if (fc) fc.textContent = companies.length.toLocaleString();
+        // 接続先の表示は固定文にしない（本番サイトで「学習用DB」と出ていた・2026-09-09）
+        const fdb = this.el('tmk-foot-db');
+        if (fdb) fdb.textContent = (Sync.TORIHIKISAKI_DB && Sync.TORIHIKISAKI_DB.url) ? '学習用DB' : '本番DB';
       } catch (e) {
         const wrap = this.el('tmk-wrap');
         if (wrap) wrap.innerHTML = `<div class="alert warn">取引先マスタの読み込みに失敗しました: ${this.esc(String(e.message || e))}</div>`;
