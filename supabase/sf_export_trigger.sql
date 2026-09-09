@@ -18,14 +18,16 @@ create or replace function public.notify_sf_export() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
   cid varchar(8);
+  sysname text;
 begin
-  cid := coalesce(
-    case when tg_op = 'DELETE' then old.company_id else new.company_id end,
-    case when tg_op = 'DELETE' then null else old.company_id end);
+  -- 🔴列の参照はテーブルごとに分けて書く（PL/pgSQL は AND の右側も評価するため、
+  --   company の行で old.system を参照すると「record "old" has no field "system"」で保存自体が失敗する＝2026-09-09 実害）
+  if tg_op = 'DELETE' then cid := old.company_id; else cid := new.company_id; end if;
   if cid is null then return null; end if;
   -- sf-export 自身の書き戻し（system_code system='salesforce'）で往復しない
-  if tg_table_name = 'system_code' and (case when tg_op = 'DELETE' then old.system else new.system end) = 'salesforce' then
-    return null;
+  if tg_table_name = 'system_code' then
+    if tg_op = 'DELETE' then sysname := old.system; else sysname := new.system; end if;
+    if sysname = 'salesforce' then return null; end if;
   end if;
   perform net.http_post(
     url := 'https://pajmsowweswaxowrbiwr.supabase.co/functions/v1/sf-export',
