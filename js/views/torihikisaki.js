@@ -2919,7 +2919,10 @@ const TorihikisakiView = {
   ilogRunLine(r) {
     const c = r.counts || {}; const n = k => Number(c[k] || 0).toLocaleString();
     const when = this.jstStamp(r.at);
-    if (r.kind === 'note') return `${when}　<b>${this.esc(r.actor || '')}</b>　${this.esc(r.message || '')}`;
+    if (r.kind === 'note') {
+      const ev = r.event_on && r.event_on !== when.slice(0, 10) ? ` <span class="badge b-slate" title="記録した日時と出来事の日付が違う（後から書き起こした記録）">出来事 ${this.esc(r.event_on)}</span>` : '';
+      return `${when}　<b>${this.esc(r.actor || '')}</b>${ev}　${this.esc(r.message || '')}`;
+    }
     if (r.kind === 'error') return `${when}　<span class="badge b-amber">失敗</span> ${this.esc(r.action || '')}（${this.esc(r.trigger || '')}）${this.esc(r.message || '')}`;
     if (r.action === 'link') return `${when}　突合：キー付与 ${n('linked')}・失敗 ${n('failed')}（${this.esc(r.trigger || '')}）`;
     const scope = (r.company_ids && r.company_ids.length) ? `対象 ${r.company_ids.length}社` : '全件';
@@ -2961,8 +2964,8 @@ const TorihikisakiView = {
         (trigRows ? `<table class="tbl" style="margin-top:4px"><thead><tr><th>契機</th><th>実行回数</th><th>送信社数</th><th>失敗</th><th>関数エラー</th></tr></thead><tbody>${trigRows}</tbody></table>` : '<div class="mf">まだ実績がありません</div>') + '</div>' +
         `<div style="margin-top:8px"><b style="font-size:12px">最終配信</b><div class="mf" style="font-size:11.5px;line-height:1.7">${rows.filter(r => r.kind !== 'note').slice(0, 3).map(r => `<div>${this.ilogRunLine(r)}</div>`).join('') || '—'}</div></div>` +
         `<div style="margin-top:8px"><b style="font-size:12px">出来事の記録（人が書いたもの・新しい順）</b>` +
-        (notes.length ? `<table class="tbl" style="margin-top:4px;table-layout:fixed;width:100%"><thead><tr><th style="width:130px">日時</th><th style="width:150px">記録者</th><th>内容</th></tr></thead><tbody>` +
-          notes.slice(0, 8).map(r => `<tr style="cursor:default"><td class="tnum" style="white-space:normal">${this.esc(this.jstStamp(r.at))}</td><td class="mf" style="white-space:normal;word-break:break-all">${this.esc(r.actor || '')}</td><td class="mf" style="white-space:normal;word-break:break-word">${this.esc(r.message || '')}</td></tr>`).join('') + '</tbody></table>' : '<div class="mf">まだ記録がありません</div>') +
+        (notes.length ? `<table class="tbl" style="margin-top:4px;table-layout:fixed;width:100%"><thead><tr><th style="width:130px">記録日時</th><th style="width:90px">出来事</th><th style="width:150px">記録者</th><th>内容</th></tr></thead><tbody>` +
+          notes.slice(0, 8).map(r => `<tr style="cursor:default"><td class="tnum" style="white-space:normal">${this.esc(this.jstStamp(r.at))}</td><td class="tnum" style="white-space:normal">${this.esc(r.event_on || '')}</td><td class="mf" style="white-space:normal;word-break:break-all">${this.esc(r.actor || '')}</td><td class="mf" style="white-space:normal;word-break:break-word">${this.esc(r.message || '')}</td></tr>`).join('') + '</tbody></table>' : '<div class="mf">まだ記録がありません</div>') +
         `<div class="mf" style="font-size:11px;margin-top:4px"><a data-goilog style="cursor:pointer;text-decoration:underline">連携ログを開く</a></div></div>`;
       el.querySelectorAll('[data-goilog]').forEach(x => x.onclick = () => this.go('ilog'));
     } catch (e) {
@@ -2983,7 +2986,8 @@ const TorihikisakiView = {
       `<select class="inp" id="tmk-ilog-kind"><option value="">すべて</option><option value="run"${kind === 'run' ? ' selected' : ''}>配信・突合</option><option value="error"${kind === 'error' ? ' selected' : ''}>失敗</option><option value="note"${kind === 'note' ? ' selected' : ''}>出来事の記録</option></select></div>` +
       (canNote ? `<div class="fcard" style="margin-bottom:10px"><b style="font-size:12px">出来事を記録する</b><div class="mf" style="font-size:11px">記録者＝${this.esc(Sync.email || '')}</div>` +
         `<textarea class="inp" id="tmk-ilog-note" rows="2" style="width:100%;margin-top:4px" placeholder="例: 本番 org 向けの書込用アプリを作成し、Secrets を差し替えた"></textarea>` +
-        `<div style="margin-top:6px"><button class="btn btn-sm" id="tmk-ilog-add">記録を追加</button> <span class="mf" id="tmk-ilog-msg" style="font-size:11px"></span></div></div>` : '') +
+        `<div style="margin-top:6px;display:flex;gap:8px;align-items:center"><span class="mf" style="font-size:11px">出来事の日付</span><input type="date" class="inp" id="tmk-ilog-date" value="${this.esc(this.jstToday())}" max="${this.esc(this.jstToday())}" style="width:150px">` +
+        `<button class="btn btn-sm" id="tmk-ilog-add">記録を追加</button> <span class="mf" id="tmk-ilog-msg" style="font-size:11px"></span></div></div>` : '') +
       '<div id="tmk-ilog-list"><p class="mf" style="padding:12px">読み込み中…</p></div>';
     this.el('tmk-ilog-kind').onchange = e => { this.ilogKind = e.target.value; this.renderIlogGlobal(); };
     const addBtn = this.el('tmk-ilog-add');
@@ -2993,7 +2997,9 @@ const TorihikisakiView = {
       if (!text) { msg.textContent = '内容を入力してください'; return; }
       addBtn.disabled = true;
       try {
-        const res = await Sync.getSupabase().from('integration_log').insert({ system: 'salesforce', kind: 'note', actor: Sync.email || 'unknown', message: text });
+        // 記録日時（at）と記録者（actor）は送らない＝DB のトリガが now() とログイン情報で付ける（人が時刻を決めない）
+        const eventOn = (this.el('tmk-ilog-date') || {}).value || null;
+        const res = await Sync.getSupabase().from('integration_log').insert({ system: 'salesforce', kind: 'note', message: text, event_on: eventOn });
         if (res.error) throw new Error(res.error.message);
         ta.value = ''; msg.textContent = '記録しました'; this.renderIlogGlobal();
       } catch (e) { msg.textContent = '記録できませんでした: ' + String(e && e.message || e).slice(0, 80); }
