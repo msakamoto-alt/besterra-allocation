@@ -2899,7 +2899,6 @@ const TorihikisakiView = {
         `<td class="mf">${this.esc(r.note)}</td></tr>`).join('') +
       '</tbody></table></div>' +
       '<div class="fcard" style="margin-top:12px"><h3 style="margin:0 0 6px">接続の記録：Salesforce dev6（検証用サンドボックス）</h3>' +
-      '<div class="mf" style="font-size:11px;margin-bottom:6px">この欄は連携ログ表（integration_log）から自動で描いています。配信のたびに関数が接続先・版・方式を書き込むので、手で更新する箇所はありません。人の記録（出来事）は左サイド「連携ログ」から追記します。</div>' +
       '<div id="tmk-sys-record">読み込み中…</div></div>';
     this.loadSysStatus();
   },
@@ -2949,7 +2948,7 @@ const TorihikisakiView = {
       const info = last ? [
         ['接続先', last.target || '—'],
         ['関数の版・方式', `sf-export ${this.esc(m.version || '?')}／最終実行の mode=${this.esc(m.mode || 'full')}${m.settle_ms ? `（保存後 ${Number(m.settle_ms) / 1000}秒待って確定状態を読む）` : ''}／キー=${this.esc(m.key || 'HubCompanyId__c')}／${m.batch || 200}件/コール`],
-        ['安全弁', `書込を許す org＝${this.esc(m.allowed_orgs || '—')}（本番は未登録）／書き戻し＝${m.writeback ? '有効' : '無効（コード保有社数は増えない）'}`],
+        ['安全弁', `書込を許す org＝${this.esc(m.allowed_orgs || '—')}／書き戻し＝${m.writeback ? '有効' : '無効'}`],
       ] : [];
       const trigRows = Object.entries(byTrig).sort((a, b) => b[1].runs - a[1].runs)
         .map(([k, v]) => `<tr style="cursor:default"><td>${this.esc(k)}</td><td class="num">${v.runs.toLocaleString()}</td><td class="num">${v.sent.toLocaleString()}</td><td class="num">${v.failed.toLocaleString()}</td><td class="num">${v.errors.toLocaleString()}</td></tr>`).join('');
@@ -2964,7 +2963,7 @@ const TorihikisakiView = {
         `<div style="margin-top:8px"><b style="font-size:12px">出来事の記録（人が書いたもの・新しい順）</b>` +
         (notes.length ? `<table class="tbl" style="margin-top:4px"><thead><tr><th style="width:130px">日時</th><th style="width:120px">記録者</th><th>内容</th></tr></thead><tbody>` +
           notes.slice(0, 8).map(r => `<tr style="cursor:default"><td class="tnum">${this.esc(this.jstStamp(r.at))}</td><td class="mf">${this.esc(r.actor || '')}</td><td class="mf">${this.esc(r.message || '')}</td></tr>`).join('') + '</tbody></table>' : '<div class="mf">まだ記録がありません</div>') +
-        `<div class="mf" style="font-size:11px;margin-top:4px"><a data-goilog style="cursor:pointer;text-decoration:underline">連携ログで全件を見る・出来事を追記する</a></div></div>`;
+        `<div class="mf" style="font-size:11px;margin-top:4px"><a data-goilog style="cursor:pointer;text-decoration:underline">連携ログを開く</a></div></div>`;
       el.querySelectorAll('[data-goilog]').forEach(x => x.onclick = () => this.go('ilog'));
     } catch (e) {
       el.innerHTML = this.ilogMissing(e)
@@ -2979,10 +2978,10 @@ const TorihikisakiView = {
     if (!wrap) return;
     const kind = this.ilogKind || '';
     const canNote = ['admin', 'accounting'].includes(Sync.role);
-    wrap.innerHTML = `<div class="sub">ハブ→Salesforce 配信の実行記録（関数が自動で書く）と、人が書く出来事の記録。<b>アプリ共通の監査ログには混ぜない</b>（即時配信で埋まるため・2026-09-09）。新しい順・最大300件。</div>` +
+    wrap.innerHTML = `<div class="sub">ハブ→Salesforce 配信の実行記録と、出来事の記録。新しい順・最大300件。</div>` +
       `<div class="tool" style="margin:8px 0;display:flex;gap:8px;align-items:center"><span class="mf" style="font-size:11px">種類</span>` +
       `<select class="inp" id="tmk-ilog-kind"><option value="">すべて</option><option value="run"${kind === 'run' ? ' selected' : ''}>配信・突合</option><option value="error"${kind === 'error' ? ' selected' : ''}>失敗</option><option value="note"${kind === 'note' ? ' selected' : ''}>出来事の記録</option></select></div>` +
-      (canNote ? `<div class="fcard" style="margin-bottom:10px"><b style="font-size:12px">出来事を記録する</b><div class="mf" style="font-size:11px">登録方法の変更・運用の決定・不具合と復旧など、人が残すべきことを書きます（記録者＝${this.esc(Sync.email || '')}）</div>` +
+      (canNote ? `<div class="fcard" style="margin-bottom:10px"><b style="font-size:12px">出来事を記録する</b><div class="mf" style="font-size:11px">記録者＝${this.esc(Sync.email || '')}</div>` +
         `<textarea class="inp" id="tmk-ilog-note" rows="2" style="width:100%;margin-top:4px" placeholder="例: 本番 org 向けの書込用アプリを作成し、Secrets を差し替えた"></textarea>` +
         `<div style="margin-top:6px"><button class="btn btn-sm" id="tmk-ilog-add">記録を追加</button> <span class="mf" id="tmk-ilog-msg" style="font-size:11px"></span></div></div>` : '') +
       '<div id="tmk-ilog-list"><p class="mf" style="padding:12px">読み込み中…</p></div>';
