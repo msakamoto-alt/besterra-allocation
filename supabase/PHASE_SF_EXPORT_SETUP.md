@@ -113,6 +113,8 @@ sf-export の実行記録は**アプリ共通の監査ログ（audit_logs）で�
 4. 会社詳細「システム連携状況」の Salesforce 行に、その会社の最終配信（日時・新規/更新・契機）を表示
 
 - 監査ログの旧ラベル（SF配信／SF突合）は撤去。9/9 昼までに audit_logs に残った行はそのまま（害なし）
+7. **送信内容の記録**（`supabase/integration_log_payload.sql`・v2026-09-09.5）: 配信のたびに、変わった項目だけを会社ごとに「前→後」で payload に残す（最大200社/回）。
+   画面「連携ログ」の各配信の下に展開表示。変更が無い配信は「変更なし」
 5. **時刻ガード**（`supabase/integration_log_time_guard.sql`・実行済み）: 人からの insert は記録時刻＝now()・記録者＝ログイン情報・kind=note に強制、出来事の日付（event_on）は別列、未来は拒否。**記録時刻を人が指定してはいけない**
 6. 変更履歴 `company_history.changed_at` は timestamptz 化済み（`supabase/company_history_timestamptz.sql`・9/9）
 

@@ -3026,7 +3026,7 @@ const TorihikisakiView = {
         const dot = r.kind === 'note' ? 'human' : (r.kind === 'error' || Number((r.counts || {}).failed || 0) > 0 ? 'create' : 'approve');
         const cids = (r.company_ids || []).slice(0, 5).map(c => `<a data-hcid="${this.esc(c)}" style="cursor:pointer;text-decoration:underline">${this.esc(nameByCid[c] || c)}</a>`).join('、') + ((r.company_ids || []).length > 5 ? ` ほか${r.company_ids.length - 5}社` : '');
         const meta = r.kind === 'run' && r.meta ? `<span class="mf"> ／ ${this.esc(r.target || '')}・v${this.esc(r.meta.version || '?')}・${r.duration_ms ? (r.duration_ms / 1000).toFixed(1) + '秒' : ''}</span>` : '';
-        return `<div class="tlrow"><div class="tldot ${dot}"></div><div>${this.ilogRunLine(r)}${cids ? `<div class="mf">対象: ${cids}</div>` : ''}${meta}</div></div>`;
+        return `<div class="tlrow"><div class="tldot ${dot}"></div><div>${this.ilogRunLine(r)}${cids ? `<div class="mf">対象: ${cids}</div>` : ''}${meta}${this.ilogPayloadHtml(r)}</div></div>`;
       }).join('') + '</div>';
       list.querySelectorAll('[data-hcid]').forEach(a => a.onclick = () => this.openDetail(a.dataset.hcid));
     } catch (e) {
@@ -3034,6 +3034,21 @@ const TorihikisakiView = {
         ? '<div class="alert warn">連携ログ表（integration_log）が未作成です。<code>supabase/integration_log.sql</code> を SQL Editor で実行してください。</div>'
         : `<div class="alert warn">連携ログを読めませんでした: ${this.esc(String(e && e.message || e))}</div>`;
     }
+  },
+
+  // 送信内容（項目ごとの前→後）。payload は関数が配信のたびに残す（変わった項目だけ）
+  ilogPayloadHtml(r) {
+    if (r.kind !== 'run' || r.action !== 'export') return '';
+    const p = r.payload;
+    if (!p) return '<div class="mf" style="font-size:11px">送信内容: 記録なし（この版では未記録）</div>';
+    const items = p.items || [];
+    if (!items.length) return '<div class="mf" style="font-size:11px">送信内容: 変更なし（Salesforce の値と同じ）</div>';
+    const fmt = v => (v === null || v === undefined || v === '') ? '<span class="old">（空）</span>' : this.esc(typeof v === 'boolean' ? (v ? 'はい' : 'いいえ') : (typeof v === 'number' ? v.toLocaleString() : String(v)));
+    const rows = items.slice(0, 8).map(it =>
+      `<div style="margin-top:3px"><b>${this.esc(it.name || it.company_id)}</b>${it.action === 'create' ? ' <span class="badge b-amber">新規</span>' : ''}` +
+      `<div style="padding-left:10px">` + it.fields.map(x => `<div>${this.esc(x.l || x.f)}: ${fmt(x.old)} → <b>${fmt(x.new)}</b></div>`).join('') + '</div></div>').join('');
+    const more = (p.total_changed || items.length) > 8 ? `<div class="mf">ほか ${((p.total_changed || items.length) - 8).toLocaleString()} 社${p.truncated ? '（記録は200社まで）' : ''}</div>` : '';
+    return `<div class="mf" style="font-size:11px;margin-top:2px">送信内容（変わった項目・${(p.total_changed || items.length).toLocaleString()}社）</div><div style="font-size:11.5px">${rows}${more}</div>`;
   },
 
   // 会社詳細「システム連携状況」の Salesforce 行に、その会社の最終配信を後から埋める

@@ -51,7 +51,38 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-09-09.4'; // 連携ログ meta.version（画面の「版」に出る）
+const VERSION = '2026-09-09.5'; // 連携ログ meta.version（画面の「版」に出る）
+const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
+// 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
+const FIELD_LABELS: Record<string, string> = {
+  Name: '取引先名', NameKana__c: '取引先名称（カナ）', CorporateNumber__c: '法人番号', RepresentativeName__c: '代表者名',
+  InvoiceRegNo__c: '適格請求書発行事業者登録番号', InvoiceStatus__c: '適格請求書 該当/非該当', IsNonQualified__c: '非適格事業者',
+  BillingPostalCode: '郵便番号', BillingState: '都道府県', BillingCity: '市区郡', BillingStreet: '町名・番地', HeadOfficeAddress__c: '本社所在地',
+  Phone: '電話', Fax: 'FAX', PartnerType__c: '取引先種別', IsActive__c: '有効フラグ', LastDealDate__c: '最終取引日', Capital__c: '資本金',
+  HubRemarks__c: '会社マスタ備考', CreditLimit__c: '与信額', Licenses__c: '建設業許可（業種）', ConstructionPermitAuthority__c: '建設業許可 大臣/知事',
+  ConstructionPermitNo__c: '建設業許可番号', WastePermitNo__c: '産廃収集運搬許可番号', BugyoPartnerCode__c: '奉行 取引先コード',
+  Business_Partners_Code__c: '取引先コード', HubCompanyId__c: '会社マスタID',
+};
+const MULTI_FIELDS = new Set(['PartnerType__c', 'Licenses__c']);
+const NUM_FIELDS = new Set(['Capital__c', 'CreditLimit__c']);
+// 差分比較用の正規化（空＝null・複数選択は順序無視・数値は数で）
+function normVal(f: string, v: unknown): string | null {
+  if (v === null || v === undefined || v === '') return null;
+  if (MULTI_FIELDS.has(f)) return String(v).split(';').map((x) => x.trim()).filter(Boolean).sort().join(';');
+  if (NUM_FIELDS.has(f)) return String(Number(v));
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  return String(v).trim();
+}
+// 送信レコードと SF の現在値から「変わる項目」だけを抜く（old=SF の今・new=送る値）
+function diffFields(rec: Record<string, unknown>, cur: Record<string, unknown> | null) {
+  const out: { f: string; l: string; old: unknown; new: unknown }[] = [];
+  for (const f of Object.keys(rec)) {
+    if (f === 'HubCompanyId__c') continue;
+    const nv = normVal(f, rec[f]); const ov = cur ? normVal(f, cur[f]) : null;
+    if (nv !== ov) out.push({ f, l: FIELD_LABELS[f] || f, old: cur ? (cur[f] ?? null) : null, new: rec[f] ?? null });
+  }
+  return out;
+}
 // ハブが空でも SF の値を消さない項目（キーと社名）。本番初回は body.keep_if_empty で電話・FAX・許可などを足せる
 const KEEP_IF_EMPTY = new Set(['HubCompanyId__c', 'Name', 'Business_Partners_Code__c']);
 const LOG = 'integration_log';   // 取引先マスタの連携ログ
@@ -271,9 +302,10 @@ async function sfQuery(sf: Sf, soql: string): Promise<Record<string, unknown>[]>
 }
 const soqlIn = (vals: string[]) => vals.map((v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
 
-// SF 側の既存取引先。targets を渡すと対象の会社マスタID＋取引先コードに絞って読む（queue／company_ids）
+// SF 側の既存取引先（送信項目すべて＝差分算出に使う）。targets を渡すと対象の会社マスタID＋取引先コードに絞って読む
+const SF_SELECT_FIELDS = ['Id', ...Object.keys(FIELD_LABELS)];
 async function loadSfAccounts(sf: Sf, targets: { ids: string[]; codes: string[] } | null): Promise<Record<string, unknown>[]> {
-  const sel = 'SELECT Id, Name, HubCompanyId__c, Business_Partners_Code__c FROM Account';
+  const sel = `SELECT ${SF_SELECT_FIELDS.join(', ')} FROM Account`;
   if (!targets) return await sfQuery(sf, sel);
   const seen = new Map<string, Record<string, unknown>>();
   for (const c of chunks(targets.ids, 200)) for (const a of await sfQuery(sf, `${sel} WHERE HubCompanyId__c IN (${soqlIn(c)})`)) seen.set(String(a.Id), a);
@@ -323,13 +355,14 @@ function targetLabel(sf: Sf | null): string {
 }
 // 記録の失敗は配信本体を巻き添えにしない（記録できたかは応答の log_written で可視化）
 async function logRun(admin: Admin, e: { kind: 'run' | 'error'; action: string; caller: string; source: unknown; sf: Sf | null;
-  counts?: Record<string, number | string>; companyIds?: string[] | null; reason?: unknown; message?: string; meta?: Record<string, unknown>; t0: number }): Promise<boolean> {
+  counts?: Record<string, number | string>; companyIds?: string[] | null; reason?: unknown; message?: string; meta?: Record<string, unknown>; payload?: unknown; t0: number }): Promise<boolean> {
   const who = resolveSource(e.caller, e.source);
   try {
     const { error } = await admin.from(LOG).insert({
       system: SYSTEM, target: targetLabel(e.sf), kind: e.kind, action: e.action, trigger: who.trigger, actor: who.email,
       counts: e.counts || null, company_ids: e.companyIds || null, reason: e.reason ? String(e.reason) : null, message: e.message || null,
       meta: { version: VERSION, allowed_orgs: Deno.env.get('SF_EXPORT_ALLOWED_ORG_IDS') || '', ...(e.meta || {}) },
+      payload: e.payload ?? null,
       duration_ms: Date.now() - e.t0,
     });
     if (error) { console.error('連携ログ記録失敗（配信本体は継続）:', error.message); return false; }
@@ -463,6 +496,18 @@ Deno.serve(async (req) => {
     }
 
     // ===== export =====
+    // 送信内容（変わる項目だけ）を送る前に確定しておく＝連携ログの payload
+    const items: { company_id: string; name: string; action: 'create' | 'update'; fields: { f: string; l: string; old: unknown; new: unknown }[] }[] = [];
+    let totalChanged = 0;
+    for (const rec of records) {
+      const cid = String(rec.HubCompanyId__c);
+      const cur = sfByHub.get(cid) || null;
+      const fields = diffFields(rec, cur);
+      if (!fields.length) continue;
+      totalChanged++;
+      if (items.length < PAYLOAD_MAX_ITEMS) items.push({ company_id: cid, name: String(rec.Name || ''), action: cur ? 'update' : 'create', fields });
+    }
+    const payload = { items, total_changed: totalChanged, truncated: totalChanged > items.length };
     let created = 0, updated = 0; const failed: { company_id: string; name: string; message: string }[] = [];
     const idByCompany: Record<string, string> = {};
     for (const chunk of chunks(records, BATCH)) {
@@ -483,12 +528,13 @@ Deno.serve(async (req) => {
       }
     }
     const logged = await logRun(admin, { kind: 'run', action: 'export', caller, source: body.source, sf, t0,
-      counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended },
-      companyIds: onlyIds, reason: body.reason,
+      counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, changed: totalChanged },
+      companyIds: onlyIds, reason: body.reason, payload,
       meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty] } });
     return json({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
       targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
       failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack,
+      changed: totalChanged, changes_sample: items.slice(0, 5),
       log_written: logged, elapsed_ms: Date.now() - t0 });
   } catch (e) {
     const msg = String((e as Error)?.message || e);
