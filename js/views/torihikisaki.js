@@ -55,8 +55,8 @@ const TorihikisakiView = {
   LS: { cols: 'tmk_cols', fmt: 'tmk_fmt', theme: 'tmk_theme' },
   FORMATS: ['単票フォーム', '2カラム', 'カード', 'フォーカス', 'Excel風グリッド'],
   NAV: [['list', '▦', '会社一覧'], ['new', '＋', '新規登録・編集'], ['apichk', '🔄', 'API更新チェック'],
-    ['sys', '⇄', 'システム連携'], ['history', '🕘', '変更履歴']],
-  TITLES: { list: '会社一覧', new: '新規登録・編集', apichk: 'API更新チェック', sys: 'システム連携', history: '変更履歴', detail: '' },
+    ['sys', '⇄', 'システム連携'], ['history', '🕘', '変更履歴'], ['ilog', '📡', '連携ログ']],
+  TITLES: { list: '会社一覧', new: '新規登録・編集', apichk: 'API更新チェック', sys: 'システム連携', history: '変更履歴', ilog: '連携ログ', detail: '' },
 
   // ===== Box 埋め込み（2026-08-28 坂本さん指示） =====
   // 対象＝Box `030_財務経理課 / 00_取引先コード`。
@@ -117,26 +117,9 @@ const TorihikisakiView = {
     { name: 'バクラク', sys: 'bakuraku', mode: 'planned' },
   ],
 
-  // API 配信の接続記録（登録方法と以後の状況・人が読む台帳）。新しい出来事は末尾に足す。
-  // 実績の最新値（最終配信の件数）は audit_logs から動的に出す（renderSysGlobal・管理者のみ閲覧可）。
-  SYSLINK_RECORD: {
-    sf_dev6: {
-      target: 'Salesforce dev6（besterra--dev6.sandbox・org 00Dfd000002CDWc）',
-      route: 'ハブ（company／company_type／system_code／permit_license／credit_line）→ Edge Function sf-export → 外部クライアントアプリ「Besterra Hub Export」（クライアントログイン情報フロー・実行ユーザー m.sakamoto@besterra.co.jp.dev6）→ Salesforce REST composite/sobjects で Account を外部ID upsert（キー＝会社マスタID HubCompanyId__c・200件/コール・ハブが空の項目は送らない）',
-      scope: '有効な会社を全件（欠番は SF に既存があれば有効フラグ=false で更新のみ）。承認・反社ゲートは第1弾では掛けない',
-      frequency: '即時（会社を保存するとトリガが sf-export を呼び、数秒で反映。関数は3秒待って確定後の状態を読む）。夜間の全件配信（毎朝5:30）は取りこぼしの保険。手動＝自動化\\SF連携検証\\sf_export_call.py',
-      safety: '接続先 org が SF_EXPORT_ALLOWED_ORG_IDS（dev6 のみ）に無ければ書込前に中止。本番 org は未登録＝書けない。dev6 の Account Id はハブへ書き戻さない',
-      log: [
-        ['2026-09-09', 'dev6 に書込用の外部クライアントアプリ「Besterra Hub Export」を新規作成（配布＝ローカル・範囲＝api・クライアントログイン情報フロー有効・実行ユーザー設定）。本番の読取用アプリ「Besterra Allocation Import」は dev6 に写っていなかったため流用せず'],
-        ['2026-09-09', 'Supabase Secrets 5件（SF_EXPORT_INSTANCE_URL／CLIENT_ID／CLIENT_SECRET／ALLOWED_ORG_IDS／IMPORT_SECRET）を設定し、Edge Function sf-export を Via Editor でデプロイ'],
-        ['2026-09-09', 'dry_run（対象2,339・社名で一意突合できる既存1,562）→ link 1,562件にキー付与（曖昧23＝ハブ側に同名2社・不一致166）→ dry_run（更新1,473・新規866・コード衝突0）'],
-        ['2026-09-09', 'export --limit 5 で試し流し（新規5・失敗0）→ export 全件（送信2,339・新規861・更新1,478・失敗0・24秒）→ 再 dry_run で新規0（冪等性確認）'],
-        ['2026-09-09', 'dev6 の会社マスタID無し取引先188件を削除（Garyuuテストトリヒキサキのみ残置・モックの客先は付け替え）。dev6 の取引先＝2,429件（ハブ由来2,428）'],
-        ['2026-09-09', '配信頻度を「即時」に決定（工事部の登録依頼を定期実行で待たせない・経理が毎回手動で流す頻度が多い・運用開始済みで大量取込は無い）。会社マスタ系テーブルのトリガ（pg_net）から保存のたびに sf-export（direct モード・その会社だけ）を呼ぶ。SQL とデプロイ後に有効'],
-        ['2026-09-09', '即時配信を有効化（トリガ SQL＋sf-export 再デプロイ）。初版のトリガ関数に不具合があり、会社テーブルの保存が十数分間エラーになった（列参照の書き方・修正版で復旧）。検証＝東方金属の備考を同値で保存 → 6秒後に Salesforce 側が更新・監査ログに「自動（保存時・即時）」を確認。夜間の全件配信（毎朝5:30）も保険として登録'],
-      ],
-    },
-  },
+  // 接続の記録（登録方法・以後の状況・最終配信・接続先・版）は連携ログ表 integration_log から動的に描く
+  //（2026-09-09 坂本さん指摘: コードに書いたメモは自動で更新されず陳腐化する）。人の記録は画面「連携ログ」から note として追記する。
+  ILOG_SYSTEM_BY_KEY: { sf_dev6: 'salesforce' },
 
   // コード保有の実測と mode から、その系の状態を決める（画面2箇所で同じ判定を使う）
   sysState(sys, mode, count) {
@@ -697,6 +680,7 @@ const TorihikisakiView = {
     else if (v === 'apichk') this.renderApiCheck();
     else if (v === 'sys') this.renderSysGlobal();
     else if (v === 'history') this.renderHistGlobal();
+    else if (v === 'ilog') this.renderIlogGlobal();
     else if (v === 'detail') this.renderDetail();
   },
 
@@ -1658,9 +1642,11 @@ const TorihikisakiView = {
       let badge;
       if (s.mode === 'api') {
         // API配信は有効な会社を全件 upsert する（書き戻し無効のため個社の SF Id は持たない）
-        badge = d.company.is_suspended
+        badge = (d.company.is_suspended
           ? '<span class="badge b-slate" title="欠番。SF に既存があれば有効フラグ=false で更新のみ">対象外（欠番）</span>'
-          : '<span class="badge b-green" title="ハブ→Salesforce dev6 へ API 配信（毎回全件・冪等）">配信対象（API）</span>';
+          : '<span class="badge b-green" title="ハブ→Salesforce dev6 へ API 配信（保存のたびに即時・冪等）">配信対象（API）</span>') +
+          '<span id="tmk-slink-last" class="mf" style="font-size:10.5px;margin-left:6px"></span>';
+        setTimeout(() => this.loadSlinkLast(d.company.company_id), 0);
       } else {
         badge = code
           ? `<span class="tnum mf" style="font-size:11px">${this.esc(code)}</span><span class="badge b-amber">手動</span>`
@@ -2912,47 +2898,137 @@ const TorihikisakiView = {
         `<td class="num">${r.key === 'sf_dev6' ? `配信対象 ${active.toLocaleString()}社` : r.cnt.toLocaleString()}</td>` +
         `<td class="mf">${this.esc(r.note)}</td></tr>`).join('') +
       '</tbody></table></div>' +
-      Object.entries(this.SYSLINK_RECORD).map(([key, rec]) => {
-        const sys = this.SYSLINK.find(x => x.key === key) || {};
-        return `<div class="fcard" style="margin-top:12px"><h3 style="margin:0 0 6px">接続の記録：${this.esc(sys.name || key)}</h3>
-          <div class="mf" style="font-size:11.5px;line-height:1.7">
-            <div><b>接続先</b>　${this.esc(rec.target)}</div>
-            <div><b>経路</b>　${this.esc(rec.route)}</div>
-            <div><b>対象</b>　${this.esc(rec.scope)}</div>
-            <div><b>頻度</b>　${this.esc(rec.frequency)}</div>
-            <div><b>安全弁</b>　${this.esc(rec.safety)}</div>
-            <div><b>最終配信</b>　<span id="tmk-sys-last-${this.esc(key)}">読み込み中…</span></div>
-          </div>
-          <table class="tbl" style="margin-top:8px"><thead><tr><th style="width:110px">日付</th><th>出来事（登録方法と以後の状況）</th></tr></thead><tbody>` +
-          rec.log.map(([d, t]) => `<tr style="cursor:default"><td class="tnum">${this.esc(d)}</td><td class="mf">${this.esc(t)}</td></tr>`).join('') +
-          '</tbody></table></div>';
-      }).join('');
-    this.loadSysLast();
+      '<div class="fcard" style="margin-top:12px"><h3 style="margin:0 0 6px">接続の記録：Salesforce dev6（検証用サンドボックス）</h3>' +
+      '<div class="mf" style="font-size:11px;margin-bottom:6px">この欄は連携ログ表（integration_log）から自動で描いています。配信のたびに関数が接続先・版・方式を書き込むので、手で更新する箇所はありません。人の記録（出来事）は左サイド「連携ログ」から追記します。</div>' +
+      '<div id="tmk-sys-record">読み込み中…</div></div>';
+    this.loadSysStatus();
   },
 
-  // 最終配信の実績＝audit_logs（sf-export が1実行1行で記録）。RLS により管理者のみ読める。
-  async loadSysLast() {
-    const el = this.el('tmk-sys-last-sf_dev6');
+  // ===== 連携ログ（integration_log）＝接続の記録・最終配信・会社ごとの最終配信の共通データ源 =====
+  async ilogFetch(limit, filter) {
+    const sb = Sync.getSupabase();   // audit_logs と同じくアプリ本体のログイン済みクライアントで読む（取引先マスタ用クライアントは匿名）
+    let q = sb.from('integration_log').select('*').eq('system', 'salesforce').order('at', { ascending: false }).limit(limit);
+    if (filter && filter.kind) q = q.eq('kind', filter.kind);
+    if (filter && filter.cid) q = q.contains('company_ids', [filter.cid]);
+    const res = await q;
+    if (res.error) throw new Error(res.error.message);
+    return res.data || [];
+  },
+  ilogMissing(e) {
+    return /integration_log/.test(String(e && e.message || e)) && /find|exist|schema/.test(String(e && e.message || e));
+  },
+  ilogRunLine(r) {
+    const c = r.counts || {}; const n = k => Number(c[k] || 0).toLocaleString();
+    const when = this.jstStamp(r.at);
+    if (r.kind === 'note') return `${when}　<b>${this.esc(r.actor || '')}</b>　${this.esc(r.message || '')}`;
+    if (r.kind === 'error') return `${when}　<span class="badge b-amber">失敗</span> ${this.esc(r.action || '')}（${this.esc(r.trigger || '')}）${this.esc(r.message || '')}`;
+    if (r.action === 'link') return `${when}　突合：キー付与 ${n('linked')}・失敗 ${n('failed')}（${this.esc(r.trigger || '')}）`;
+    const scope = (r.company_ids && r.company_ids.length) ? `対象 ${r.company_ids.length}社` : '全件';
+    return `${when}　配信：送信 ${n('sent')}・新規 ${n('created')}・更新 ${n('updated')}・失敗 ${n('failed')}${Number(c.code_conflict || 0) ? `・コード衝突 ${n('code_conflict')}` : ''}（${this.esc(r.trigger || '')}・${scope}${r.reason ? '・' + this.esc(r.reason) : ''}）`;
+  },
+
+  // システム連携ページ「接続の記録」＝最新の run から接続先・版・方式、直近30日の実績、最終配信、出来事（note）
+  async loadSysStatus() {
+    const el = this.el('tmk-sys-record');
     if (!el) return;
     try {
-      // audit_logs はアプリ本体（ログイン済みセッション）の側にある。取引先マスタ用クライアントは匿名接続なので使わない
-      const sb = Sync.getSupabase();
-      const res = await sb.from('audit_logs').select('at,op,user_email,changes')
-        .eq('table_name', 'company').in('op', ['SF_EXPORT', 'SF_LINK', 'ERROR']).order('at', { ascending: false }).limit(3);
-      if (res.error) throw new Error(res.error.message);
-      const rs = res.data || [];
-      if (!rs.length) { el.textContent = '記録なし（または管理者のみ表示可）'; return; }
-      const fmt = r => {
-        const c = r.changes || {}; const g = k => (c[k] && c[k].new) || '0';
-        const when = new Date(r.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-        if (r.op === 'SF_EXPORT') return `${when} 配信：送信 ${g('sent')}・新規 ${g('created')}・更新 ${g('updated')}・失敗 ${g('failed')}・コード衝突 ${g('code_conflict')}（${g('trigger')}／${r.user_email}）`;
-        if (r.op === 'SF_LINK') return `${when} 突合：キー付与 ${g('linked')}・失敗 ${g('failed')}（${g('trigger')}）`;
-        return `${when} 失敗：${g('error')}`;
-      };
-      el.innerHTML = rs.map(r => `<div>${this.esc(fmt(r))}</div>`).join('');
+      const rows = await this.ilogFetch(400);
+      const runs = rows.filter(r => r.kind === 'run');
+      const notes = rows.filter(r => r.kind === 'note');
+      const last = runs[0] || null;
+      const lastAny = rows.find(r => r.kind !== 'note') || null;
+      const days30 = Date.now() - 30 * 86400000;
+      const recent = rows.filter(r => r.kind !== 'note' && new Date(r.at).getTime() >= days30);
+      const byTrig = {};
+      recent.forEach(r => { const k = r.trigger || '不明'; byTrig[k] = byTrig[k] || { runs: 0, errors: 0, sent: 0, failed: 0 }; if (r.kind === 'error') byTrig[k].errors++; else { byTrig[k].runs++; byTrig[k].sent += Number((r.counts || {}).sent || 0); byTrig[k].failed += Number((r.counts || {}).failed || 0); } });
+      const fresh = lastAny && (Date.now() - new Date(lastAny.at).getTime()) < 7 * 86400000;
+      const st = !lastAny ? { badge: '実績なし', cls: 'b-slate' }
+        : lastAny.kind === 'error' || Number((lastAny.counts || {}).failed || 0) > 0 ? { badge: '要確認（直近が失敗）', cls: 'b-amber' }
+        : fresh ? { badge: '接続良好', cls: 'b-green' } : { badge: '7日以上配信なし', cls: 'b-amber' };
+      const m = (last && last.meta) || {};
+      const info = last ? [
+        ['接続先', last.target || '—'],
+        ['関数の版・方式', `sf-export ${this.esc(m.version || '?')}／最終実行の mode=${this.esc(m.mode || 'full')}${m.settle_ms ? `（保存後 ${Number(m.settle_ms) / 1000}秒待って確定状態を読む）` : ''}／キー=${this.esc(m.key || 'HubCompanyId__c')}／${m.batch || 200}件/コール`],
+        ['安全弁', `書込を許す org＝${this.esc(m.allowed_orgs || '—')}（本番は未登録）／書き戻し＝${m.writeback ? '有効' : '無効（コード保有社数は増えない）'}`],
+      ] : [];
+      const trigRows = Object.entries(byTrig).sort((a, b) => b[1].runs - a[1].runs)
+        .map(([k, v]) => `<tr style="cursor:default"><td>${this.esc(k)}</td><td class="num">${v.runs.toLocaleString()}</td><td class="num">${v.sent.toLocaleString()}</td><td class="num">${v.failed.toLocaleString()}</td><td class="num">${v.errors.toLocaleString()}</td></tr>`).join('');
+      el.innerHTML =
+        `<div class="mf" style="font-size:11.5px;line-height:1.7">` +
+        `<div><b>状態</b>　<span class="badge ${st.cls}">${this.esc(st.badge)}</span>${lastAny ? `　最終実行 ${this.esc(this.jstStamp(lastAny.at))}` : ''}</div>` +
+        info.map(([k, v]) => `<div><b>${k}</b>　${v}</div>`).join('') +
+        `</div>` +
+        `<div style="margin-top:8px"><b style="font-size:12px">直近30日の実績（契機別）</b>` +
+        (trigRows ? `<table class="tbl" style="margin-top:4px"><thead><tr><th>契機</th><th>実行回数</th><th>送信社数</th><th>失敗</th><th>関数エラー</th></tr></thead><tbody>${trigRows}</tbody></table>` : '<div class="mf">まだ実績がありません</div>') + '</div>' +
+        `<div style="margin-top:8px"><b style="font-size:12px">最終配信</b><div class="mf" style="font-size:11.5px;line-height:1.7">${rows.filter(r => r.kind !== 'note').slice(0, 3).map(r => `<div>${this.ilogRunLine(r)}</div>`).join('') || '—'}</div></div>` +
+        `<div style="margin-top:8px"><b style="font-size:12px">出来事の記録（人が書いたもの・新しい順）</b>` +
+        (notes.length ? `<table class="tbl" style="margin-top:4px"><thead><tr><th style="width:130px">日時</th><th style="width:120px">記録者</th><th>内容</th></tr></thead><tbody>` +
+          notes.slice(0, 8).map(r => `<tr style="cursor:default"><td class="tnum">${this.esc(this.jstStamp(r.at))}</td><td class="mf">${this.esc(r.actor || '')}</td><td class="mf">${this.esc(r.message || '')}</td></tr>`).join('') + '</tbody></table>' : '<div class="mf">まだ記録がありません</div>') +
+        `<div class="mf" style="font-size:11px;margin-top:4px"><a data-goilog style="cursor:pointer;text-decoration:underline">連携ログで全件を見る・出来事を追記する</a></div></div>`;
+      el.querySelectorAll('[data-goilog]').forEach(x => x.onclick = () => this.go('ilog'));
     } catch (e) {
-      el.textContent = '取得できませんでした（' + String(e && e.message || e).slice(0, 60) + '）';
+      el.innerHTML = this.ilogMissing(e)
+        ? '<div class="alert warn">連携ログ表（integration_log）が未作成です。<code>supabase/integration_log.sql</code> を SQL Editor で実行すると、この欄と「連携ログ」ページが使えます。</div>'
+        : `<div class="alert warn">連携ログを読めませんでした（${this.esc(String(e && e.message || e).slice(0, 80))}）。管理者・経理のみ閲覧できます。</div>`;
     }
+  },
+
+  // ===== 連携ログ（グローバル・左サイド） =====
+  async renderIlogGlobal() {
+    const wrap = this.el('tmk-wrap');
+    if (!wrap) return;
+    const kind = this.ilogKind || '';
+    const canNote = ['admin', 'accounting'].includes(Sync.role);
+    wrap.innerHTML = `<div class="sub">ハブ→Salesforce 配信の実行記録（関数が自動で書く）と、人が書く出来事の記録。<b>アプリ共通の監査ログには混ぜない</b>（即時配信で埋まるため・2026-09-09）。新しい順・最大300件。</div>` +
+      `<div class="tool" style="margin:8px 0;display:flex;gap:8px;align-items:center"><span class="mf" style="font-size:11px">種類</span>` +
+      `<select class="inp" id="tmk-ilog-kind"><option value="">すべて</option><option value="run"${kind === 'run' ? ' selected' : ''}>配信・突合</option><option value="error"${kind === 'error' ? ' selected' : ''}>失敗</option><option value="note"${kind === 'note' ? ' selected' : ''}>出来事の記録</option></select></div>` +
+      (canNote ? `<div class="fcard" style="margin-bottom:10px"><b style="font-size:12px">出来事を記録する</b><div class="mf" style="font-size:11px">登録方法の変更・運用の決定・不具合と復旧など、人が残すべきことを書きます（記録者＝${this.esc(Sync.email || '')}）</div>` +
+        `<textarea class="inp" id="tmk-ilog-note" rows="2" style="width:100%;margin-top:4px" placeholder="例: 本番 org 向けの書込用アプリを作成し、Secrets を差し替えた"></textarea>` +
+        `<div style="margin-top:6px"><button class="btn btn-sm" id="tmk-ilog-add">記録を追加</button> <span class="mf" id="tmk-ilog-msg" style="font-size:11px"></span></div></div>` : '') +
+      '<div id="tmk-ilog-list"><p class="mf" style="padding:12px">読み込み中…</p></div>';
+    this.el('tmk-ilog-kind').onchange = e => { this.ilogKind = e.target.value; this.renderIlogGlobal(); };
+    const addBtn = this.el('tmk-ilog-add');
+    if (addBtn) addBtn.onclick = async () => {
+      const ta = this.el('tmk-ilog-note'); const msg = this.el('tmk-ilog-msg');
+      const text = (ta.value || '').trim();
+      if (!text) { msg.textContent = '内容を入力してください'; return; }
+      addBtn.disabled = true;
+      try {
+        const res = await Sync.getSupabase().from('integration_log').insert({ system: 'salesforce', kind: 'note', actor: Sync.email || 'unknown', message: text });
+        if (res.error) throw new Error(res.error.message);
+        ta.value = ''; msg.textContent = '記録しました'; this.renderIlogGlobal();
+      } catch (e) { msg.textContent = '記録できませんでした: ' + String(e && e.message || e).slice(0, 80); }
+      addBtn.disabled = false;
+    };
+    const list = this.el('tmk-ilog-list');
+    try {
+      const rows = await this.ilogFetch(300, kind ? { kind } : null);
+      if (!rows.length) { list.innerHTML = '<div class="fcard mf">まだ記録はありません。</div>'; return; }
+      const nameByCid = {};
+      (this.rows || []).forEach(r => nameByCid[r.company_id] = r.official_name);
+      list.innerHTML = '<div class="tl">' + rows.map(r => {
+        const dot = r.kind === 'note' ? 'human' : (r.kind === 'error' || Number((r.counts || {}).failed || 0) > 0 ? 'create' : 'approve');
+        const cids = (r.company_ids || []).slice(0, 5).map(c => `<a data-hcid="${this.esc(c)}" style="cursor:pointer;text-decoration:underline">${this.esc(nameByCid[c] || c)}</a>`).join('、') + ((r.company_ids || []).length > 5 ? ` ほか${r.company_ids.length - 5}社` : '');
+        const meta = r.kind === 'run' && r.meta ? `<span class="mf"> ／ ${this.esc(r.target || '')}・v${this.esc(r.meta.version || '?')}・${r.duration_ms ? (r.duration_ms / 1000).toFixed(1) + '秒' : ''}</span>` : '';
+        return `<div class="tlrow"><div class="tldot ${dot}"></div><div>${this.ilogRunLine(r)}${cids ? `<div class="mf">対象: ${cids}</div>` : ''}${meta}</div></div>`;
+      }).join('') + '</div>';
+      list.querySelectorAll('[data-hcid]').forEach(a => a.onclick = () => this.openDetail(a.dataset.hcid));
+    } catch (e) {
+      list.innerHTML = this.ilogMissing(e)
+        ? '<div class="alert warn">連携ログ表（integration_log）が未作成です。<code>supabase/integration_log.sql</code> を SQL Editor で実行してください。</div>'
+        : `<div class="alert warn">連携ログを読めませんでした: ${this.esc(String(e && e.message || e))}</div>`;
+    }
+  },
+
+  // 会社詳細「システム連携状況」の Salesforce 行に、その会社の最終配信を後から埋める
+  async loadSlinkLast(cid) {
+    const el = this.el('tmk-slink-last');
+    if (!el) return;
+    try {
+      const rows = await this.ilogFetch(1, { cid, kind: 'run' });
+      const r = rows[0];
+      el.textContent = r ? `最終配信 ${this.jstStamp(r.at)}（${(r.counts || {}).failed ? '失敗' : (Number((r.counts || {}).created || 0) ? '新規' : '更新')}・${r.trigger || ''}）` : '個別配信の記録なし（全件配信の対象）';
+    } catch (_) { el.textContent = ''; }
   },
 
   // ===== 変更履歴（グローバル・実データ最新100件） =====

@@ -3,7 +3,9 @@
 // 役割：統合管理ツール（ハブ）の会社マスタを正本として、Salesforce の取引先（Account）へ配信する。
 //       ハブ→SF の一方向。SF 側の値はハブから来たもので上書きし、ハブが空の項目は送らない
 //      （SF の既存値を消さない）。キーは会社マスタID（Account.HubCompanyId__c・外部ID）。
-//       sf-import（SF→ハブ・読取専用）の逆方向版。認証・監査ログ・呼び出し方は sf-import と同型。
+//       sf-import（SF→ハブ・読取専用）の逆方向版。認証・呼び出し方は sf-import と同型。
+//       実行記録はアプリ共通の監査ログではなく取引先マスタの連携ログ integration_log へ書く（2026-09-09 坂本さん指摘＝
+//       即時配信で監査ログが埋まるため）。接続先・版・方式を毎回 meta に残し、画面はそれを最新値として表示する。
 //
 // 認証（どちらかを満たすこと）：
 //   a) Supabase JWT が admin ロール
@@ -46,7 +48,9 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const TABLE = 'company'; // 監査ログ上の対象テーブル
+const VERSION = '2026-09-09.3'; // 連携ログ meta.version（画面の「版」に出る）
+const LOG = 'integration_log';   // 取引先マスタの連携ログ
+const SYSTEM = 'salesforce';
 const DIRECT_SETTLE_MS = 3000; // direct: 保存の残りのトランザクションが確定するのを待つ
 
 type Admin = ReturnType<typeof createClient>;
@@ -294,35 +298,42 @@ async function sfUpdateBatch(sf: Sf, records: Record<string, unknown>[]): Promis
   return body as SfResult[];
 }
 
-// ---------------- 監査ログ（sf-import と同型・1回1行） ----------------
+// ---------------- 連携ログ（integration_log・1実行1行） ----------------
 const SOURCES: Record<string, { email: string; trigger: string }> = {
   cron:    { email: 'sf-export（自動実行）',       trigger: '自動（夜間・全件）' },
   trigger: { email: 'sf-export（即時配信）',       trigger: '自動（保存時・即時）' },
-  script: { email: 'sf-export（手動スクリプト）', trigger: '手動（スクリプト）' },
+  script:  { email: 'sf-export（手動スクリプト）', trigger: '手動（スクリプト）' },
 };
 const SOURCE_UNKNOWN = { email: 'sf-export（実行元不明）', trigger: '不明（secret経由）' };
 function resolveSource(caller: string, source: unknown) {
-  if (caller !== 'secret') return { email: caller, trigger: '手動（アプリ）', role: 'admin' };
-  const s = SOURCES[String(source || '')] || SOURCE_UNKNOWN;
-  return { ...s, role: 'system' };
+  if (caller !== 'secret') return { email: caller, trigger: '手動（アプリ）' };
+  return SOURCES[String(source || '')] || SOURCE_UNKNOWN;
 }
-async function logAudit(admin: Admin, entry: { op: string; caller: string; source: unknown; rowKey: string; changes: Record<string, { new: string }> }): Promise<boolean> {
-  const who = resolveSource(entry.caller, entry.source);
+function targetLabel(sf: Sf | null): string {
+  if (sf) return `${sf.orgName}（${sf.orgId}・${sf.isSandbox ? 'sandbox' : '本番'}）`;
+  return (Deno.env.get('SF_EXPORT_INSTANCE_URL') || '').replace(/^https?:\/\//, '');
+}
+// 記録の失敗は配信本体を巻き添えにしない（記録できたかは応答の log_written で可視化）
+async function logRun(admin: Admin, e: { kind: 'run' | 'error'; action: string; caller: string; source: unknown; sf: Sf | null;
+  counts?: Record<string, number | string>; companyIds?: string[] | null; reason?: unknown; message?: string; meta?: Record<string, unknown>; t0: number }): Promise<boolean> {
+  const who = resolveSource(e.caller, e.source);
   try {
-    const { error } = await admin.from('audit_logs').insert({
-      user_id: null, user_email: who.email, user_role: who.role, table_name: TABLE,
-      op: entry.op, row_key: entry.rowKey, changes: { ...entry.changes, trigger: { new: who.trigger } },
+    const { error } = await admin.from(LOG).insert({
+      system: SYSTEM, target: targetLabel(e.sf), kind: e.kind, action: e.action, trigger: who.trigger, actor: who.email,
+      counts: e.counts || null, company_ids: e.companyIds || null, reason: e.reason ? String(e.reason) : null, message: e.message || null,
+      meta: { version: VERSION, allowed_orgs: Deno.env.get('SF_EXPORT_ALLOWED_ORG_IDS') || '', ...(e.meta || {}) },
+      duration_ms: Date.now() - e.t0,
     });
-    if (error) { console.error('監査ログ記録失敗（配信本体は継続）:', error.message); return false; }
+    if (error) { console.error('連携ログ記録失敗（配信本体は継続）:', error.message); return false; }
     return true;
-  } catch (e) { console.error('監査ログ記録失敗（配信本体は継続）:', String((e as Error)?.message || e)); return false; }
+  } catch (err) { console.error('連携ログ記録失敗（配信本体は継続）:', String((err as Error)?.message || err)); return false; }
 }
 
 // ---------------- 本体 ----------------
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const t0 = Date.now();
-  let auditCtx: { admin: Admin; caller: string; source: unknown; op: string } | null = null;
+  let logCtx: { admin: Admin; caller: string; source: unknown; action: string; sf: Sf | null } | null = null;
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
@@ -353,10 +364,11 @@ Deno.serve(async (req) => {
       await new Promise((r) => setTimeout(r, DIRECT_SETTLE_MS));
     }
     const scope = onlyIds ? 'all' : String(body.scope || 'active');
-    if (action !== 'dry_run') auditCtx = { admin, caller, source: body.source, op: action === 'link' ? 'SF_LINK' : 'SF_EXPORT' };
+    if (action !== 'dry_run') logCtx = { admin, caller, source: body.source, action, sf: null };
 
     // --- 接続（org ガード込み）・ハブ読取・SF 現状読取 ---
     const sf = await sfConnect();
+    if (logCtx) logCtx.sf = sf;
     const hub = await loadHub(admin, onlyIds);
     const targetCodes = onlyIds ? [...new Set(hub.companies.map((c) => (hub.codes.get(String(c.company_id)) || {}).tera).filter((x): x is string => !!x))] : [];
     const sfAccounts = await loadSfAccounts(sf, onlyIds ? { ids: onlyIds, codes: targetCodes } : null);
@@ -397,11 +409,11 @@ Deno.serve(async (req) => {
         const res = await sfUpdateBatch(sf, c);
         res.forEach((r, j) => { if (r.success) ok++; else failed.push({ id: String(c[j].Id), message: (r.errors || []).map((e) => e.message).join('; ').slice(0, 200) }); });
       }
-      const logged = await logAudit(admin, { op: 'SF_LINK', caller, source: body.source, rowKey: `Account@${sf.orgId}`,
-        changes: { linked: { new: String(ok) }, failed: { new: String(failed.length) }, unlinked_before: { new: String(unlinked.length) } } });
+      const logged = await logRun(admin, { kind: 'run', action: 'link', caller, source: body.source, sf, t0,
+        counts: { linked: ok, failed: failed.length, unlinked_before: unlinked.length, ambiguous: ambiguous.length, nomatch: nomatch.length }, meta: { mode } });
       return json({ ok: true, action, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
         unlinked_before: unlinked.length, linked: ok, failed: failed.length, ambiguous: ambiguous.length, nomatch: nomatch.length,
-        failed_samples: failed.slice(0, 20), ambiguous_samples: ambiguous.slice(0, 20), audit_logged: logged, elapsed_ms: Date.now() - t0 });
+        failed_samples: failed.slice(0, 20), ambiguous_samples: ambiguous.slice(0, 20), log_written: logged, elapsed_ms: Date.now() - t0 });
     }
 
     // ===== dry_run / export：配信対象の組み立てと分類 =====
@@ -461,18 +473,18 @@ Deno.serve(async (req) => {
         wroteBack += c.length;
       }
     }
-    const logged = await logAudit(admin, { op: 'SF_EXPORT', caller, source: body.source, rowKey: `Account@${sf.orgId}`,
-      changes: { sent: { new: String(records.length) }, created: { new: String(created) }, updated: { new: String(updated) },
-        failed: { new: String(failed.length) }, code_conflict: { new: String(cls.code_conflict) }, writeback: { new: String(wroteBack) },
-        ...(mode === 'direct' ? { company_ids: { new: onlyIds!.join(',') }, reason: { new: String(body.reason || '') } } : {}) } });
+    const logged = await logRun(admin, { kind: 'run', action: 'export', caller, source: body.source, sf, t0,
+      counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended },
+      companyIds: onlyIds, reason: body.reason,
+      meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, batch: BATCH, key: 'HubCompanyId__c' } });
     return json({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
       targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
       failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack,
-      audit_logged: logged, elapsed_ms: Date.now() - t0 });
+      log_written: logged, elapsed_ms: Date.now() - t0 });
   } catch (e) {
     const msg = String((e as Error)?.message || e);
-    if (auditCtx) {
-      await logAudit(auditCtx.admin, { op: 'ERROR', caller: auditCtx.caller, source: auditCtx.source, rowKey: `sf-export ${auditCtx.op}`, changes: { error: { new: msg.slice(0, 200) } } });
+    if (logCtx) {
+      await logRun(logCtx.admin, { kind: 'error', action: logCtx.action, caller: logCtx.caller, source: logCtx.source, sf: logCtx.sf, t0, message: msg.slice(0, 500) });
     }
     return json({ ok: false, error: msg, elapsed_ms: Date.now() - t0 }, 500);
   }

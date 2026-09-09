@@ -19,21 +19,18 @@ const AuditView = {
     quiz_questions:           '安全学習の問題',
     learning_goals:           '学習目標',
     salesforce_imports:       'SF取込（配置データ）',
-    company:                  '取引先マスタ（SF配信）',
   },
 
   // IMPORT / ERROR は Edge Function sf-import が記録するSF取込のサマリー（1実行=1行）。
   // 行単位のトリガー記録ではないため、他の操作とは別の区分にしている。
-  // SF_EXPORT / SF_LINK は Edge Function sf-export（ハブ→SF 配信）のサマリー（1実行=1行・2026-09-09）。
-  OP_LABELS: { INSERT: '登録', UPDATE: '更新', DELETE: '削除', IMPORT: '取込', ERROR: '取込失敗', SF_EXPORT: 'SF配信', SF_LINK: 'SF突合' },
+  // ハブ→SF 配信（sf-export）の記録は取引先マスタの連携ログ（integration_log）に分離した（2026-09-09・ここには混ぜない）。
+  OP_LABELS: { INSERT: '登録', UPDATE: '更新', DELETE: '削除', IMPORT: '取込', ERROR: '取込失敗' },
   OP_BADGE: {
     INSERT: 'bg-emerald-100 text-emerald-800',
     UPDATE: 'bg-blue-100 text-blue-800',
     DELETE: 'bg-red-100 text-red-800',
     IMPORT: 'bg-indigo-100 text-indigo-800',
     ERROR:  'bg-red-100 text-red-800',
-    SF_EXPORT: 'bg-indigo-100 text-indigo-800',
-    SF_LINK:   'bg-indigo-100 text-indigo-800',
   },
 
   // 主要列 → 日本語ラベル（未定義の列は英語名のまま表示）

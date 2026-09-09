@@ -69,7 +69,7 @@ python sf_export_call.py export          # ⑤ 全件（有効 約2,300社・200
 python sf_export_call.py                 # ⑥ 再 dry_run：will_create=0（冪等性）
 ```
 
-- 監査ログ（アプリの「監査ログ」→ 対象「取引先マスタ」）に `SF_LINK` / `SF_EXPORT` が1実行1行で残る。失敗は `ERROR`。
+- 連携ログ（取引先マスタ 左サイド「連携ログ」）に突合・配信が1実行1行で残る。失敗は「失敗」行（§7）。
 - `--writeback` は本番配信用（Account Id をハブ `system_code(system='salesforce')` へ保存）。**dev6 の Id を本番ハブに入れないこと**。
 
 ## 4. 戻し方（dev6）
@@ -93,12 +93,26 @@ python sf_export_call.py                 # ⑥ 再 dry_run：will_create=0（冪
 2. **関数の再デプロイ**: Edge Functions → sf-export → エディタの中身を `supabase/functions/sf-export/index.ts` で置き換えて Deploy
    （direct モード・対象だけ読む軽量化）
 3. **動作確認**: ハブで会社を1件保存 → 数秒後に Salesforce の取引先が更新される。
-   監査ログ（対象「取引先マスタ（SF配信）」）に「自動（保存時・即時）」の SF_EXPORT が保存のたびに1行残る
+   連携ログ（取引先マスタ 左サイド「連携ログ」）に「自動（保存時・即時）」の配信が保存のたびに1行残る
 4. **監視**: `select id, status_code, left(content::text, 300) from net._http_response order by id desc limit 5;`
-   （status_code が 200 以外なら関数側の失敗。監査ログの ERROR と合わせて見る）
+   （status_code が 200 以外なら関数側の失敗。連携ログの「失敗」行と合わせて見る）
 
 - 1回の保存で行が複数変わると同じ会社への呼び出しが数回重なるが、3秒待って同じ確定状態を送るので結果は同じ（冪等）
 - 止めるとき: トリガ5本を drop（雛形の末尾に列挙）。関数と Secrets はそのまま
+
+## 7. 連携ログ（integration_log・2026-09-09）
+
+sf-export の実行記録は**アプリ共通の監査ログ（audit_logs）ではなく、取引先マスタの連携ログ表 `integration_log`** に書く
+（即時配信では保存のたびに1行増え、監査ログが配信行で埋まるため＝坂本さん指摘）。
+
+1. **SQL**（初回のみ）: `supabase/integration_log.sql` を SQL Editor に貼って Run（鍵は不要）
+2. **関数の再デプロイ**: `supabase/functions/sf-export/index.ts`（v2026-09-09.3 以降）を Via Editor で置き換え
+3. 画面: 取引先マスタ 左サイド「**連携ログ**」＝実行記録（関数が自動で書く）＋出来事の記録（管理者・経理が画面から追記）。
+   「システム連携」の**接続の記録は連携ログから動的に描く**（接続先・版・方式は関数が毎回 meta に書く／頻度は直近30日の契機別実績／
+   出来事の記録は note 行）。**コードに書いたメモは無い**＝陳腐化しない
+4. 会社詳細「システム連携状況」の Salesforce 行に、その会社の最終配信（日時・新規/更新・契機）を表示
+
+- 監査ログの旧ラベル（SF配信／SF突合）は撤去。9/9 昼までに audit_logs に残った3行はそのまま（害なし）
 
 ## 5. 本番へ向けるときのチェックリスト（未実施）
 
