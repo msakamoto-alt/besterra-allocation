@@ -124,7 +124,7 @@ const TorihikisakiView = {
       target: 'Salesforce dev6（besterra--dev6.sandbox・org 00Dfd000002CDWc）',
       route: 'ハブ（company／company_type／system_code／permit_license／credit_line）→ Edge Function sf-export → 外部クライアントアプリ「Besterra Hub Export」（クライアントログイン情報フロー・実行ユーザー m.sakamoto@besterra.co.jp.dev6）→ Salesforce REST composite/sobjects で Account を外部ID upsert（キー＝会社マスタID HubCompanyId__c・200件/コール・ハブが空の項目は送らない）',
       scope: '有効な会社を全件（欠番は SF に既存があれば有効フラグ=false で更新のみ）。承認・反社ゲートは第1弾では掛けない',
-      frequency: '手動（自動化\\SF連携検証\\sf_export_call.py export）。毎晩5:30 の自動配信は pg_cron の雛形あり・未登録',
+      frequency: '即時（会社を保存するとトリガが sf-export を呼び、数秒で反映。関数は3秒待って確定後の状態を読む）。夜間の全件配信（毎朝5:30）は取りこぼしの保険。手動＝自動化\\SF連携検証\\sf_export_call.py',
       safety: '接続先 org が SF_EXPORT_ALLOWED_ORG_IDS（dev6 のみ）に無ければ書込前に中止。本番 org は未登録＝書けない。dev6 の Account Id はハブへ書き戻さない',
       log: [
         ['2026-09-09', 'dev6 に書込用の外部クライアントアプリ「Besterra Hub Export」を新規作成（配布＝ローカル・範囲＝api・クライアントログイン情報フロー有効・実行ユーザー設定）。本番の読取用アプリ「Besterra Allocation Import」は dev6 に写っていなかったため流用せず'],
@@ -132,6 +132,7 @@ const TorihikisakiView = {
         ['2026-09-09', 'dry_run（対象2,339・社名で一意突合できる既存1,562）→ link 1,562件にキー付与（曖昧23＝ハブ側に同名2社・不一致166）→ dry_run（更新1,473・新規866・コード衝突0）'],
         ['2026-09-09', 'export --limit 5 で試し流し（新規5・失敗0）→ export 全件（送信2,339・新規861・更新1,478・失敗0・24秒）→ 再 dry_run で新規0（冪等性確認）'],
         ['2026-09-09', 'dev6 の会社マスタID無し取引先188件を削除（Garyuuテストトリヒキサキのみ残置・モックの客先は付け替え）。dev6 の取引先＝2,429件（ハブ由来2,428）'],
+        ['2026-09-09', '配信頻度を「即時」に決定（工事部の登録依頼を定期実行で待たせない・経理が毎回手動で流す頻度が多い・運用開始済みで大量取込は無い）。会社マスタ系テーブルのトリガ（pg_net）から保存のたびに sf-export（direct モード・その会社だけ）を呼ぶ。SQL とデプロイ後に有効'],
       ],
     },
   },

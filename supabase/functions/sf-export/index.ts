@@ -15,9 +15,12 @@
 //              link   （SF 側で会社マスタIDを持たない取引先を正規化社名でハブと突合し、
 //                       一意に当たったものへ会社マスタID＋取引先コードを付ける＝配信前の「更新扱い」化）
 //              export （composite/sobjects で 200件/コールの外部ID upsert・allOrNone=false）
-//   source  … 実行元の名乗り（script / cron / app）。監査ログの表示に使う
+//   mode    … full（既定・有効な会社を全件）／direct（ハブのトリガから保存のたびに呼ばれる即時配信・2026-09-09。
+//              company_ids 必須。1回の保存で複数行が別トランザクションで書かれるため、3秒待ってからハブを読み直す）
+//   source  … 実行元の名乗り（script / cron / trigger / app）。監査ログの表示に使う
 //   scope   … active（既定・有効な会社のみ）／all（欠番も含む。欠番は SF に既存があれば有効フラグ=false で更新、無ければ作らない）
-//   company_ids … 会社マスタIDの配列で対象を絞る（試し流し用）
+//              ※ mode=direct と company_ids 指定は常に all 相当（欠番化も即時に SF へ伝える）
+//   company_ids … 会社マスタIDの配列で対象を絞る（試し流し・個別再送）
 //   limit   … 先頭 N 社だけ（試し流し用）
 //   writeback … true のとき upsert で返った Account Id を hub の system_code(system='salesforce') へ保存（既定 false）
 //
@@ -31,6 +34,8 @@
 //   - 取引先コードが SF の別レコード（会社マスタID無し）に付いている会社は送らず「コード衝突」として報告
 //     （送っても DUPLICATE_VALUE で落ちる。先に link で解消する）
 //   - 承認・反社ゲートは第1弾では掛けない（要決定⑤の推奨どおり）。掛けるときは buildRecord の手前で絞る
+//   - direct モード／company_ids 指定は対象の会社だけをハブ・SF から読む（全件読取をしない）。
+//     失敗は監査ログ ERROR と応答に残し、夜間の全件配信（sf_export_cron.sql）が取りこぼしを拾う
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -42,9 +47,17 @@ const cors = {
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
 const TABLE = 'company'; // 監査ログ上の対象テーブル
+const DIRECT_SETTLE_MS = 3000; // direct: 保存の残りのトランザクションが確定するのを待つ
+
+type Admin = ReturnType<typeof createClient>;
 
 function json(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
+}
+function chunks<T>(arr: T[], n: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
 }
 
 // ---------------- マッピング v0.2（ハブ106項目→Account・2026-09-08 の決定を反映） ----------------
@@ -114,8 +127,17 @@ type Hub = {
   credit: Map<string, number>;
 };
 
-async function fetchAll(admin: ReturnType<typeof createClient>, table: string, select: string, order: string) {
+// ハブ読取。ids を渡すとその会社だけ（queue／company_ids 指定）、無ければ全件（ページング）
+async function fetchRows(admin: Admin, table: string, select: string, order: string, ids: string[] | null) {
   const out: Record<string, unknown>[] = [];
+  if (ids) {
+    for (const c of chunks(ids, 200)) {
+      const { data, error } = await admin.from(table).select(select).in('company_id', c).order(order, { ascending: true });
+      if (error) throw new Error(`${table} 読取失敗: ${error.message}`);
+      out.push(...(data || []));
+    }
+    return out;
+  }
   for (let from = 0; ; from += 1000) {
     const { data, error } = await admin.from(table).select(select).order(order, { ascending: true }).range(from, from + 999);
     if (error) throw new Error(`${table} 読取失敗: ${error.message}`);
@@ -124,23 +146,23 @@ async function fetchAll(admin: ReturnType<typeof createClient>, table: string, s
   }
 }
 
-async function loadHub(admin: ReturnType<typeof createClient>): Promise<Hub> {
-  const companies = await fetchAll(admin, 'company',
-    'company_id,official_name,name_kana,corporate_number,representative_name,postal_code,prefecture,address_line,building,phone,fax,invoice_reg_number,invoice_status,capital_amount,remarks,last_trade_on,is_suspended', 'company_id');
+async function loadHub(admin: Admin, ids: string[] | null): Promise<Hub> {
+  const companies = await fetchRows(admin, 'company',
+    'company_id,official_name,name_kana,corporate_number,representative_name,postal_code,prefecture,address_line,building,phone,fax,invoice_reg_number,invoice_status,capital_amount,remarks,last_trade_on,is_suspended', 'company_id', ids);
   const types = new Map<string, string[]>();
-  for (const t of await fetchAll(admin, 'company_type', 'company_id,type_code', 'company_id')) {
+  for (const t of await fetchRows(admin, 'company_type', 'company_id,type_code', 'company_id', ids)) {
     const k = String(t.company_id); types.set(k, [...(types.get(k) || []), String(t.type_code)]);
   }
   const codes = new Map<string, Record<string, string>>();
-  for (const s of await fetchAll(admin, 'system_code', 'company_id,system,code', 'company_id')) {
+  for (const s of await fetchRows(admin, 'system_code', 'company_id,system,code', 'company_id', ids)) {
     const k = String(s.company_id); const m = codes.get(k) || {}; m[String(s.system)] = String(s.code); codes.set(k, m);
   }
   const permits = new Map<string, Record<string, unknown>[]>();
-  for (const p of await fetchAll(admin, 'permit_license', 'company_id,permit_type,construction_types,permit_authority,permit_number', 'permit_id')) {
+  for (const p of await fetchRows(admin, 'permit_license', 'company_id,permit_type,construction_types,permit_authority,permit_number', 'permit_id', ids)) {
     const k = String(p.company_id); permits.set(k, [...(permits.get(k) || []), p]);
   }
   const credit = new Map<string, number>();
-  for (const c of await fetchAll(admin, 'credit_line', 'company_id,limit_amount', 'credit_id')) {
+  for (const c of await fetchRows(admin, 'credit_line', 'company_id,limit_amount', 'credit_id', ids)) {
     if (c.limit_amount != null) credit.set(String(c.company_id), Number(c.limit_amount));
   }
   return { companies, types, codes, permits, credit };
@@ -235,6 +257,17 @@ async function sfQuery(sf: Sf, soql: string): Promise<Record<string, unknown>[]>
     url = sf.base + body.nextRecordsUrl;
   }
 }
+const soqlIn = (vals: string[]) => vals.map((v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',');
+
+// SF 側の既存取引先。targets を渡すと対象の会社マスタID＋取引先コードに絞って読む（queue／company_ids）
+async function loadSfAccounts(sf: Sf, targets: { ids: string[]; codes: string[] } | null): Promise<Record<string, unknown>[]> {
+  const sel = 'SELECT Id, Name, HubCompanyId__c, Business_Partners_Code__c FROM Account';
+  if (!targets) return await sfQuery(sf, sel);
+  const seen = new Map<string, Record<string, unknown>>();
+  for (const c of chunks(targets.ids, 200)) for (const a of await sfQuery(sf, `${sel} WHERE HubCompanyId__c IN (${soqlIn(c)})`)) seen.set(String(a.Id), a);
+  for (const c of chunks(targets.codes, 200)) for (const a of await sfQuery(sf, `${sel} WHERE Business_Partners_Code__c IN (${soqlIn(c)})`)) seen.set(String(a.Id), a);
+  return [...seen.values()];
+}
 
 type SfResult = { id?: string; success: boolean; created?: boolean; errors?: { statusCode?: string; message?: string }[] };
 
@@ -263,7 +296,8 @@ async function sfUpdateBatch(sf: Sf, records: Record<string, unknown>[]): Promis
 
 // ---------------- 監査ログ（sf-import と同型・1回1行） ----------------
 const SOURCES: Record<string, { email: string; trigger: string }> = {
-  cron:   { email: 'sf-export（自動実行）',       trigger: '自動（スケジュール）' },
+  cron:    { email: 'sf-export（自動実行）',       trigger: '自動（夜間・全件）' },
+  trigger: { email: 'sf-export（即時配信）',       trigger: '自動（保存時・即時）' },
   script: { email: 'sf-export（手動スクリプト）', trigger: '手動（スクリプト）' },
 };
 const SOURCE_UNKNOWN = { email: 'sf-export（実行元不明）', trigger: '不明（secret経由）' };
@@ -272,7 +306,7 @@ function resolveSource(caller: string, source: unknown) {
   const s = SOURCES[String(source || '')] || SOURCE_UNKNOWN;
   return { ...s, role: 'system' };
 }
-async function logAudit(admin: ReturnType<typeof createClient>, entry: { op: string; caller: string; source: unknown; rowKey: string; changes: Record<string, { new: string }> }): Promise<boolean> {
+async function logAudit(admin: Admin, entry: { op: string; caller: string; source: unknown; rowKey: string; changes: Record<string, { new: string }> }): Promise<boolean> {
   const who = resolveSource(entry.caller, entry.source);
   try {
     const { error } = await admin.from('audit_logs').insert({
@@ -288,7 +322,7 @@ async function logAudit(admin: ReturnType<typeof createClient>, entry: { op: str
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const t0 = Date.now();
-  let auditCtx: { admin: ReturnType<typeof createClient>; caller: string; source: unknown; op: string } | null = null;
+  let auditCtx: { admin: Admin; caller: string; source: unknown; op: string } | null = null;
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
@@ -307,16 +341,25 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || 'dry_run');
     if (!['dry_run', 'link', 'export'].includes(action)) return json({ error: `不明な action: ${action}` }, 400);
-    const scope = String(body.scope || 'active');
-    const onlyIds: string[] | null = Array.isArray(body.company_ids) && body.company_ids.length ? body.company_ids.map(String) : null;
+    const mode = String(body.mode || 'full');
     const limit = Number(body.limit || 0) || 0;
     const writeback = body.writeback === true;
+
+    // --- 対象の決め方（direct／company_ids＝対象を絞る・欠番も含む） ---
+    const onlyIds: string[] | null = Array.isArray(body.company_ids) && body.company_ids.length ? [...new Set(body.company_ids.map(String))] : null;
+    if (mode === 'direct') {
+      if (!onlyIds) return json({ error: 'direct モードは company_ids が必要です' }, 400);
+      // 1回の保存で会社本体・種別・許可などが別々のトランザクションで書かれる。全部確定してから読み直す
+      await new Promise((r) => setTimeout(r, DIRECT_SETTLE_MS));
+    }
+    const scope = onlyIds ? 'all' : String(body.scope || 'active');
     if (action !== 'dry_run') auditCtx = { admin, caller, source: body.source, op: action === 'link' ? 'SF_LINK' : 'SF_EXPORT' };
 
     // --- 接続（org ガード込み）・ハブ読取・SF 現状読取 ---
     const sf = await sfConnect();
-    const hub = await loadHub(admin);
-    const sfAccounts = await sfQuery(sf, 'SELECT Id, Name, HubCompanyId__c, Business_Partners_Code__c FROM Account');
+    const hub = await loadHub(admin, onlyIds);
+    const targetCodes = onlyIds ? [...new Set(hub.companies.map((c) => (hub.codes.get(String(c.company_id)) || {}).tera).filter((x): x is string => !!x))] : [];
+    const sfAccounts = await loadSfAccounts(sf, onlyIds ? { ids: onlyIds, codes: targetCodes } : null);
     const sfByHub = new Map<string, Record<string, unknown>>();
     const sfByCode = new Map<string, Record<string, unknown>>();
     for (const a of sfAccounts) {
@@ -328,8 +371,9 @@ Deno.serve(async (req) => {
       const k = normName(c.official_name as string); hubByNorm.set(k, [...(hubByNorm.get(k) || []), String(c.company_id)]);
     }
 
-    // ===== link：会社マスタID無しの SF 取引先を社名で突合してキーを付ける =====
+    // ===== link：会社マスタID無しの SF 取引先を社名で突合してキーを付ける（全件モードのみ） =====
     if (action === 'link') {
+      if (onlyIds) return json({ error: 'link は全件モードで実行してください（company_ids／direct は不可）' }, 400);
       const unlinked = sfAccounts.filter((a) => !a.HubCompanyId__c);
       const seenHub = new Set<string>();
       const updates: Record<string, unknown>[] = [];
@@ -341,7 +385,6 @@ Deno.serve(async (req) => {
         const cid = cands[0];
         if (seenHub.has(cid)) { ambiguous.push(String(a.Name)); continue; }
         const tera = (hub.codes.get(cid) || {}).tera;
-        // 取引先コードが別レコードに付いている場合は付けない（一意制約で落ちる）
         const codeHolder = tera ? sfByCode.get(tera) : undefined;
         if (codeHolder && codeHolder.Id !== a.Id) { ambiguous.push(`${a.Name}（コード${tera}は別レコードに付与済み）`); continue; }
         seenHub.add(cid);
@@ -350,9 +393,9 @@ Deno.serve(async (req) => {
         updates.push(u);
       }
       let ok = 0; const failed: { id: string; message: string }[] = [];
-      for (let i = 0; i < updates.length; i += BATCH) {
-        const res = await sfUpdateBatch(sf, updates.slice(i, i + BATCH));
-        res.forEach((r, j) => { if (r.success) ok++; else failed.push({ id: String(updates[i + j].Id), message: (r.errors || []).map((e) => e.message).join('; ').slice(0, 200) }); });
+      for (const c of chunks(updates, BATCH)) {
+        const res = await sfUpdateBatch(sf, c);
+        res.forEach((r, j) => { if (r.success) ok++; else failed.push({ id: String(c[j].Id), message: (r.errors || []).map((e) => e.message).join('; ').slice(0, 200) }); });
       }
       const logged = await logAudit(admin, { op: 'SF_LINK', caller, source: body.source, rowKey: `Account@${sf.orgId}`,
         changes: { linked: { new: String(ok) }, failed: { new: String(failed.length) }, unlinked_before: { new: String(unlinked.length) } } });
@@ -363,34 +406,35 @@ Deno.serve(async (req) => {
 
     // ===== dry_run / export：配信対象の組み立てと分類 =====
     let targets = hub.companies;
-    if (onlyIds) targets = targets.filter((c) => onlyIds.includes(String(c.company_id)));
     if (scope === 'active') targets = targets.filter((c) => !c.is_suspended);
     else targets = targets.filter((c) => !c.is_suspended || sfByHub.has(String(c.company_id))); // 欠番は既存があれば更新のみ
     if (limit > 0) targets = targets.slice(0, limit);
 
     const records: Record<string, unknown>[] = [];
-    const cls = { update: 0, create: 0, code_conflict: 0 };
+    const cls = { update: 0, create: 0, code_conflict: 0, skipped_suspended: 0 };
     const conflicts: { company_id: string; name: string; code: string; holder: string }[] = [];
+    const conflictIds = new Set<string>();
     for (const c of targets) {
       const rec = buildRecord(hub, c);
       const cid = String(c.company_id);
       const tera = rec.Business_Partners_Code__c ? String(rec.Business_Partners_Code__c) : '';
       const holder = tera ? sfByCode.get(tera) : undefined;
       if (holder && String(holder.HubCompanyId__c || '') !== cid) {
-        cls.code_conflict++; conflicts.push({ company_id: cid, name: String(c.official_name), code: tera, holder: String(holder.Name) });
+        cls.code_conflict++; conflictIds.add(cid); conflicts.push({ company_id: cid, name: String(c.official_name), code: tera, holder: String(holder.Name) });
         continue;
       }
       if (sfByHub.has(cid)) cls.update++; else cls.create++;
       records.push(rec);
     }
+    if (onlyIds) cls.skipped_suspended = hub.companies.length - targets.length; // 欠番で SF に無い＝作らない
     const fieldFill: Record<string, number> = {};
     for (const r of records) for (const k of Object.keys(r)) fieldFill[k] = (fieldFill[k] || 0) + 1;
 
     if (action === 'dry_run') {
-      const linkable = sfAccounts.filter((a) => !a.HubCompanyId__c && (hubByNorm.get(normName(a.Name as string)) || []).length === 1).length;
-      return json({ ok: true, action, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
+      const linkable = onlyIds ? null : sfAccounts.filter((a) => !a.HubCompanyId__c && (hubByNorm.get(normName(a.Name as string)) || []).length === 1).length;
+      return json({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
         hub_companies: hub.companies.length, sf_accounts: sfAccounts.length, sf_linked: sfByHub.size,
-        targets: targets.length, will_update: cls.update, will_create: cls.create, code_conflict: cls.code_conflict,
+        targets: targets.length, will_update: cls.update, will_create: cls.create, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
         conflict_samples: conflicts.slice(0, 20), field_fill: fieldFill, sample: records.slice(0, 2),
         linkable_by_name: linkable,
         note: '書込は行っていません。code_conflict は取引先コードが SF の別レコードに付いている会社＝先に action=link で解消してください。',
@@ -400,8 +444,7 @@ Deno.serve(async (req) => {
     // ===== export =====
     let created = 0, updated = 0; const failed: { company_id: string; name: string; message: string }[] = [];
     const idByCompany: Record<string, string> = {};
-    for (let i = 0; i < records.length; i += BATCH) {
-      const chunk = records.slice(i, i + BATCH);
+    for (const chunk of chunks(records, BATCH)) {
       const res = await sfUpsertBatch(sf, chunk);
       res.forEach((r, j) => {
         const cid = String(chunk[j].HubCompanyId__c);
@@ -412,17 +455,18 @@ Deno.serve(async (req) => {
     let wroteBack = 0;
     if (writeback) {
       const rows = Object.entries(idByCompany).map(([company_id, code]) => ({ company_id, system: 'salesforce', code }));
-      for (let i = 0; i < rows.length; i += 500) {
-        const { error } = await admin.from('system_code').upsert(rows.slice(i, i + 500), { onConflict: 'company_id,system' });
+      for (const c of chunks(rows, 500)) {
+        const { error } = await admin.from('system_code').upsert(c, { onConflict: 'company_id,system' });
         if (error) { failed.push({ company_id: '-', name: '(writeback)', message: 'system_code 書き戻し失敗: ' + error.message }); break; }
-        wroteBack += Math.min(500, rows.length - i);
+        wroteBack += c.length;
       }
     }
     const logged = await logAudit(admin, { op: 'SF_EXPORT', caller, source: body.source, rowKey: `Account@${sf.orgId}`,
       changes: { sent: { new: String(records.length) }, created: { new: String(created) }, updated: { new: String(updated) },
-        failed: { new: String(failed.length) }, code_conflict: { new: String(cls.code_conflict) }, writeback: { new: String(wroteBack) } } });
-    return json({ ok: true, action, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
-      targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict,
+        failed: { new: String(failed.length) }, code_conflict: { new: String(cls.code_conflict) }, writeback: { new: String(wroteBack) },
+        ...(mode === 'direct' ? { company_ids: { new: onlyIds!.join(',') }, reason: { new: String(body.reason || '') } } : {}) } });
+    return json({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
+      targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
       failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack,
       audit_logged: logged, elapsed_ms: Date.now() - t0 });
   } catch (e) {

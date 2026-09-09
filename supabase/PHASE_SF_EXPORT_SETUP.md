@@ -78,6 +78,28 @@ python sf_export_call.py                 # ⑥ 再 dry_run：will_create=0（冪
 - link で付けた分：`HubCompanyId__c` と `Business_Partners_Code__c` を空に戻す（対象は監査ログの linked 件数と一致）
 - 事前に dev6 の Account を CSV で退避しておく（`sf data export bulk` または 取引先リストビューのエクスポート）
 
+## 6. 即時配信（保存のたびにトリガから直接呼ぶ・2026-09-09 坂本さん決定）
+
+決定の理由＝工事部から「早く登録してほしい」と言われたとき定期実行は待てない／経理が毎回手動で流すのは頻度が多い／
+運用開始済みで CSV の大量取込はもう無い。
+
+経理がハブで会社を保存すると、会社マスタ系テーブルのトリガが pg_net で `sf-export`（mode=direct・その会社だけ）を
+非同期に呼ぶ。pg_net は送信を積むだけなので保存は Salesforce を待たない。関数側は **3秒待ってからハブを読み直す**
+（1回の保存で会社本体・種別・許可が別々のトランザクションで書かれるため、途中の状態を送らない）。
+＝保存から数秒で Salesforce に反映。失敗の取りこぼしは夜間の全件配信（§4）が拾う＝**§4 の cron も登録すること**。
+
+1. **SQL**（初回のみ・再実行可）: `自動化\SF連携検証\sf_export_trigger_filled.sql` を SQL Editor に貼って Run
+   （トリガ関数＋トリガ5本。雛形は `supabase/sf_export_trigger.sql`）
+2. **関数の再デプロイ**: Edge Functions → sf-export → エディタの中身を `supabase/functions/sf-export/index.ts` で置き換えて Deploy
+   （direct モード・対象だけ読む軽量化）
+3. **動作確認**: ハブで会社を1件保存 → 数秒後に Salesforce の取引先が更新される。
+   監査ログ（対象「取引先マスタ（SF配信）」）に「自動（保存時・即時）」の SF_EXPORT が保存のたびに1行残る
+4. **監視**: `select id, status_code, left(content::text, 300) from net._http_response order by id desc limit 5;`
+   （status_code が 200 以外なら関数側の失敗。監査ログの ERROR と合わせて見る）
+
+- 1回の保存で行が複数変わると同じ会社への呼び出しが数回重なるが、3秒待って同じ確定状態を送るので結果は同じ（冪等）
+- 止めるとき: トリガ5本を drop（雛形の末尾に列挙）。関数と Secrets はそのまま
+
 ## 5. 本番へ向けるときのチェックリスト（未実施）
 
 - [ ] 書込専用 ECA＋連携専用ユーザーを本番に作成（システム管理者）→ Secrets を差し替え
