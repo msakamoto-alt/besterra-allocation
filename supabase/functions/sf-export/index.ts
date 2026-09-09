@@ -1,8 +1,11 @@
 // 取引先マスタ配信 Edge Function（sf-export）
 //
 // 役割：統合管理ツール（ハブ）の会社マスタを正本として、Salesforce の取引先（Account）へ配信する。
-//       ハブ→SF の一方向。SF 側の値はハブから来たもので上書きし、ハブが空の項目は送らない
-//      （SF の既存値を消さない）。キーは会社マスタID（Account.HubCompanyId__c・外部ID）。
+//       ハブ→SF の一方向。SF 側の値はハブから来たもので上書きし、**ハブが空になった項目は null を送って SF も空にする**
+//      （ハブが正本＝削除も反映。2026-09-09 原島さんのテストで「業種を外しても SF に残る」→仕様変更）。
+//       例外＝会社マスタID・取引先コード・社名は空にしない。本番の初回だけ「SF が空のときだけ埋める」項目を
+//       body.keep_if_empty（API名の配列）で指定できる（DRY 要決定 C／E＝電話・FAX・許可）。
+//       キーは会社マスタID（Account.HubCompanyId__c・外部ID）。
 //       sf-import（SF→ハブ・読取専用）の逆方向版。認証・呼び出し方は sf-import と同型。
 //       実行記録はアプリ共通の監査ログではなく取引先マスタの連携ログ integration_log へ書く（2026-09-09 坂本さん指摘＝
 //       即時配信で監査ログが埋まるため）。接続先・版・方式を毎回 meta に残し、画面はそれを最新値として表示する。
@@ -48,7 +51,9 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-09-09.3'; // 連携ログ meta.version（画面の「版」に出る）
+const VERSION = '2026-09-09.4'; // 連携ログ meta.version（画面の「版」に出る）
+// ハブが空でも SF の値を消さない項目（キーと社名）。本番初回は body.keep_if_empty で電話・FAX・許可などを足せる
+const KEEP_IF_EMPTY = new Set(['HubCompanyId__c', 'Name', 'Business_Partners_Code__c']);
 const LOG = 'integration_log';   // 取引先マスタの連携ログ
 const SYSTEM = 'salesforce';
 const DIRECT_SETTLE_MS = 3000; // direct: 保存の残りのトランザクションが確定するのを待つ
@@ -172,8 +177,8 @@ async function loadHub(admin: Admin, ids: string[] | null): Promise<Hub> {
   return { companies, types, codes, permits, credit };
 }
 
-// ハブ1社 → Account upsert レコード。空値は送らない（SF の既存値を消さない）
-function buildRecord(hub: Hub, c: Record<string, unknown>): Record<string, unknown> {
+// ハブ1社 → Account upsert レコード。ハブが空の項目は null（SF を空にする）。keepIfEmpty の項目だけ送らない
+function buildRecord(hub: Hub, c: Record<string, unknown>, keepIfEmpty: Set<string>): Record<string, unknown> {
   const cid = String(c.company_id);
   const codes = hub.codes.get(cid) || {};
   const permits = hub.permits.get(cid) || [];
@@ -217,7 +222,10 @@ function buildRecord(hub: Hub, c: Record<string, unknown>): Record<string, unkno
   if (rec.Business_Partners_Code__c && String(rec.Business_Partners_Code__c).length > 4) delete rec.Business_Partners_Code__c;
   for (const k of Object.keys(rec)) {
     const v = rec[k];
-    if (v === null || v === undefined || v === '') delete rec[k];
+    if (v === null || v === undefined || v === '') {
+      if (keepIfEmpty.has(k)) delete rec[k];   // 送らない＝SF の既存値を残す
+      else rec[k] = null;                      // 空を送る＝SF も空にする（ハブが正本）
+    }
   }
   return rec;
 }
@@ -355,6 +363,7 @@ Deno.serve(async (req) => {
     const mode = String(body.mode || 'full');
     const limit = Number(body.limit || 0) || 0;
     const writeback = body.writeback === true;
+    const keepIfEmpty = new Set<string>([...KEEP_IF_EMPTY, ...((Array.isArray(body.keep_if_empty) ? body.keep_if_empty : []).map(String))]);
 
     // --- 対象の決め方（direct／company_ids＝対象を絞る・欠番も含む） ---
     const onlyIds: string[] | null = Array.isArray(body.company_ids) && body.company_ids.length ? [...new Set(body.company_ids.map(String))] : null;
@@ -427,7 +436,7 @@ Deno.serve(async (req) => {
     const conflicts: { company_id: string; name: string; code: string; holder: string }[] = [];
     const conflictIds = new Set<string>();
     for (const c of targets) {
-      const rec = buildRecord(hub, c);
+      const rec = buildRecord(hub, c, keepIfEmpty);
       const cid = String(c.company_id);
       const tera = rec.Business_Partners_Code__c ? String(rec.Business_Partners_Code__c) : '';
       const holder = tera ? sfByCode.get(tera) : undefined;
@@ -440,7 +449,7 @@ Deno.serve(async (req) => {
     }
     if (onlyIds) cls.skipped_suspended = hub.companies.length - targets.length; // 欠番で SF に無い＝作らない
     const fieldFill: Record<string, number> = {};
-    for (const r of records) for (const k of Object.keys(r)) fieldFill[k] = (fieldFill[k] || 0) + 1;
+    for (const r of records) for (const k of Object.keys(r)) if (r[k] !== null) fieldFill[k] = (fieldFill[k] || 0) + 1;
 
     if (action === 'dry_run') {
       const linkable = onlyIds ? null : sfAccounts.filter((a) => !a.HubCompanyId__c && (hubByNorm.get(normName(a.Name as string)) || []).length === 1).length;
@@ -476,7 +485,7 @@ Deno.serve(async (req) => {
     const logged = await logRun(admin, { kind: 'run', action: 'export', caller, source: body.source, sf, t0,
       counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended },
       companyIds: onlyIds, reason: body.reason,
-      meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, batch: BATCH, key: 'HubCompanyId__c' } });
+      meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty] } });
     return json({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
       targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
       failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack,
