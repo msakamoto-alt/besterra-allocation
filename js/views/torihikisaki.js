@@ -103,19 +103,42 @@ const TorihikisakiView = {
   // 🔴実態＝自動連携しているシステムは現時点で一つも無い（2026-08-26 坂本さん指摘で訂正）。
   //   tera と 勘定奉行(オンプレ) は同じ取引先コードを共有しているが、各システムへの登録は人が手で転記している。
   //   モックの「連携済（緑）」表記は自動同期と誤読されるため廃止し、コード保有の実測＋転記方法で表す。
-  // mode: manual=コード共有・手動転記 / planned=今後の配信対象（API配信は今回スコープ外）
+  // mode: manual=コード共有・手動転記 / planned=今後の配信対象 / api=ハブから API で配信（2026-09-09 Salesforce dev6 で稼働）
+  // 🟢2026-09-09: Salesforce dev6（検証用サンドボックス）へ Edge Function sf-export による API 配信が稼働。
+  //   本番 Salesforce は未接続のまま（別行）。dev6 の Account Id はハブへ書き戻さない（system_code 'salesforce' は空のまま）。
   SYSLINK: [
     { name: 'teraServation', sys: 'tera', mode: 'manual' },
     { name: '勘定奉行(オンプレ)', sys: 'obc_onpre', mode: 'manual' },
     { name: 'Bill One', sys: 'bill_one', mode: 'manual' },
     { name: '勘定奉行(クラウド)', sys: 'obc_cloud', mode: 'planned' },
-    { name: 'Salesforce', sys: 'salesforce', mode: 'planned' },
+    { name: 'Salesforce dev6（検証用サンドボックス）', sys: 'salesforce', mode: 'api', key: 'sf_dev6' },
+    { name: 'Salesforce（本番）', sys: 'salesforce', mode: 'planned' },
     { name: '新ERP(どっと原価/ZAC)', sys: 'new_erp', mode: 'planned' },
     { name: 'バクラク', sys: 'bakuraku', mode: 'planned' },
   ],
 
+  // API 配信の接続記録（登録方法と以後の状況・人が読む台帳）。新しい出来事は末尾に足す。
+  // 実績の最新値（最終配信の件数）は audit_logs から動的に出す（renderSysGlobal・管理者のみ閲覧可）。
+  SYSLINK_RECORD: {
+    sf_dev6: {
+      target: 'Salesforce dev6（besterra--dev6.sandbox・org 00Dfd000002CDWc）',
+      route: 'ハブ（company／company_type／system_code／permit_license／credit_line）→ Edge Function sf-export → 外部クライアントアプリ「Besterra Hub Export」（クライアントログイン情報フロー・実行ユーザー m.sakamoto@besterra.co.jp.dev6）→ Salesforce REST composite/sobjects で Account を外部ID upsert（キー＝会社マスタID HubCompanyId__c・200件/コール・ハブが空の項目は送らない）',
+      scope: '有効な会社を全件（欠番は SF に既存があれば有効フラグ=false で更新のみ）。承認・反社ゲートは第1弾では掛けない',
+      frequency: '手動（自動化\\SF連携検証\\sf_export_call.py export）。毎晩5:30 の自動配信は pg_cron の雛形あり・未登録',
+      safety: '接続先 org が SF_EXPORT_ALLOWED_ORG_IDS（dev6 のみ）に無ければ書込前に中止。本番 org は未登録＝書けない。dev6 の Account Id はハブへ書き戻さない',
+      log: [
+        ['2026-09-09', 'dev6 に書込用の外部クライアントアプリ「Besterra Hub Export」を新規作成（配布＝ローカル・範囲＝api・クライアントログイン情報フロー有効・実行ユーザー設定）。本番の読取用アプリ「Besterra Allocation Import」は dev6 に写っていなかったため流用せず'],
+        ['2026-09-09', 'Supabase Secrets 5件（SF_EXPORT_INSTANCE_URL／CLIENT_ID／CLIENT_SECRET／ALLOWED_ORG_IDS／IMPORT_SECRET）を設定し、Edge Function sf-export を Via Editor でデプロイ'],
+        ['2026-09-09', 'dry_run（対象2,339・社名で一意突合できる既存1,562）→ link 1,562件にキー付与（曖昧23＝ハブ側に同名2社・不一致166）→ dry_run（更新1,473・新規866・コード衝突0）'],
+        ['2026-09-09', 'export --limit 5 で試し流し（新規5・失敗0）→ export 全件（送信2,339・新規861・更新1,478・失敗0・24秒）→ 再 dry_run で新規0（冪等性確認）'],
+        ['2026-09-09', 'dev6 の会社マスタID無し取引先188件を削除（Garyuuテストトリヒキサキのみ残置・モックの客先は付け替え）。dev6 の取引先＝2,429件（ハブ由来2,428）'],
+      ],
+    },
+  },
+
   // コード保有の実測と mode から、その系の状態を決める（画面2箇所で同じ判定を使う）
   sysState(sys, mode, count) {
+    if (mode === 'api') return { badge: '接続（API配信）', cls: 'b-green', note: 'ハブが正本。有効な会社を全件 upsert（冪等）。書き戻しは無効のためコード保有社数は増えない' };
     if (count > 0) return { badge: '手動転記', cls: 'b-amber', note: mode === 'manual' ? '取引先コードは共通・登録は手作業' : 'コードあり（自動配信なし）' };
     if (mode === 'manual') return { badge: '未採番', cls: 'b-slate', note: 'このシステム用のコードはマスタ未保持' };
     return { badge: '未接続', cls: 'b-slate', note: '今後の採番・配信対象（今回スコープ外）' };
@@ -1630,9 +1653,17 @@ const TorihikisakiView = {
     let html = `<div class="slink"><span class="nm2">Sansan（名刺）</span>${sansanOn ? '<span class="badge b-sansan">取得あり</span>' : '<span class="badge b-slate">未接続</span>'}</div>`;
     html += this.SYSLINK.map(s => {
       const code = codes[s.sys];
-      const badge = code
-        ? `<span class="tnum mf" style="font-size:11px">${this.esc(code)}</span><span class="badge b-amber">手動</span>`
-        : `<span class="badge b-slate">${s.mode === 'manual' ? '未採番' : '未接続'}</span>`;
+      let badge;
+      if (s.mode === 'api') {
+        // API配信は有効な会社を全件 upsert する（書き戻し無効のため個社の SF Id は持たない）
+        badge = d.company.is_suspended
+          ? '<span class="badge b-slate" title="欠番。SF に既存があれば有効フラグ=false で更新のみ">対象外（欠番）</span>'
+          : '<span class="badge b-green" title="ハブ→Salesforce dev6 へ API 配信（毎回全件・冪等）">配信対象（API）</span>';
+      } else {
+        badge = code
+          ? `<span class="tnum mf" style="font-size:11px">${this.esc(code)}</span><span class="badge b-amber">手動</span>`
+          : `<span class="badge b-slate">${s.mode === 'manual' ? '未採番' : '未接続'}</span>`;
+      }
       return `<div class="slink"><span class="nm2">${this.esc(s.name)}</span>${badge}</div>`;
     }).join('');
     return html;
@@ -2863,20 +2894,63 @@ const TorihikisakiView = {
       ...this.SYSLINK.map(s => {
         const cnt = withSys[s.sys] || 0;
         const st = this.sysState(s.sys, s.mode, cnt);
-        return { name: s.name, cnt, method: cnt > 0 ? '人が手で転記' : '—', st, note: st.note };
+        const method = s.mode === 'api' ? 'ハブ→API配信（sf-export・外部ID upsert）' : (cnt > 0 ? '人が手で転記' : '—');
+        return { name: s.name, cnt, method, st, note: st.note, key: s.key };
       }),
     ];
-    wrap.innerHTML = `<div class="sub">各システムとのつながりの全体像。<b>現時点で自動連携（API配信）しているシステムはありません。</b>
-      teraServation と勘定奉行(オンプレ)は<b>同じ取引先コード</b>をマスタが保持していますが、各システムへの登録は<b>人が手で転記</b>しています。
-      API配信は今回のスコープ外です（後から足せる形は維持）。この表は「マスタがコードを持っているか」の実測です。</div>
-     <div class="alert warn">⚠ 「コードを持っている」＝「自動で同期している」ではありません。値の二重入力・転記漏れは現状の運用リスクとして残ります。</div>
+    const active = (this.rows || []).filter(r => !r.is_suspended).length;
+    wrap.innerHTML = `<div class="sub">各システムとのつながりの全体像。<b>Salesforce dev6（検証用サンドボックス）へは 2026-09-09 から API 配信が稼働しています</b>（ハブが正本・一方向）。
+      本番 Salesforce と他のシステムは未接続で、teraServation と勘定奉行(オンプレ)は<b>同じ取引先コード</b>をマスタが保持していますが、各システムへの登録は<b>人が手で転記</b>しています。
+      「コード保有社数」は「マスタがコードを持っているか」の実測です。</div>
+     <div class="alert warn">⚠ 「コードを持っている」＝「自動で同期している」ではありません（API配信の行を除く）。値の二重入力・転記漏れは現状の運用リスクとして残ります。</div>
      <div class="tblwrap"><table class="tbl"><thead><tr><th>システム</th><th>状態</th><th>登録方法</th><th>コード保有社数</th><th>備考</th></tr></thead><tbody>` +
       rows.map(r => `<tr style="cursor:default"><td style="font-weight:600">${this.esc(r.name)}</td>` +
         `<td><span class="badge ${r.st.cls}">${this.esc(r.st.badge)}</span></td>` +
         `<td class="mf">${this.esc(r.method)}</td>` +
-        `<td class="num">${r.cnt.toLocaleString()}</td>` +
+        `<td class="num">${r.key === 'sf_dev6' ? `配信対象 ${active.toLocaleString()}社` : r.cnt.toLocaleString()}</td>` +
         `<td class="mf">${this.esc(r.note)}</td></tr>`).join('') +
-      '</tbody></table></div>';
+      '</tbody></table></div>' +
+      Object.entries(this.SYSLINK_RECORD).map(([key, rec]) => {
+        const sys = this.SYSLINK.find(x => x.key === key) || {};
+        return `<div class="fcard" style="margin-top:12px"><h3 style="margin:0 0 6px">接続の記録：${this.esc(sys.name || key)}</h3>
+          <div class="mf" style="font-size:11.5px;line-height:1.7">
+            <div><b>接続先</b>　${this.esc(rec.target)}</div>
+            <div><b>経路</b>　${this.esc(rec.route)}</div>
+            <div><b>対象</b>　${this.esc(rec.scope)}</div>
+            <div><b>頻度</b>　${this.esc(rec.frequency)}</div>
+            <div><b>安全弁</b>　${this.esc(rec.safety)}</div>
+            <div><b>最終配信</b>　<span id="tmk-sys-last-${this.esc(key)}">読み込み中…</span></div>
+          </div>
+          <table class="tbl" style="margin-top:8px"><thead><tr><th style="width:110px">日付</th><th>出来事（登録方法と以後の状況）</th></tr></thead><tbody>` +
+          rec.log.map(([d, t]) => `<tr style="cursor:default"><td class="tnum">${this.esc(d)}</td><td class="mf">${this.esc(t)}</td></tr>`).join('') +
+          '</tbody></table></div>';
+      }).join('');
+    this.loadSysLast();
+  },
+
+  // 最終配信の実績＝audit_logs（sf-export が1実行1行で記録）。RLS により管理者のみ読める。
+  async loadSysLast() {
+    const el = this.el('tmk-sys-last-sf_dev6');
+    if (!el) return;
+    try {
+      // audit_logs はアプリ本体（ログイン済みセッション）の側にある。取引先マスタ用クライアントは匿名接続なので使わない
+      const sb = Sync.getSupabase();
+      const res = await sb.from('audit_logs').select('at,op,user_email,changes')
+        .eq('table_name', 'company').in('op', ['SF_EXPORT', 'SF_LINK', 'ERROR']).order('at', { ascending: false }).limit(3);
+      if (res.error) throw new Error(res.error.message);
+      const rs = res.data || [];
+      if (!rs.length) { el.textContent = '記録なし（または管理者のみ表示可）'; return; }
+      const fmt = r => {
+        const c = r.changes || {}; const g = k => (c[k] && c[k].new) || '0';
+        const when = new Date(r.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+        if (r.op === 'SF_EXPORT') return `${when} 配信：送信 ${g('sent')}・新規 ${g('created')}・更新 ${g('updated')}・失敗 ${g('failed')}・コード衝突 ${g('code_conflict')}（${g('trigger')}／${r.user_email}）`;
+        if (r.op === 'SF_LINK') return `${when} 突合：キー付与 ${g('linked')}・失敗 ${g('failed')}（${g('trigger')}）`;
+        return `${when} 失敗：${g('error')}`;
+      };
+      el.innerHTML = rs.map(r => `<div>${this.esc(fmt(r))}</div>`).join('');
+    } catch (e) {
+      el.textContent = '取得できませんでした（' + String(e && e.message || e).slice(0, 60) + '）';
+    }
   },
 
   // ===== 変更履歴（グローバル・実データ最新100件） =====
