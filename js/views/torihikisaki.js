@@ -123,7 +123,7 @@ const TorihikisakiView = {
 
   // コード保有の実測と mode から、その系の状態を決める（画面2箇所で同じ判定を使う）
   sysState(sys, mode, count) {
-    if (mode === 'api') return { badge: '接続（API配信）', cls: 'b-green', note: 'ハブが正本。有効な会社を全件 upsert（冪等）。書き戻しは無効のためコード保有社数は増えない' };
+    if (mode === 'api') return { badge: '接続（API配信）', cls: 'b-green', note: 'ハブが正本・一方向（詳細は下の接続の記録）' };
     if (count > 0) return { badge: '手動転記', cls: 'b-amber', note: mode === 'manual' ? '取引先コードは共通・登録は手作業' : 'コードあり（自動配信なし）' };
     if (mode === 'manual') return { badge: '未採番', cls: 'b-slate', note: 'このシステム用のコードはマスタ未保持' };
     return { badge: '未接続', cls: 'b-slate', note: '今後の採番・配信対象（今回スコープ外）' };
@@ -2887,7 +2887,7 @@ const TorihikisakiView = {
       }),
     ];
     const active = (this.rows || []).filter(r => !r.is_suspended).length;
-    wrap.innerHTML = `<div class="sub">各システムとのつながりの全体像。<b>Salesforce dev6（検証用サンドボックス）へは 2026-09-09 から API 配信が稼働しています</b>（ハブが正本・一方向）。
+    wrap.innerHTML = `<div class="sub">各システムとのつながりの全体像。<b>Salesforce dev6（検証用サンドボックス）へは API で配信しています</b>（ハブが正本・一方向）。
       本番 Salesforce と他のシステムは未接続で、teraServation と勘定奉行(オンプレ)は<b>同じ取引先コード</b>をマスタが保持していますが、各システムへの登録は<b>人が手で転記</b>しています。
       「コード保有社数」は「マスタがコードを持っているか」の実測です。</div>
      <div class="alert warn">⚠ 「コードを持っている」＝「自動で同期している」ではありません（API配信の行を除く）。値の二重入力・転記漏れは現状の運用リスクとして残ります。</div>
@@ -2961,8 +2961,8 @@ const TorihikisakiView = {
         (trigRows ? `<table class="tbl" style="margin-top:4px"><thead><tr><th>契機</th><th>実行回数</th><th>送信社数</th><th>失敗</th><th>関数エラー</th></tr></thead><tbody>${trigRows}</tbody></table>` : '<div class="mf">まだ実績がありません</div>') + '</div>' +
         `<div style="margin-top:8px"><b style="font-size:12px">最終配信</b><div class="mf" style="font-size:11.5px;line-height:1.7">${rows.filter(r => r.kind !== 'note').slice(0, 3).map(r => `<div>${this.ilogRunLine(r)}</div>`).join('') || '—'}</div></div>` +
         `<div style="margin-top:8px"><b style="font-size:12px">出来事の記録（人が書いたもの・新しい順）</b>` +
-        (notes.length ? `<table class="tbl" style="margin-top:4px"><thead><tr><th style="width:130px">日時</th><th style="width:120px">記録者</th><th>内容</th></tr></thead><tbody>` +
-          notes.slice(0, 8).map(r => `<tr style="cursor:default"><td class="tnum">${this.esc(this.jstStamp(r.at))}</td><td class="mf">${this.esc(r.actor || '')}</td><td class="mf">${this.esc(r.message || '')}</td></tr>`).join('') + '</tbody></table>' : '<div class="mf">まだ記録がありません</div>') +
+        (notes.length ? `<table class="tbl" style="margin-top:4px;table-layout:fixed;width:100%"><thead><tr><th style="width:130px">日時</th><th style="width:150px">記録者</th><th>内容</th></tr></thead><tbody>` +
+          notes.slice(0, 8).map(r => `<tr style="cursor:default"><td class="tnum" style="white-space:normal">${this.esc(this.jstStamp(r.at))}</td><td class="mf" style="white-space:normal;word-break:break-all">${this.esc(r.actor || '')}</td><td class="mf" style="white-space:normal;word-break:break-word">${this.esc(r.message || '')}</td></tr>`).join('') + '</tbody></table>' : '<div class="mf">まだ記録がありません</div>') +
         `<div class="mf" style="font-size:11px;margin-top:4px"><a data-goilog style="cursor:pointer;text-decoration:underline">連携ログを開く</a></div></div>`;
       el.querySelectorAll('[data-goilog]').forEach(x => x.onclick = () => this.go('ilog'));
     } catch (e) {
