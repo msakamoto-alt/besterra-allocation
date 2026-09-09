@@ -12,23 +12,29 @@
 
 ---
 
-## 0. Salesforce 側（dev6）：クライアントログイン情報フローの実行ユーザーを有効にする
+## 0. Salesforce 側（dev6）：書込用の外部クライアントアプリを新規作成する
 
-本番 org に 7/14 に作った外部クライアントアプリ「Besterra Allocation Import」は dev6 にも写っている
-（鍵と秘密は同じ・トークン発行は通る）が、**ポリシーの「実行ユーザー」が dev6 では未設定**のため
-`no client credentials user enabled` で止まる。dev6 のシステム管理者で次を行う。
+本番の「Besterra Allocation Import」は配布状態がローカルのため dev6 には写っていない（2026-09-09 確認）。
+dev6 に **書込用のアプリを新しく作る**。読取専用の sf-import と鍵を分けるためにも、この形が正しい。
+dev6 のシステム管理者（自分）で行う。所要 10 分。
 
-1. dev6 にログイン → 設定 → クイック検索「外部クライアントアプリケーションマネージャ」
-2. 「Besterra Allocation Import」を開く → **ポリシー** タブ → 編集
-3. 「クライアントログイン情報フローの有効化」を ON、**実行ユーザー**に `m.sakamoto@besterra.co.jp.dev6` を入力 → 保存
-4. 動作確認（トークンが取れるか・書込なし）：
+1. dev6 にログイン → 設定 → クイック検索「**外部クライアントアプリケーションマネージャ**」→「新規外部クライアントアプリケーション」
+2. 基本情報：名前 `Besterra Hub Export`／API 参照名は自動／取引先責任者メール `m.sakamoto@besterra.co.jp`／配布状態 **ローカル**
+3. OAuth 設定：「OAuth 設定の有効化」ON／コールバック URL `https://login.salesforce.com/services/oauth2/callback`／
+   範囲は **「API を使用してユーザーデータを管理する (api)」だけ**／
+   「フローの有効化」で **「クライアントログイン情報フローの有効化」ON** → 作成
+4. **ポリシー** タブ → 編集 → 「クライアントログイン情報フローの有効化」ON、**実行ユーザー** `m.sakamoto@besterra.co.jp.dev6` → 保存
+5. **設定** タブ → OAuth 設定 → 「**コンシューマ鍵と秘密**」→ 本人確認コード（メール）を入力 → 表示された鍵と秘密を
+   `自動化\SF連携検証\sf_export_credentials.json`（`sf_export_credentials.example.json` を複製）にメモ帳で貼る
+   ※ 確認コードのメールが届かないときは dev6 の 設定 → 「メール到達性」→ アクセスレベルを「システムメールのみ」にする
+6. 動作確認（トークンが取れるか・書込なし）：
    ```
    python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\自動化\SF連携検証\sf_export_token_check.py"
    ```
+   「OK トークン取得成功: 実行ユーザー=m.sakamoto@besterra.co.jp.dev6 org=00Dfd000002CDWc」と出れば完了
 
-> dev6 では既存アプリの流用で足りる（鍵の再発行が不要）。**本番へ配信するときは、書込専用の
-> 外部クライアントアプリ＋連携専用ユーザーを別に作る**（手順書_外部クライアントアプリケーション作成.md の手順・
-> 範囲は api のみ）。読取専用の sf-import と鍵を分け、`SF_EXPORT_ALLOWED_ORG_IDS` に本番を足すのはその時。
+> 本番へ配信するときは、同じ手順で本番に書込用アプリ＋**連携専用ユーザー**（システム管理者ではなく、取引先の編集権限だけを持つユーザー）を作り、
+> Secrets を差し替えて `SF_EXPORT_ALLOWED_ORG_IDS` に本番を足す。
 
 ## 1. Secrets の設定（Supabase・初回のみ）
 
@@ -37,8 +43,8 @@ Supabase ダッシュボード → **Edge Functions** → **Secrets** に以下�
 | Secret名 | 値 |
 |---|---|
 | `SF_EXPORT_INSTANCE_URL` | `https://besterra--dev6.sandbox.my.salesforce.com` |
-| `SF_EXPORT_CLIENT_ID` | `sf_credentials.json` の client_id（本番アプリと同じ） |
-| `SF_EXPORT_CLIENT_SECRET` | `sf_credentials.json` の client_secret |
+| `SF_EXPORT_CLIENT_ID` | `sf_export_credentials.json` の client_id（dev6 に新規作成した Besterra Hub Export の鍵） |
+| `SF_EXPORT_CLIENT_SECRET` | `sf_export_credentials.json` の client_secret |
 | `SF_EXPORT_ALLOWED_ORG_IDS` | `00Dfd000002CDWc`（dev6 の org ID 15桁。本番 `00DGC000005pvEM` は**入れない**） |
 | `IMPORT_SECRET` | 既存（sf-import と共通・変更不要） |
 
