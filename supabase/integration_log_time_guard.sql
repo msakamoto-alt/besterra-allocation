@@ -6,7 +6,7 @@
 --   1. 記録時刻はシステムだけが付ける。画面・スクリプト（authenticated）からの insert は、送られてきた at を無視して now() で上書きし、
 --      記録者もログイン情報（JWT の email）から取る。kind も note に固定（run/error は Edge Function＝service_role だけが書く）
 --   2. 「出来事の日付」（event_on・人が書く日付）と「記録日時」（at・システム）を分ける。過去の出来事を書き起こすときは event_on に入れる
---   3. 移行済みの9行は、記録日時を実際に挿入した時刻（2026-09-09 04:58 UTC＝13:58 JST・秒で順序保持）へ直し、出来事の日付を 2026-09-09 にする
+--   3. 台帳から移した9行（記録者「坂本 匡司（記録移行）」）は全削除する（時刻を人が付けた記録は残さない）
 -- 実行: SQL Editor に貼って Run（鍵は不要・再実行可）
 
 -- 1. 出来事の日付
@@ -33,16 +33,7 @@ create trigger trg_integration_log_guard before insert on public.integration_log
 
 -- 人（authenticated）が更新・削除できる経路は無い（ポリシー無し）。記録は追記のみ
 
--- 3. 移行済み9行の修正（記録者ラベルで特定・記録日時＝挿入した時刻・出来事の日付＝2026-09-09）
-with t as (
-  select id, row_number() over (order by at) as rn
-  from public.integration_log
-  where kind = 'note' and actor = '坂本 匡司（記録移行）'
-)
-update public.integration_log l
-   set at = timestamptz '2026-09-09 04:58:00+00' + (t.rn * interval '1 second'),
-       event_on = date '2026-09-09',
-       actor = 'm.sakamoto@besterra.co.jp（コードの台帳から移行）'
-  from t where l.id = t.id;
+-- 3. コードの台帳から移した9行は全削除（坂本さん決定 2026-09-09・時刻を人が付けた記録は残さない）
+delete from public.integration_log where kind = 'note' and actor = '坂本 匡司（記録移行）';
 
 -- 【確認】 select at, event_on, actor, left(message, 40) from public.integration_log where kind = 'note' order by at;
