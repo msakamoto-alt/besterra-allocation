@@ -1,0 +1,435 @@
+// 取引先マスタ配信 Edge Function（sf-export）
+//
+// 役割：統合管理ツール（ハブ）の会社マスタを正本として、Salesforce の取引先（Account）へ配信する。
+//       ハブ→SF の一方向。SF 側の値はハブから来たもので上書きし、ハブが空の項目は送らない
+//      （SF の既存値を消さない）。キーは会社マスタID（Account.HubCompanyId__c・外部ID）。
+//       sf-import（SF→ハブ・読取専用）の逆方向版。認証・監査ログ・呼び出し方は sf-import と同型。
+//
+// 認証（どちらかを満たすこと）：
+//   a) Supabase JWT が admin ロール
+//   b) x-import-secret ヘッダが IMPORT_SECRET と一致（スクリプト／スケジュール実行用）
+//      ※どちらも Verify JWT を通すため Authorization には最低 anon キーが必要
+//
+// POST body：
+//   action  … dry_run（既定・書込なし・件数と分類の報告）
+//              link   （SF 側で会社マスタIDを持たない取引先を正規化社名でハブと突合し、
+//                       一意に当たったものへ会社マスタID＋取引先コードを付ける＝配信前の「更新扱い」化）
+//              export （composite/sobjects で 200件/コールの外部ID upsert・allOrNone=false）
+//   source  … 実行元の名乗り（script / cron / app）。監査ログの表示に使う
+//   scope   … active（既定・有効な会社のみ）／all（欠番も含む。欠番は SF に既存があれば有効フラグ=false で更新、無ければ作らない）
+//   company_ids … 会社マスタIDの配列で対象を絞る（試し流し用）
+//   limit   … 先頭 N 社だけ（試し流し用）
+//   writeback … true のとき upsert で返った Account Id を hub の system_code(system='salesforce') へ保存（既定 false）
+//
+// 必要な Secrets：
+//   SF_EXPORT_INSTANCE_URL / SF_EXPORT_CLIENT_ID / SF_EXPORT_CLIENT_SECRET
+//   SF_EXPORT_ALLOWED_ORG_IDS … 書込を許す org ID（15桁・カンマ区切り）。本番 org を誤って向けても書かない安全弁
+//   IMPORT_SECRET（sf-import と共通）
+//
+// 安全鉄則：
+//   - 接続先 org ID が SF_EXPORT_ALLOWED_ORG_IDS に無ければ、どの action でも書込前に中止
+//   - 取引先コードが SF の別レコード（会社マスタID無し）に付いている会社は送らず「コード衝突」として報告
+//     （送っても DUPLICATE_VALUE で落ちる。先に link で解消する）
+//   - 承認・反社ゲートは第1弾では掛けない（要決定⑤の推奨どおり）。掛けるときは buildRecord の手前で絞る
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const cors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-import-secret',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+const API_VERSION = 'v61.0';
+const BATCH = 200; // composite/sobjects の上限
+const TABLE = 'company'; // 監査ログ上の対象テーブル
+
+function json(obj: unknown, status = 200): Response {
+  return new Response(JSON.stringify(obj), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
+}
+
+// ---------------- マッピング v0.2（ハブ106項目→Account・2026-09-08 の決定を反映） ----------------
+// ハブ type_code → PartnerType__c の値（12値・SF とハブで共通）
+const TYPE_MAP: Record<string, string> = {
+  customer: '顧客', owner: '施主', scrap: 'スクラップ', subcontractor: '外注（請負）', survey3d: '3D計測',
+  analysis: '分析・解析', waste: '産廃処理', lease: '重機・リース', material: '資材', fuel: '燃料',
+  security: '保安警備', sga: '販管費先',
+};
+// 建設業許可の略号 → Licenses__c（法定29業種の正式名称）。般/特は落とす。旧列は同名へ畳む。「夕」は「タ」の誤入力
+const PERMIT_MAP: Record<string, string> = {
+  '土': '土木一式工事', '建': '建築一式工事', '大': '大工工事', '左': '左官工事', 'と': 'とび・土工・コンクリート工事',
+  '石': '石工事', '屋': '屋根工事', '電': '電気工事', '管': '管工事', 'タ': 'タイル・れんが・ブロック工事', '夕': 'タイル・れんが・ブロック工事',
+  '鋼': '鋼構造物工事', '筋': '鉄筋工事', '舗': '舗装工事', 'しゅ': 'しゅんせつ工事', '板': '板金工事', 'ガ': 'ガラス工事',
+  '塗': '塗装工事', '防': '防水工事', '内': '内装仕上工事', '機': '機械器具設置工事', '絶': '熱絶縁工事', '通': '電気通信工事',
+  '園': '造園工事', '井': 'さく井工事', '具': '建具工事', '水': '水道施設工事', '消': '消防施設工事', '清': '清掃施設工事',
+  '解': '解体工事', 'とび土工(旧列)': 'とび・土工・コンクリート工事', '解体(旧列)': '解体工事',
+};
+const SEIREI = ['札幌市', '仙台市', 'さいたま市', '千葉市', '横浜市', '川崎市', '相模原市', '新潟市', '静岡市', '浜松市',
+  '名古屋市', '京都市', '大阪市', '堺市', '神戸市', '岡山市', '広島市', '北九州市', '福岡市', '熊本市'];
+
+function convertPermit(s: string | null): string[] {
+  const names: string[] = [];
+  for (const tok of String(s || '').split(';')) {
+    const code = tok.trim().split('=')[0].trim();
+    const name = PERMIT_MAP[code];
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names;
+}
+// address_line の先頭から市区郡を切り出す（dry_diff_本番読取_2026-09-08.py の split_city と同じ規則）
+function splitCity(addr: string | null): [string, string] {
+  const a = String(addr || '').trim();
+  if (!a) return ['', ''];
+  const gun = a.match(/^(.{1,6}?郡.{1,8}?[町村])/);
+  if (gun && !a.startsWith('郡山') && !/^.{0,3}郡[市区]/.test(a)) return [gun[1], a.slice(gun[0].length)];
+  for (const s of SEIREI) {
+    if (a.startsWith(s)) {
+      const ku = a.slice(s.length).match(/^(.{1,5}?区)/);
+      return ku ? [s + ku[1], a.slice(s.length + ku[0].length)] : [s, a.slice(s.length)];
+    }
+  }
+  const head = a.slice(0, 10);
+  for (let i = 0; i < head.length; i++) {
+    if (head[i] === '市' && i > 0 && a[i + 1] !== '市') return [a.slice(0, i + 1), a.slice(i + 1)];
+  }
+  for (const re of [/^(.{1,6}?区)/, /^(.{1,6}?[町村])/]) {
+    const m = a.match(re);
+    if (m) return [m[1], a.slice(m[0].length)];
+  }
+  return ['', a];
+}
+function postal(p: string | null): string {
+  const s = String(p || '').trim();
+  return /^\d{7}$/.test(s) ? `${s.slice(0, 3)}-${s.slice(3)}` : s;
+}
+// 社名の正規化（link 用）: NFKC・空白除去・㈱→株式会社
+function normName(s: string | null): string {
+  return String(s || '').normalize('NFKC').replace(/[\s　]/g, '').replace(/㈱|\(株\)/g, '株式会社');
+}
+
+type Hub = {
+  companies: Record<string, unknown>[];
+  types: Map<string, string[]>;
+  codes: Map<string, Record<string, string>>;
+  permits: Map<string, Record<string, unknown>[]>;
+  credit: Map<string, number>;
+};
+
+async function fetchAll(admin: ReturnType<typeof createClient>, table: string, select: string, order: string) {
+  const out: Record<string, unknown>[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await admin.from(table).select(select).order(order, { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(`${table} 読取失敗: ${error.message}`);
+    out.push(...(data || []));
+    if (!data || data.length < 1000) return out;
+  }
+}
+
+async function loadHub(admin: ReturnType<typeof createClient>): Promise<Hub> {
+  const companies = await fetchAll(admin, 'company',
+    'company_id,official_name,name_kana,corporate_number,representative_name,postal_code,prefecture,address_line,building,phone,fax,invoice_reg_number,invoice_status,capital_amount,remarks,last_trade_on,is_suspended', 'company_id');
+  const types = new Map<string, string[]>();
+  for (const t of await fetchAll(admin, 'company_type', 'company_id,type_code', 'company_id')) {
+    const k = String(t.company_id); types.set(k, [...(types.get(k) || []), String(t.type_code)]);
+  }
+  const codes = new Map<string, Record<string, string>>();
+  for (const s of await fetchAll(admin, 'system_code', 'company_id,system,code', 'company_id')) {
+    const k = String(s.company_id); const m = codes.get(k) || {}; m[String(s.system)] = String(s.code); codes.set(k, m);
+  }
+  const permits = new Map<string, Record<string, unknown>[]>();
+  for (const p of await fetchAll(admin, 'permit_license', 'company_id,permit_type,construction_types,permit_authority,permit_number', 'permit_id')) {
+    const k = String(p.company_id); permits.set(k, [...(permits.get(k) || []), p]);
+  }
+  const credit = new Map<string, number>();
+  for (const c of await fetchAll(admin, 'credit_line', 'company_id,limit_amount', 'credit_id')) {
+    if (c.limit_amount != null) credit.set(String(c.company_id), Number(c.limit_amount));
+  }
+  return { companies, types, codes, permits, credit };
+}
+
+// ハブ1社 → Account upsert レコード。空値は送らない（SF の既存値を消さない）
+function buildRecord(hub: Hub, c: Record<string, unknown>): Record<string, unknown> {
+  const cid = String(c.company_id);
+  const codes = hub.codes.get(cid) || {};
+  const permits = hub.permits.get(cid) || [];
+  const cons = permits.find((p) => p.permit_type === 'construction');
+  const waste = permits.find((p) => p.permit_type === 'waste');
+  const [city, rest] = splitCity(c.address_line as string);
+  const bld = String(c.building || '').trim();
+  const wasteNo = waste ? String(waste.permit_number || '') : '';
+  const licenses = cons ? convertPermit(cons.construction_types as string) : [];
+  const rec: Record<string, unknown> = {
+    HubCompanyId__c: cid,
+    Name: c.official_name,
+    Business_Partners_Code__c: codes.tera,
+    BugyoPartnerCode__c: codes.obc_onpre,
+    NameKana__c: c.name_kana,
+    CorporateNumber__c: c.corporate_number,
+    RepresentativeName__c: c.representative_name,
+    InvoiceRegNo__c: c.invoice_reg_number,
+    InvoiceStatus__c: c.invoice_status,
+    IsNonQualified__c: c.invoice_status === '登録なし(確認済)',
+    BillingPostalCode: postal(c.postal_code as string),
+    BillingState: c.prefecture,
+    BillingCity: city,
+    BillingStreet: (rest.trim() + (bld ? ' ' + bld : '')).trim(),
+    HeadOfficeAddress__c: (String(c.prefecture || '') + String(c.address_line || '') + (bld ? ' ' + bld : '')).trim(),
+    Phone: c.phone,
+    Fax: c.fax,
+    PartnerType__c: (hub.types.get(cid) || []).map((t) => TYPE_MAP[t]).filter(Boolean).join(';'),
+    IsActive__c: !c.is_suspended,
+    LastDealDate__c: c.last_trade_on,
+    Capital__c: c.capital_amount,
+    HubRemarks__c: c.remarks,
+    CreditLimit__c: hub.credit.get(cid),
+    Licenses__c: licenses.join(';'),
+    ConstructionPermitAuthority__c: cons ? cons.permit_authority : null,
+    ConstructionPermitNo__c: cons ? cons.permit_number : null,
+    // 「〇」は"許可あり"の印で番号ではない → 数字を含むときだけ送る
+    WastePermitNo__c: /\d/.test(wasteNo) ? wasteNo : null,
+  };
+  // 取引先コードは4文字まで（X0001〜X0005 の5文字は会社マスタIDで救う）
+  if (rec.Business_Partners_Code__c && String(rec.Business_Partners_Code__c).length > 4) delete rec.Business_Partners_Code__c;
+  for (const k of Object.keys(rec)) {
+    const v = rec[k];
+    if (v === null || v === undefined || v === '') delete rec[k];
+  }
+  return rec;
+}
+
+// ---------------- Salesforce ----------------
+type Sf = { base: string; token: string; orgId: string; isSandbox: boolean; orgName: string };
+
+async function sfConnect(): Promise<Sf> {
+  const base = (Deno.env.get('SF_EXPORT_INSTANCE_URL') || '').replace(/\/+$/, '');
+  const clientId = Deno.env.get('SF_EXPORT_CLIENT_ID');
+  const clientSecret = Deno.env.get('SF_EXPORT_CLIENT_SECRET');
+  if (!base || !clientId || !clientSecret) throw new Error('SF_EXPORT_INSTANCE_URL / SF_EXPORT_CLIENT_ID / SF_EXPORT_CLIENT_SECRET のSecretsが未設定です');
+  const tokenRes = await fetch(base + '/services/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }),
+  });
+  const tokenBody = await tokenRes.json();
+  if (!tokenRes.ok || !tokenBody.access_token) throw new Error('SFトークン取得失敗: ' + JSON.stringify(tokenBody).slice(0, 300));
+  const sf: Sf = { base, token: tokenBody.access_token, orgId: '', isSandbox: false, orgName: '' };
+  const org = await sfQuery(sf, 'SELECT Id, Name, IsSandbox FROM Organization');
+  sf.orgId = String(org[0]?.Id || '').slice(0, 15);
+  sf.isSandbox = !!org[0]?.IsSandbox;
+  sf.orgName = String(org[0]?.Name || '');
+  const allowed = (Deno.env.get('SF_EXPORT_ALLOWED_ORG_IDS') || '').split(',').map((s) => s.trim().slice(0, 15)).filter(Boolean);
+  if (!allowed.includes(sf.orgId)) {
+    throw new Error(`接続先 org ${sf.orgId}（${sf.orgName}・sandbox=${sf.isSandbox}）は SF_EXPORT_ALLOWED_ORG_IDS に含まれていません。安全のため中止しました`);
+  }
+  return sf;
+}
+
+async function sfQuery(sf: Sf, soql: string): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  let url = `${sf.base}/services/data/${API_VERSION}/query?q=${encodeURIComponent(soql)}`;
+  for (;;) {
+    const res = await fetch(url, { headers: { Authorization: 'Bearer ' + sf.token } });
+    const body = await res.json();
+    if (!res.ok) throw new Error('SOQL失敗: ' + JSON.stringify(body).slice(0, 300));
+    out.push(...(body.records || []));
+    if (body.done || !body.nextRecordsUrl) return out;
+    url = sf.base + body.nextRecordsUrl;
+  }
+}
+
+type SfResult = { id?: string; success: boolean; created?: boolean; errors?: { statusCode?: string; message?: string }[] };
+
+// 外部ID upsert（composite/sobjects・allOrNone=false）
+async function sfUpsertBatch(sf: Sf, records: Record<string, unknown>[]): Promise<SfResult[]> {
+  const res = await fetch(`${sf.base}/services/data/${API_VERSION}/composite/sobjects/Account/HubCompanyId__c`, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer ' + sf.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ allOrNone: false, records: records.map((r) => ({ attributes: { type: 'Account' }, ...r })) }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error('composite upsert 失敗: ' + JSON.stringify(body).slice(0, 300));
+  return body as SfResult[];
+}
+// Id 指定の一括更新（link 用）
+async function sfUpdateBatch(sf: Sf, records: Record<string, unknown>[]): Promise<SfResult[]> {
+  const res = await fetch(`${sf.base}/services/data/${API_VERSION}/composite/sobjects`, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer ' + sf.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ allOrNone: false, records: records.map((r) => ({ attributes: { type: 'Account' }, ...r })) }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error('composite update 失敗: ' + JSON.stringify(body).slice(0, 300));
+  return body as SfResult[];
+}
+
+// ---------------- 監査ログ（sf-import と同型・1回1行） ----------------
+const SOURCES: Record<string, { email: string; trigger: string }> = {
+  cron:   { email: 'sf-export（自動実行）',       trigger: '自動（スケジュール）' },
+  script: { email: 'sf-export（手動スクリプト）', trigger: '手動（スクリプト）' },
+};
+const SOURCE_UNKNOWN = { email: 'sf-export（実行元不明）', trigger: '不明（secret経由）' };
+function resolveSource(caller: string, source: unknown) {
+  if (caller !== 'secret') return { email: caller, trigger: '手動（アプリ）', role: 'admin' };
+  const s = SOURCES[String(source || '')] || SOURCE_UNKNOWN;
+  return { ...s, role: 'system' };
+}
+async function logAudit(admin: ReturnType<typeof createClient>, entry: { op: string; caller: string; source: unknown; rowKey: string; changes: Record<string, { new: string }> }): Promise<boolean> {
+  const who = resolveSource(entry.caller, entry.source);
+  try {
+    const { error } = await admin.from('audit_logs').insert({
+      user_id: null, user_email: who.email, user_role: who.role, table_name: TABLE,
+      op: entry.op, row_key: entry.rowKey, changes: { ...entry.changes, trigger: { new: who.trigger } },
+    });
+    if (error) { console.error('監査ログ記録失敗（配信本体は継続）:', error.message); return false; }
+    return true;
+  } catch (e) { console.error('監査ログ記録失敗（配信本体は継続）:', String((e as Error)?.message || e)); return false; }
+}
+
+// ---------------- 本体 ----------------
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+  const t0 = Date.now();
+  let auditCtx: { admin: ReturnType<typeof createClient>; caller: string; source: unknown; op: string } | null = null;
+  try {
+    const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
+
+    // --- 認証（sf-import と同じ） ---
+    let caller = 'secret';
+    const importSecret = Deno.env.get('IMPORT_SECRET');
+    if (!(importSecret && req.headers.get('x-import-secret') === importSecret)) {
+      const jwt = (req.headers.get('Authorization') || '').replace('Bearer ', '');
+      if (!jwt) return json({ error: '未認証です' }, 401);
+      const { data: userData, error: uErr } = await admin.auth.getUser(jwt);
+      if (uErr || !userData?.user) return json({ error: '認証が無効です' }, 401);
+      const { data: role } = await admin.from('user_roles').select('role').eq('user_id', userData.user.id).maybeSingle();
+      if (role?.role !== 'admin') return json({ error: '管理者権限が必要です' }, 403);
+      caller = userData.user.email || userData.user.id;
+    }
+    const body = await req.json().catch(() => ({}));
+    const action = String(body.action || 'dry_run');
+    if (!['dry_run', 'link', 'export'].includes(action)) return json({ error: `不明な action: ${action}` }, 400);
+    const scope = String(body.scope || 'active');
+    const onlyIds: string[] | null = Array.isArray(body.company_ids) && body.company_ids.length ? body.company_ids.map(String) : null;
+    const limit = Number(body.limit || 0) || 0;
+    const writeback = body.writeback === true;
+    if (action !== 'dry_run') auditCtx = { admin, caller, source: body.source, op: action === 'link' ? 'SF_LINK' : 'SF_EXPORT' };
+
+    // --- 接続（org ガード込み）・ハブ読取・SF 現状読取 ---
+    const sf = await sfConnect();
+    const hub = await loadHub(admin);
+    const sfAccounts = await sfQuery(sf, 'SELECT Id, Name, HubCompanyId__c, Business_Partners_Code__c FROM Account');
+    const sfByHub = new Map<string, Record<string, unknown>>();
+    const sfByCode = new Map<string, Record<string, unknown>>();
+    for (const a of sfAccounts) {
+      if (a.HubCompanyId__c) sfByHub.set(String(a.HubCompanyId__c), a);
+      if (a.Business_Partners_Code__c) sfByCode.set(String(a.Business_Partners_Code__c), a);
+    }
+    const hubByNorm = new Map<string, string[]>();
+    for (const c of hub.companies) {
+      const k = normName(c.official_name as string); hubByNorm.set(k, [...(hubByNorm.get(k) || []), String(c.company_id)]);
+    }
+
+    // ===== link：会社マスタID無しの SF 取引先を社名で突合してキーを付ける =====
+    if (action === 'link') {
+      const unlinked = sfAccounts.filter((a) => !a.HubCompanyId__c);
+      const seenHub = new Set<string>();
+      const updates: Record<string, unknown>[] = [];
+      const ambiguous: string[] = [];
+      const nomatch: string[] = [];
+      for (const a of unlinked) {
+        const cands = (hubByNorm.get(normName(a.Name as string)) || []).filter((cid) => !sfByHub.has(cid));
+        if (cands.length !== 1) { (cands.length ? ambiguous : nomatch).push(String(a.Name)); continue; }
+        const cid = cands[0];
+        if (seenHub.has(cid)) { ambiguous.push(String(a.Name)); continue; }
+        const tera = (hub.codes.get(cid) || {}).tera;
+        // 取引先コードが別レコードに付いている場合は付けない（一意制約で落ちる）
+        const codeHolder = tera ? sfByCode.get(tera) : undefined;
+        if (codeHolder && codeHolder.Id !== a.Id) { ambiguous.push(`${a.Name}（コード${tera}は別レコードに付与済み）`); continue; }
+        seenHub.add(cid);
+        const u: Record<string, unknown> = { Id: a.Id, HubCompanyId__c: cid };
+        if (tera && String(tera).length <= 4 && !a.Business_Partners_Code__c) u.Business_Partners_Code__c = tera;
+        updates.push(u);
+      }
+      let ok = 0; const failed: { id: string; message: string }[] = [];
+      for (let i = 0; i < updates.length; i += BATCH) {
+        const res = await sfUpdateBatch(sf, updates.slice(i, i + BATCH));
+        res.forEach((r, j) => { if (r.success) ok++; else failed.push({ id: String(updates[i + j].Id), message: (r.errors || []).map((e) => e.message).join('; ').slice(0, 200) }); });
+      }
+      const logged = await logAudit(admin, { op: 'SF_LINK', caller, source: body.source, rowKey: `Account@${sf.orgId}`,
+        changes: { linked: { new: String(ok) }, failed: { new: String(failed.length) }, unlinked_before: { new: String(unlinked.length) } } });
+      return json({ ok: true, action, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
+        unlinked_before: unlinked.length, linked: ok, failed: failed.length, ambiguous: ambiguous.length, nomatch: nomatch.length,
+        failed_samples: failed.slice(0, 20), ambiguous_samples: ambiguous.slice(0, 20), audit_logged: logged, elapsed_ms: Date.now() - t0 });
+    }
+
+    // ===== dry_run / export：配信対象の組み立てと分類 =====
+    let targets = hub.companies;
+    if (onlyIds) targets = targets.filter((c) => onlyIds.includes(String(c.company_id)));
+    if (scope === 'active') targets = targets.filter((c) => !c.is_suspended);
+    else targets = targets.filter((c) => !c.is_suspended || sfByHub.has(String(c.company_id))); // 欠番は既存があれば更新のみ
+    if (limit > 0) targets = targets.slice(0, limit);
+
+    const records: Record<string, unknown>[] = [];
+    const cls = { update: 0, create: 0, code_conflict: 0 };
+    const conflicts: { company_id: string; name: string; code: string; holder: string }[] = [];
+    for (const c of targets) {
+      const rec = buildRecord(hub, c);
+      const cid = String(c.company_id);
+      const tera = rec.Business_Partners_Code__c ? String(rec.Business_Partners_Code__c) : '';
+      const holder = tera ? sfByCode.get(tera) : undefined;
+      if (holder && String(holder.HubCompanyId__c || '') !== cid) {
+        cls.code_conflict++; conflicts.push({ company_id: cid, name: String(c.official_name), code: tera, holder: String(holder.Name) });
+        continue;
+      }
+      if (sfByHub.has(cid)) cls.update++; else cls.create++;
+      records.push(rec);
+    }
+    const fieldFill: Record<string, number> = {};
+    for (const r of records) for (const k of Object.keys(r)) fieldFill[k] = (fieldFill[k] || 0) + 1;
+
+    if (action === 'dry_run') {
+      const linkable = sfAccounts.filter((a) => !a.HubCompanyId__c && (hubByNorm.get(normName(a.Name as string)) || []).length === 1).length;
+      return json({ ok: true, action, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
+        hub_companies: hub.companies.length, sf_accounts: sfAccounts.length, sf_linked: sfByHub.size,
+        targets: targets.length, will_update: cls.update, will_create: cls.create, code_conflict: cls.code_conflict,
+        conflict_samples: conflicts.slice(0, 20), field_fill: fieldFill, sample: records.slice(0, 2),
+        linkable_by_name: linkable,
+        note: '書込は行っていません。code_conflict は取引先コードが SF の別レコードに付いている会社＝先に action=link で解消してください。',
+        elapsed_ms: Date.now() - t0 });
+    }
+
+    // ===== export =====
+    let created = 0, updated = 0; const failed: { company_id: string; name: string; message: string }[] = [];
+    const idByCompany: Record<string, string> = {};
+    for (let i = 0; i < records.length; i += BATCH) {
+      const chunk = records.slice(i, i + BATCH);
+      const res = await sfUpsertBatch(sf, chunk);
+      res.forEach((r, j) => {
+        const cid = String(chunk[j].HubCompanyId__c);
+        if (r.success) { if (r.created) created++; else updated++; if (r.id) idByCompany[cid] = r.id; }
+        else failed.push({ company_id: cid, name: String(chunk[j].Name), message: (r.errors || []).map((e) => `${e.statusCode}: ${e.message}`).join('; ').slice(0, 200) });
+      });
+    }
+    let wroteBack = 0;
+    if (writeback) {
+      const rows = Object.entries(idByCompany).map(([company_id, code]) => ({ company_id, system: 'salesforce', code }));
+      for (let i = 0; i < rows.length; i += 500) {
+        const { error } = await admin.from('system_code').upsert(rows.slice(i, i + 500), { onConflict: 'company_id,system' });
+        if (error) { failed.push({ company_id: '-', name: '(writeback)', message: 'system_code 書き戻し失敗: ' + error.message }); break; }
+        wroteBack += Math.min(500, rows.length - i);
+      }
+    }
+    const logged = await logAudit(admin, { op: 'SF_EXPORT', caller, source: body.source, rowKey: `Account@${sf.orgId}`,
+      changes: { sent: { new: String(records.length) }, created: { new: String(created) }, updated: { new: String(updated) },
+        failed: { new: String(failed.length) }, code_conflict: { new: String(cls.code_conflict) }, writeback: { new: String(wroteBack) } } });
+    return json({ ok: true, action, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
+      targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict,
+      failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack,
+      audit_logged: logged, elapsed_ms: Date.now() - t0 });
+  } catch (e) {
+    const msg = String((e as Error)?.message || e);
+    if (auditCtx) {
+      await logAudit(auditCtx.admin, { op: 'ERROR', caller: auditCtx.caller, source: auditCtx.source, rowKey: `sf-export ${auditCtx.op}`, changes: { error: { new: msg.slice(0, 200) } } });
+    }
+    return json({ ok: false, error: msg, elapsed_ms: Date.now() - t0 }, 500);
+  }
+});
