@@ -1059,6 +1059,7 @@ const TorihikisakiView = {
     if (/\(自動判定\)/.test(s)) return ['auto', '自動判定'];
     if (/Pleasanter/i.test(s)) return ['pleasanter', 'Pleasanter'];   // 新規取引会社一覧（Pleasanter）からの取込（2026-09-08）
     if (/migration/i.test(s)) return ['mig', '移行'];
+    if (/一括/.test(s)) return ['auto', '一括処理'];   // 「坂本(表記統一・一括)」等＝スクリプトによる一括反映（2026-09-09・手入力と区別）
     return ['edit', '手入力'];   // 人名（画面編集・手動CSV取込）
   },
 
@@ -1094,6 +1095,10 @@ const TorihikisakiView = {
     if (f.no === 55) return this.majorClassOf(this.pendingTypeCodes()) ? ['auto', '種別から自動'] : ['none', '—'];
     const v = this.fieldDisplay(f, d);
     if (v === null || String(v).trim() === '') return ['none', '—'];
+    // システムが自動記録する項目（#120 登録日時/登録者・#121 最終更新日/更新者）は履歴行を持たない
+    // → その値を書いた主体（created_by / updated_by）で出所を出す（2026-09-09 坂本さん指摘: 編集後も「移行」のままだった）
+    if (f.no === 120) return this.provenanceOf(d.company.created_by);
+    if (f.no === 121) return this.provenanceOf(d.company.updated_by);
     // 値がある → 実際の出所を履歴から判定。履歴が無ければ移行データのまま
     const h = this.latestHistoryFor(f, d);
     if (h) return this.provenanceOf(h.changed_by);
