@@ -2913,6 +2913,9 @@ const TorihikisakiView = {
     if (res.error) throw new Error(res.error.message);
     return res.data || [];
   },
+  jstToday() {
+    return new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+  },
   ilogMissing(e) {
     return /integration_log/.test(String(e && e.message || e)) && /find|exist|schema/.test(String(e && e.message || e));
   },
