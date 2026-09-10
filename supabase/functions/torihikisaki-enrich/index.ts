@@ -52,7 +52,7 @@ const env = (k: string) => (Deno.env.get(k) || '').trim();
 // 🔴この関数の版。Secretsだけ更新して関数の再デプロイを忘れる事故が起きたため、
 //   status で版と対応アクションを返し、呼び出し側が「古い版がデプロイされている」と気づけるようにする。
 //   ※機能を足したらここも上げること。
-const FN_VERSION = '2026-09-10.2';
+const FN_VERSION = '2026-09-10.3';
 const FN_ACTIONS = ['status', 'fetch', 'check_invoice', 'probe_gbiz', 'probe_kokuzei', 'search_kokuzei', 'probe_sansan_open', 'probe_sansan'];
 
 // ===== プロバイダ定義（キーの有無だけを外に見せる） =====
@@ -187,13 +187,16 @@ const NTA_INVOICE_BASE = 'https://web-api.invoice-kohyo.nta.go.jp/1';
 
 // 事業者処理区分: 01=新規登録 / 02=更新 / 03=取消・失効
 // 判定は「取消年月日・失効年月日が入っているか」を主に見る（区分だけに頼らない）
+// 🔴失効年月日・取消年月日は「未来」で来ることがある（例: 2027-01-01＝その日まで有効）。日付を今日と比べて
+//   「済み」と「予定（今は有効）」を分ける（2026-09-10 実測で未来日を失効と誤表示した）
 function invoiceJudge(rec: Record<string, unknown>) {
   const s = (v: unknown) => (v === null || v === undefined ? '' : String(v).trim());
+  const today = new Date().toISOString().slice(0, 10);
   const disposal = s(rec.disposalDate);
   const expire = s(rec.expireDate);
   const process = s(rec.process);
-  if (disposal) return { state: 'revoked', label: '取消', on: disposal };
-  if (expire) return { state: 'expired', label: '失効', on: expire };
+  if (disposal) return disposal > today ? { state: 'revoking', label: '取消予定（今は有効）', on: disposal } : { state: 'revoked', label: '取消', on: disposal };
+  if (expire) return expire > today ? { state: 'expiring', label: '失効予定（今は有効）', on: expire } : { state: 'expired', label: '失効', on: expire };
   if (process === '03') return { state: 'revoked', label: '取消・失効', on: '' };
   return { state: 'valid', label: '有効', on: s(rec.registratedDate) };
 }
