@@ -96,7 +96,7 @@ python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合�
 
 🔴 法人番号Web-API の応答は **CSV か XML のみ（JSON は無い）**。関数は type=12（XML）を自前で読む。
    インボイス公表システム Web-API（`NTA_INVOICE_APP_ID`）は JSON（type=21）で別物。
-   同じ申請書で両方の ID を受けた場合は、それぞれの Secret に入れる（同じ値でもよい）。
+   🔴アプリケーションIDは**両システム共通の1つ**（2026-09-10 実測＝同じIDで両方 200）。関数は `NTA_INVOICE_APP_ID` が無ければ `NTA_APP_ID` を使う（版 2026-09-10.2 以上）ので、Secret は `NTA_APP_ID` 1つでよい。
 
 ## 4. つまずきやすい点
 

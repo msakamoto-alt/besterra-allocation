@@ -29,7 +29,8 @@
 //
 // 必要な Secrets（Edge Functions → Secrets。未設定のものは自動的に「未接続」になる）：
 //   NTA_APP_ID                … 国税庁 法人番号Web-API のアプリケーションID
-//   NTA_INVOICE_APP_ID        … 国税庁 インボイス公表システム Web-API のアプリケーションID（無償・要申請）
+//   NTA_INVOICE_APP_ID        … 国税庁 インボイス公表システム Web-API のアプリケーションID。🔴法人番号Web-API と共通の1つのID
+//                               （2026-09-10 実測＝同じIDで両方200）。未設定なら NTA_APP_ID を使うので、通常は設定不要
 //   GBIZINFO_TOKEN            … gBizINFO のAPIトークン（即時発行・未申請）
 //   SANSAN_API_KEY            … Sansan Open API（名刺管理・32桁）。会社情報は名刺に載っている分のみ
 //   SANSAN_CLIENT_ID / SANSAN_CLIENT_SECRET / SANSAN_COMPANY_FEED_ID … Sansan Data Hub（担当者へ申請）
@@ -51,7 +52,7 @@ const env = (k: string) => (Deno.env.get(k) || '').trim();
 // 🔴この関数の版。Secretsだけ更新して関数の再デプロイを忘れる事故が起きたため、
 //   status で版と対応アクションを返し、呼び出し側が「古い版がデプロイされている」と気づけるようにする。
 //   ※機能を足したらここも上げること。
-const FN_VERSION = '2026-09-10.1';
+const FN_VERSION = '2026-09-10.2';
 const FN_ACTIONS = ['status', 'fetch', 'check_invoice', 'probe_gbiz', 'probe_kokuzei', 'search_kokuzei', 'probe_sansan_open', 'probe_sansan'];
 
 // ===== プロバイダ定義（キーの有無だけを外に見せる） =====
@@ -59,7 +60,7 @@ function providerStatus() {
   const nta = env('NTA_APP_ID');
   const gbiz = env('GBIZINFO_TOKEN');
   const openKey = env('SANSAN_API_KEY');
-  const inv = env('NTA_INVOICE_APP_ID');
+  const inv = env('NTA_INVOICE_APP_ID') || env('NTA_APP_ID');   // 共通ID＝法人番号側で代用できる
   const sansanOk = env('SANSAN_CLIENT_ID') && env('SANSAN_CLIENT_SECRET') && env('SANSAN_COMPANY_FEED_ID');
   return {
     kokuzei: { ok: !!nta, reason: nta ? '接続可（法人番号→商号・登記住所・カナ／商号検索／変更履歴）' : 'NTA_APP_ID 未設定' },
@@ -67,7 +68,7 @@ function providerStatus() {
     invoice: {
       ok: !!inv,
       reason: inv ? '接続可（登録の失効・取消チェック）'
-        : 'NTA_INVOICE_APP_ID 未設定（発行届出→申請書提出→国税庁の審査。手数料は不要）',
+        : 'NTA_APP_ID／NTA_INVOICE_APP_ID 未設定（法人番号Web-API と共通のアプリケーションID）',
     },
     sansan_open: {
       ok: !!openKey,
@@ -199,7 +200,7 @@ function invoiceJudge(rec: Record<string, unknown>) {
 
 // 登録番号を最大10件まとめて照会（1リクエスト＝最大10件は仕様上の上限）
 async function ntaInvoiceNum(numbers: string[]) {
-  const id = env('NTA_INVOICE_APP_ID');
+  const id = env('NTA_INVOICE_APP_ID') || env('NTA_APP_ID');   // 共通ID
   const list = numbers.slice(0, 10).join(',');
   const url = `${NTA_INVOICE_BASE}/num?id=${encodeURIComponent(id)}&number=${encodeURIComponent(list)}&type=21&history=0`;
   const res = await fetch(url);
