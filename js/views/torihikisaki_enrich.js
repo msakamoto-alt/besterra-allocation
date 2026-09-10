@@ -166,6 +166,11 @@ const TM_ENRICH = {
   //   取引先データの読み書きは学習用（TorihikisakiView.getClient）、外部API呼び出しはここ、と役割を分ける。
   fnClient() { return Sync.getSupabase(); },
 
+  // 出所の印。履歴の changed_by「名前(印)」に付け、出所バッジ（provenanceOf）がこれを読む
+  badgeLabel(provider) {
+    return ({ kokuzei: '国税庁API', invoice: '国税庁API', gbizinfo: 'gBizINFO API', sansan: 'Sansan API', sansan_open: 'Sansan API' })[provider] || '外部API';
+  },
+
   // 疎通状況のキャッシュ（画面表示用）。null=未確認
   status: null,
 
@@ -238,6 +243,7 @@ const TM_ENRICH = {
     { no: 3, api: 'kana', col: 'name_kana', label: '社名カナ' },
     { no: 24, api: 'postal_code', col: 'postal_code', label: '本社郵便番号' },
     { no: 25, api: 'location', col: '__address__', label: '本社住所' },
+    { no: 26, api: 'registered_address', col: 'registered_address', label: '本店所在地(登記簿)' },
     { no: 7, api: 'representative_name', col: 'representative_name', label: '代表者名' },
     { no: 11, api: 'capital_stock', col: 'capital_amount', label: '資本金' },
     { no: 21, api: 'employee_number', col: 'employee_count', label: '従業員数' },
@@ -245,6 +251,30 @@ const TM_ENRICH = {
     { no: 20, api: 'business_summary', col: 'business_summary', label: '事業内容' },
     { no: 31, api: 'company_url', col: 'website_url', label: 'URL' },
   ],
+
+  // API更新チェック用: 取得元ごとの生レコードを DIFF_FIELDS のキー（gBizINFO 準拠）へ揃える
+  toDiffRecord(provider, raw) {
+    if (!raw) return null;
+    if (provider === 'kokuzei') {
+      return { name: raw.name, kana: raw.furigana, postal_code: raw.postCode, location: raw.address, registered_address: raw.registeredAddress,
+               _closeDate: raw._closeDate, _closeCause: raw._closeCause, _successorCorporateNumber: raw._successorCorporateNumber, _hihyoji: raw._hihyoji };
+    }
+    return raw;
+  },
+  // 複数の取得元を1レコードに束ねる（先に来た値を優先。どの項目がどこから来たかを _src に残す）
+  mergeDiffRecords(parts) {
+    const out = { _src: {} };
+    parts.forEach(pt => {
+      const rec = this.toDiffRecord(pt.provider, pt.raw);
+      if (!rec) return;
+      Object.keys(rec).forEach(k => {
+        const v = rec[k];
+        if (v === null || v === undefined || String(v).trim() === '') return;
+        if (out[k] === undefined) { out[k] = v; out._src[k] = this.badgeLabel(pt.provider); }
+      });
+    });
+    return out;
+  },
 
   // 1社分の突合。company行 と APIレコード から差異の一覧を作る。
   diffCompany(row, rec) {
@@ -260,6 +290,7 @@ const TM_ENRICH = {
         no: f.no, label: f.label, col: f.col,
         current: cur || '', api: String(api),
         state: j.state, judgeLabel: j.label, adopt: j.adopt,
+        src: (rec._src && rec._src[f.api]) || null,   // どの取得元の値か（複数取得元のとき）
       });
     });
     return out;

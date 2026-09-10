@@ -41,6 +41,7 @@ const TorihikisakiView = {
   pending: {},          // 詳細の未保存編集 col -> 入力文字列
   autoPaths: {},        // そのうち「自動判定」で入れたパス（履歴のchanged_byに印を付ける）
   autoWhy: {},          // その判定理由（画面の注記に出す） path -> 理由
+  apiPaths: {},         // 「APIで補完」で入れて未保存のパス path -> 出所ラベル（履歴の changed_by に印を付ける＝バッジがAPIになる）
   autoNew: {},          // 新規登録フォームで自動判定が入れた値 path -> val
   bankEdit: null,       // 口座の申請フォーム（account_id / 'new' / null）
   busy: false,          // 書込中（二重送信の防止）
@@ -702,7 +703,7 @@ const TorihikisakiView = {
     if (keys.length && !keys.every(k => this.autoPaths[k])) {
       if (!confirm('未保存の変更があります。破棄して移動しますか？')) return false;
     }
-    this.pending = {}; this.autoPaths = {}; this.autoWhy = {};
+    this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {};
     return true;
   },
 
@@ -880,7 +881,7 @@ const TorihikisakiView = {
       this.sel = cid;
       this.dtab = 'basic';
       this.fmtFocus = 0;
-      this.pending = {}; this.autoPaths = {}; this.autoWhy = {};
+      this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {};
       this.bankEdit = null;
       this.rowEdit = null;
       this.branchEdit = null;
@@ -1042,7 +1043,7 @@ const TorihikisakiView = {
       '<span><span class="src mig">移行</span> 棚卸2026の移行データのまま</span>' +
       '<span><span class="src edit">手入力</span> 画面・CSVで人が入力</span>' +
       '<span><span class="src pleasanter">Pleasanter</span> 新規取引会社一覧（Pleasanter）から取込</span>' +
-      '<span><span class="src api">gBizINFO API</span> 外部APIから取得（人が採用）</span>' +
+      '<span><span class="src api">国税庁API・gBizINFO API</span> 外部API（登記情報）から取得（人が採用）</span>' +
       '<span><span class="src code">コード</span> 会社マスタIDの採番・各システム側のコード</span>' +
       '<span class="mf">🔒＝承認が必要な項目（右の口座カードから申請）</span></div>';
   },
@@ -1056,7 +1057,7 @@ const TorihikisakiView = {
   // changed_by の文字列 → バッジ。API経路は applyCsv の sourceTag で「(gBizINFO)」の形の印が残る
   provenanceOf(changedBy) {
     const s = String(changedBy || '');
-    if (/\(gBizINFO\)/i.test(s)) return ['api', 'gBizINFO API'];
+    if (/\(gBizINFO/i.test(s)) return ['api', 'gBizINFO API'];
     if (/\(Sansan/i.test(s)) return ['api', 'Sansan API'];
     if (/\(国税庁|\(invoice/i.test(s)) return ['api', '国税庁API'];
     if (/\(自動判定\)/.test(s)) return ['auto', '自動判定'];
@@ -1093,7 +1094,10 @@ const TorihikisakiView = {
     const d = this.detail;
     const pend = this.fieldPaths(f).filter(p => this.pending[p] !== undefined);
     // 自動判定で入った（人が触っていない）未保存値は「自動判定」と見せる。人が触れば「編集中」
-    if (pend.length) return pend.every(p => this.autoPaths[p]) ? ['auto', '自動判定'] : ['edit', '編集中'];
+    if (pend.length) {
+      if (pend.every(p => this.apiPaths[p])) return ['api', this.apiPaths[pend[0]] + '（未保存）'];
+      return pend.every(p => this.autoPaths[p]) ? ['auto', '自動判定'] : ['edit', '編集中'];
+    }
     if (f.no === 1) return ['code', 'コード'];
     if (f.no === 55) return this.majorClassOf(this.pendingTypeCodes()) ? ['auto', '種別から自動'] : ['none', '—'];
     const v = this.fieldDisplay(f, d);
@@ -1701,7 +1705,7 @@ const TorihikisakiView = {
       set: (f, p, val) => {
         // 自動判定ボタン経由なら印を付ける。人が触ったら印を外す＝出所が「手入力」に戻る
         if (this._autoSet) this.autoPaths[p] = true;
-        else { delete this.autoPaths[p]; delete this.autoWhy[p]; }
+        else { delete this.autoPaths[p]; delete this.autoWhy[p]; delete this.apiPaths[p]; }
         if (String(val) === this.editValOf(p)) delete this.pending[p];
         else this.pending[p] = val;
         this.renderSavebar();
@@ -1734,7 +1738,7 @@ const TorihikisakiView = {
       `<button class="btn btn-primary" id="tmk-save" ${this.busy ? 'disabled' : ''}>${this.busy ? '保存中…' : '💾 保存'}</button></div>`;
     this.el('tmk-discard').onclick = () => {
       if (!confirm('未保存の変更を破棄しますか？')) return;
-      this.pending = {}; this.autoPaths = {}; this.autoWhy = {};
+      this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {};
       this.renderDbody();
       this.refreshAiSide();
     };
@@ -1786,7 +1790,7 @@ const TorihikisakiView = {
       errs.push('・反社チェック: 先に「反社チェック実施日」を入れてください（実施日がないと記録を作れません）');
     }
     if (errs.length) { alert('入力を確認してください。\n\n' + errs.join('\n')); return; }
-    if (!changes.length && !typeChange) { this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.renderSavebar(); return; }
+    if (!changes.length && !typeChange) { this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {}; this.renderSavebar(); return; }
 
     const clearing = changes.filter(c => c.newV === null && this.isRequired(c.f, types));
     if (clearing.length && !confirm('必須項目を空にしようとしています。\n\n' + clearing.map(c => '・' + c.label).join('\n') + '\n\nこのまま保存しますか？')) return;
@@ -1839,7 +1843,8 @@ const TorihikisakiView = {
       old_value: c.oldV === null || c.oldV === undefined ? null : String(c.oldV),
       new_value: c.newV === null ? null : String(c.newV),
       // 自動判定で入れた値は印を残す → 出所バッジが「自動判定」になる（人が直せば次は印なし＝手入力）
-      changed_by: this.autoPaths[c.path] ? who + '(自動判定)' : who,
+      changed_by: this.apiPaths[c.path] ? who + '(' + this.apiPaths[c.path] + ')'
+        : (this.autoPaths[c.path] ? who + '(自動判定)' : who),
     }));
     // #55 取引先大区分は種別から自動＝種別が変わったら company.major_class も同期（表示は常に種別から導く）
     if (typeChange) (plainPatch['company'] = plainPatch['company'] || {}).major_class = this.majorClassOf(typeChange.next);
@@ -1934,7 +1939,7 @@ const TorihikisakiView = {
     if (typeChange && this.typesByCid) this.typesByCid[cid] = typeChange.next.slice();
     const n = changes.length + (typeChange ? 1 : 0);
     this.busy = false;
-    this.pending = {}; this.autoPaths = {}; this.autoWhy = {};
+    this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {};
     this.toast(`保存しました（${n}項目・変更履歴に記録）`);
     await this.openDetail(cid);
   },
@@ -2045,13 +2050,14 @@ const TorihikisakiView = {
       }
       const merged = {};
       const from = {};
+      const fromKey = {};
       for (const p of usable) {
         const got = await TM_ENRICH.fetchCompany(p, {
           corporateNumber: num, soc: this.detail.company.sansan_soc || '', name,
         });
         if (!got) continue;
         Object.keys(got.values).forEach(no => {
-          if (merged[no] === undefined) { merged[no] = got.values[no]; from[no] = TM_ENRICH.PROVIDERS[p].label; }
+          if (merged[no] === undefined) { merged[no] = got.values[no]; from[no] = TM_ENRICH.PROVIDERS[p].label; fromKey[no] = p; }
         });
       }
       // 空欄の項目だけを候補にする（複数列の項目は列ごとに空欄判定）
@@ -2066,14 +2072,14 @@ const TorihikisakiView = {
             const path = `company.${part.col}`;
             const cur = this.rawByPath(path, this.detail);
             if (cur !== null && String(cur).trim() !== '') return;   // 既存値は触らない
-            cand.push({ f, path, label: `${f.name}（${part.label}）`, val: part.val, src: from[no] });
+            cand.push({ f, path, label: `${f.name}（${part.label}）`, val: part.val, src: from[no], srcKey: fromKey[no] });
           });
           return;
         }
         if (plan.kind !== 'single') return;
         const cur = this.rawByPath(plan.path, this.detail);
         if (cur !== null && String(cur).trim() !== '') return;   // 既存値は触らない
-        cand.push({ f, path: plan.path, label: f.name, val: merged[no], src: from[no] });
+        cand.push({ f, path: plan.path, label: f.name, val: merged[no], src: from[no], srcKey: fromKey[no] });
       });
       this._enrichCand = cand;
       if (!cand.length) {
@@ -2101,6 +2107,8 @@ const TorihikisakiView = {
       const c = (this._enrichCand || [])[+cb.dataset.enr];
       if (!c) return;
       this.pending[c.path] = String(c.val);
+      this.apiPaths[c.path] = TM_ENRICH.badgeLabel(c.srcKey);   // 保存時に履歴へ「(国税庁API)」等の印＝出所バッジがAPIになる
+      delete this.autoPaths[c.path];
       n++;
     });
     if (!n) { this.toast('選択された項目がありません'); return; }
@@ -2682,19 +2690,21 @@ const TorihikisakiView = {
     if (!wrap || this.rows === null) return;
     this.el('tmk-title').textContent = 'API更新チェック';
     await TM_ENRICH.probe();
-    const on = TM_ENRICH.available('gbizinfo');
+    const onK = TM_ENRICH.available('kokuzei'), onG = TM_ENRICH.available('gbizinfo');
+    const on = onK || onG;
+    const provs = [onK ? '国税庁 法人番号Web-API' : '', onG ? 'gBizINFO' : ''].filter(Boolean).join('・');
     const targets = (this.rows || []).filter(r => !r.is_suspended && r.corporate_number);
     const noAddr = targets.filter(r => !r.address_line).length;
 
     wrap.innerHTML =
-      '<div class="sub">登記情報（gBizINFO）と取引先マスタを突き合わせ、<b>空欄の補完</b>と<b>古くなった値</b>を洗い出します。' +
+      `<div class="sub">登記情報（${this.esc(provs || '国税庁・gBizINFO')}）と取引先マスタを突き合わせ、<b>空欄の補完</b>と<b>古くなった値</b>を洗い出します。` +
       '本店移転・商号変更・代表者交代があれば、マスタの値は登記と食い違います。' +
       '<b>取得値は提案です。採用するかは確認のうえ選んでください。</b></div>' +
-      (on ? '' : `<div class="alert warn">gBizINFO が未接続です（${this.esc(TM_ENRICH.status.gbizinfo.reason)}）。接続すると実行できます。</div>`) +
+      (on ? '' : `<div class="alert warn">国税庁・gBizINFO とも未接続です（${this.esc(TM_ENRICH.status.kokuzei.reason)}／${this.esc(TM_ENRICH.status.gbizinfo.reason)}）。接続すると実行できます。</div>`) +
       '<div class="fcard" style="margin-bottom:12px">' +
         '<h4>チェックの対象</h4>' +
         `<div class="mf" style="font-size:11.5px;margin-bottom:8px">法人番号がある有効社 <b>${targets.length.toLocaleString()}社</b>が対象です` +
-        `（うち<b>本社住所が空 ${noAddr}社</b>）。照会は1社あたり約0.4秒かかります。</div>` +
+        `（うち<b>本社住所が空 ${noAddr}社</b>）。照会は1社あたり約${(0.4 * ((onK ? 1 : 0) + (onG ? 1 : 0)) || 0.4).toFixed(1)}秒かかります（取得元: ${this.esc(provs || '未接続')}）。</div>` +
         '<div class="tool" style="margin-bottom:0">' +
           '<select class="inp" id="tmk-chk-scope">' +
             `<option value="empty">空欄がある社のみ（推奨）</option>` +
@@ -2736,11 +2746,23 @@ const TorihikisakiView = {
       const r = targets[i];
       prog.textContent = `照会中… ${i + 1} / ${targets.length}社`;
       try {
-        const got = await TM_ENRICH.fetchCompany('gbizinfo', { corporateNumber: r.corporate_number });
-        if (!got) {
+        // 国税庁（登記の正本・毎日更新）を先に、gBizINFO（代表者・資本金など）を後に。同じ項目は先に来た値を採る
+        const parts = [];
+        for (const p of ['kokuzei', 'gbizinfo']) {
+          if (!TM_ENRICH.available(p)) continue;
+          const got = await TM_ENRICH.fetchCompany(p, { corporateNumber: r.corporate_number });
+          if (got) parts.push({ provider: p, raw: got.raw });
+        }
+        if (!parts.length) {
           out.push({ company_id: r.company_id, name: r.official_name, notfound: true, diffs: [] });
         } else {
-          out.push({ company_id: r.company_id, name: r.official_name, diffs: TM_ENRICH.diffCompany(r, got.raw) });
+          const rec = TM_ENRICH.mergeDiffRecords(parts);
+          const diffs = TM_ENRICH.diffCompany(r, rec);
+          // 登記記録の閉鎖等（廃業・合併）は値の差異ではなく「この会社は存続しているか」の警告（採用はできない）
+          if (rec._closeDate) diffs.unshift({ no: 58, label: '登記記録の閉鎖等', col: null, current: '有効',
+            api: `${rec._closeDate} ${rec._closeCause || ''}${rec._successorCorporateNumber ? '（承継先 ' + rec._successorCorporateNumber + '）' : ''}`.trim(),
+            state: 'closed', judgeLabel: '閉鎖・合併（要確認）', adopt: false, src: '国税庁API' });
+          out.push({ company_id: r.company_id, name: r.official_name, diffs });
         }
       } catch (e) {
         out.push({ company_id: r.company_id, name: r.official_name, error: String(e.message || e), diffs: [] });
@@ -2753,6 +2775,7 @@ const TorihikisakiView = {
   },
 
   STATE_STYLE: {
+    closed: { badge: 'b-red', mark: '⛔', order: 0 },
     fill: { badge: 'b-green', mark: '🟢', order: 1 },
     masterError: { badge: 'b-amber', mark: '🟠', order: 2 },
     mismatch: { badge: 'b-red', mark: '🔴', order: 3 },
@@ -2771,15 +2794,16 @@ const TorihikisakiView = {
     const errors = this.apiChk.rows.filter(r => r.error).length;
 
     // 対応が要るものだけ上に出す（一致は畳む）
-    const actionable = all.filter(d => d.state === 'fill' || d.state === 'masterError' || d.state === 'mismatch')
+    const actionable = all.filter(d => d.state === 'fill' || d.state === 'masterError' || d.state === 'mismatch' || d.state === 'closed')
       .sort((a, b) => this.STATE_STYLE[a.state].order - this.STATE_STYLE[b.state].order);
 
     const summary =
       '<div class="fcard" style="margin-bottom:12px"><h4>結果</h4>' +
       `<div style="font-size:12px">照会 <b>${this.apiChk.rows.length.toLocaleString()}社</b>` +
-      (notfound ? ` ／ gBizINFOに該当なし ${notfound}社` : '') +
+      (notfound ? ` ／ 登記情報に該当なし ${notfound}社` : '') +
       (errors ? ` ／ <span style="color:var(--accent)">照会失敗 ${errors}社</span>` : '') + '</div>' +
       '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px">' +
+        (stat.closed ? `<span>⛔ 閉鎖・合併 <b>${stat.closed}</b></span>` : '') +
         `<span>🟢 空欄を補完 <b>${stat.fill || 0}</b></span>` +
         `<span>🟠 マスタ側の誤り <b>${stat.masterError || 0}</b></span>` +
         `<span>🔴 不一致・要確認 <b>${stat.mismatch || 0}</b></span>` +
@@ -2794,12 +2818,12 @@ const TorihikisakiView = {
     const rows = actionable.map((d, i) => {
       const st = this.STATE_STYLE[d.state];
       return `<tr>` +
-        `<td style="text-align:center"><input type="checkbox" data-chk="${i}" ${d.adopt ? 'checked' : ''}></td>` +
+        `<td style="text-align:center"><input type="checkbox" data-chk="${i}" ${d.adopt ? 'checked' : ''} ${d.state === 'closed' ? 'disabled' : ''}></td>` +
         `<td><span class="badge ${st.badge}">${st.mark} ${this.esc(d.judgeLabel)}</span></td>` +
         `<td class="nm">${this.esc(d.name)}</td>` +
         `<td>${this.esc(d.label)}</td>` +
         `<td class="mf" style="max-width:230px;white-space:normal">${this.esc(d.current || '(空欄)')}</td>` +
-        `<td style="max-width:230px;white-space:normal"><b>${this.esc(d.api)}</b></td></tr>`;
+        `<td style="max-width:230px;white-space:normal"><b>${this.esc(d.api)}</b>${d.src ? ` <span class="mf">(${this.esc(d.src)})</span>` : ''}</td></tr>`;
     }).join('');
 
     this._chkActionable = actionable;
@@ -2811,7 +2835,7 @@ const TorihikisakiView = {
         '<span class="count" id="tmk-chk-count"></span>' +
       '</div>' +
       '<div class="tblwrap"><table class="tbl"><thead><tr>' +
-      ['採用', '判定', '取引先名', '項目', 'マスタの現在値', 'gBizINFOの値']
+      ['採用', '判定', '取引先名', '項目', 'マスタの現在値', '取得値（出所）']
         .map(h => `<th>${h}</th>`).join('') +
       `</tr></thead><tbody>${rows}</tbody></table></div>` +
       '<div class="savebar" style="margin-top:14px">' +
@@ -2841,7 +2865,7 @@ const TorihikisakiView = {
   // 選択された差異をマスタへ反映（CSV取込と同じ経路＝履歴に残る）
   async applyApiCheck() {
     const box = this.el('tmk-chk-result');
-    const picks = [...box.querySelectorAll('[data-chk]:checked')].map(c => this._chkActionable[+c.dataset.chk]);
+    const picks = [...box.querySelectorAll('[data-chk]:checked')].map(c => this._chkActionable[+c.dataset.chk]).filter(d => d && d.state !== 'closed');
     if (!picks.length) { this.toast('採用する項目が選ばれていません'); return; }
     const mismatch = picks.filter(d => d.state === 'mismatch').length;
     if (!confirm(`${picks.length}件をマスタに反映します。` +
@@ -2860,18 +2884,18 @@ const TorihikisakiView = {
           changes.push({
             cid: d.cid, name: d.name,
             f: { no: d.no, name: `${f.name}（${part.label}）`, col: `company.${part.col}`, dtype: part.dtype },
-            oldV: row[part.col], newV: part.val,
+            oldV: row[part.col], newV: part.val, src: d.src,
           });
         });
       } else {
         const newV = this.normIn(f, d.api);
         if (this.sameVal(row[d.col], newV)) return;
-        changes.push({ cid: d.cid, name: d.name, f, oldV: row[d.col], newV });
+        changes.push({ cid: d.cid, name: d.name, f, oldV: row[d.col], newV, src: d.src });
       }
     });
     if (!changes.length) { this.toast('反映する変更がありません'); return; }
     // CSV取込と同じ適用経路を通す（履歴の書き方・エラー処理を1本にする）。
-    // 出所は gBizINFO ＝履歴に「(gBizINFO)」が残り、画面のバッジが「gBizINFO API」になる
+    // 出所は差異ごとの取得元（国税庁API／gBizINFO API）＝履歴に「(国税庁API)」等が残り、画面のバッジがAPIになる
     this.showCsvPreview(changes, [], 'gBizINFO');
   },
 
@@ -3277,7 +3301,7 @@ const TorihikisakiView = {
     this.startNew('hojin', prefill);
     // API由来の値に印を付ける（法人番号そのものは人の入力なので除く）
     if (usedProvider) {
-      const apLabel = TM_ENRICH.PROVIDERS[usedProvider].label.indexOf('gBizINFO') >= 0 ? 'gBizINFO API' : '国税庁API';
+      const apLabel = TM_ENRICH.badgeLabel(usedProvider);
       this.apiPrefill = {};
       Object.keys(prefill).forEach(c => {
         if (c !== 'company.corporate_number') this.apiPrefill[c] = { val: prefill[c], label: apLabel };
@@ -3665,7 +3689,10 @@ const TorihikisakiView = {
         company_id: cid, table_name: 'company', column_name: k,
         old_value: null, new_value: String(coVals[k]),
         // 自動判定で入った値（人が触っていない）は印を残す＝出所バッジが「自動判定」になる
-        changed_by: (this.autoNew['company.' + k] !== undefined
+        // APIから取得してそのまま登録した値（人が触っていない）は取得元の印＝出所バッジが「国税庁API」等になる
+        changed_by: (this.apiPrefill && this.apiPrefill['company.' + k]
+          && String(this.apiPrefill['company.' + k].val) === String(coVals[k])) ? who + '(' + this.apiPrefill['company.' + k].label + ')'
+          : (this.autoNew['company.' + k] !== undefined
           && String(this.autoNew['company.' + k]) === String(coVals[k])) ? who + '(自動判定)' : who,
       });
     });
@@ -3879,7 +3906,7 @@ const TorihikisakiView = {
         company_id: c.cid, table_name: 'company', column_name: c.f.col.split('.')[1],
         old_value: c.oldV === null || c.oldV === undefined ? null : String(c.oldV),
         new_value: c.newV === null ? null : String(c.newV),
-        changed_by: who + '(' + sourceTag + ')',
+        changed_by: who + '(' + (c.src || sourceTag) + ')',
       })));
       if (ins.error) throw new Error('変更履歴の記録に失敗しました: ' + ins.error.message);
       // 会社ごとにまとめて更新
