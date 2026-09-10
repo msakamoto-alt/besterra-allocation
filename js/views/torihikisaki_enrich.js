@@ -15,7 +15,7 @@
  *   （出所ガバナンス＝経理の確定値を自動で上書きしない）。
  *
  * キーの入手状況（2026-08-26時点・ブリーフ§7-1）:
- *   国税庁 法人番号Web-API … アプリケーションID申請中（9月上旬見込み）
+ *   国税庁 法人番号Web-API … アプリケーションID取得済み（2026-09-10）。Secrets NTA_APP_ID で有効化
  *   gBizINFO             … トークン未申請（即時発行）
  *   Sansan Data Hub      … client_id/secret＋feedID を Sansan 担当者へ申請（長谷部さん待ち）
  */
@@ -26,17 +26,18 @@ const TM_ENRICH = {
     kokuzei: {
       label: '国税庁 法人番号Web-API',
       keyName: 'NTA_APP_ID',
-      needs: '法人番号13桁 または 商号',
-      note: 'アプリケーションID申請中（9月上旬見込み）。全件データは入手済みのため、届き次第すぐ結線できる',
-      // 国税庁APIの返却項目 → 項目No
+      needs: '法人番号13桁（商号検索は search_kokuzei）',
+      note: '登記ベース。法人番号→商号・登記住所・カナ・法人種別。商号検索（法人番号が不明な会社）と変更履歴（旧社名・移転）にも対応。応答はXML（JSONは無い）',
+      // 国税庁APIの返却項目（Edge Function が正規化したキー） → 項目No
+      // 🔴Function側 ntaNormalize() と対で保つ。kind は「法人」ラベル、domestic は「国内/海外」ラベルで来る（CHOICES 14/15 と同じ値）
       map: {
         corporateNumber: 6,        // 法人番号(13桁)
         name: 2,                   // 正式社名
-        furigana: 3,               // 社名カナ（全角フリガナ）
-        postCode: 24,              // 本社住所(〒)
-        address: 25,               // 本社住所（都道府県+市区町村+丁目番地）
-        kind: 14,                  // 法人/個人区分（法人種別コード）
-        addressOutside: 15,        // 国内/海外区分の手がかり
+        furigana: 3,               // 社名カナ（全角フリガナ。2018年以降の登録分が中心＝古い法人は空）
+        postCode: 24,              // 本社郵便番号（ハイフン無し7桁）
+        address: 25,               // 本社住所（都道府県+市区町村+丁目番地＝登記上の所在地）
+        kind: 14,                  // 法人/個人区分（常に「法人」。法人種別は raw の _kindLabel）
+        domestic: 15,              // 国内/海外区分（外国会社等・国外所在地なら「海外」）
         registeredAddress: 26,     // 本店所在地(登記簿)
       },
     },
@@ -348,6 +349,10 @@ const TM_ENRICH = {
   // 実測での取得率（2026-08-26・gbiz_coverage_check.py）。
   // 「必ず取れる」と「取れたら儲けもの」を分けて伝えないと、人が期待を誤って確認を怠るため。
   RELIABLE: {
+    kokuzei: {
+      always: ['法人番号', '正式社名', '本社郵便番号', '本社住所', '法人/個人区分', '国内/海外区分'],
+      sometimes: '社名カナ（フリガナは2018年以降の登録分が中心）。閉鎖・合併は raw の _closeDate／_successorCorporateNumber で分かる',
+    },
     gbizinfo: {
       always: ['法人番号', '正式社名', '社名カナ', '本社郵便番号', '本社住所'],
       sometimes: '代表者名・従業員数（約4〜9割）／設立年月日・事業内容・URL（約2〜8割）／資本金（約2割）は企業規模により差',

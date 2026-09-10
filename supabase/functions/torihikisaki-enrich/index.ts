@@ -18,6 +18,8 @@
 //            params: { corporateNumber?: "13桁", name?: "商号", soc?: "13桁" }
 //   check_invoice … 🔴インボイス登録の**失効・取消を一括チェック**。params: { numbers: ["T…"] }（最大200件・内部で10件ずつ）
 //   probe_gbiz … 🔴gBizINFO の疎通・実データ確認。params: { corporateNumber: "13桁", sample?: 0|1 }
+//   probe_kokuzei … 🔴国税庁 法人番号Web-API の疎通・実データ確認。params: { corporateNumber: "13桁", sample?: 0|1 }
+//   search_kokuzei … 国税庁 法人番号Web-API の商号検索（法人番号が分からない会社を探す）。params: { name: 商号, mode?: 1|2, close?: 0|1 }
 //   probe_sansan_open … 🔴Sansan Open API（APIキー1本）の疎通・実データ確認。params: { name?: 会社名, sample?: 件数 }
 //   probe_sansan … 🔴Data Hub（OAuth2）の疎通と実データの確認用（結線前の調査）。
 //            認証が通るか／会社フィードが何件返るか／実際に来る項目名は何かを返す。
@@ -26,7 +28,7 @@
 //              実運用は「定期同期でキャッシュ→キャッシュを引く」形にする（本アクションはその設計を固めるための下見）。
 //
 // 必要な Secrets（Edge Functions → Secrets。未設定のものは自動的に「未接続」になる）：
-//   NTA_APP_ID                … 国税庁 法人番号Web-API のアプリケーションID（申請中・9月上旬見込み）
+//   NTA_APP_ID                … 国税庁 法人番号Web-API のアプリケーションID
 //   NTA_INVOICE_APP_ID        … 国税庁 インボイス公表システム Web-API のアプリケーションID（無償・要申請）
 //   GBIZINFO_TOKEN            … gBizINFO のAPIトークン（即時発行・未申請）
 //   SANSAN_API_KEY            … Sansan Open API（名刺管理・32桁）。会社情報は名刺に載っている分のみ
@@ -49,8 +51,8 @@ const env = (k: string) => (Deno.env.get(k) || '').trim();
 // 🔴この関数の版。Secretsだけ更新して関数の再デプロイを忘れる事故が起きたため、
 //   status で版と対応アクションを返し、呼び出し側が「古い版がデプロイされている」と気づけるようにする。
 //   ※機能を足したらここも上げること。
-const FN_VERSION = '2026-08-26.5';
-const FN_ACTIONS = ['status', 'fetch', 'check_invoice', 'probe_gbiz', 'probe_sansan_open', 'probe_sansan'];
+const FN_VERSION = '2026-09-10.1';
+const FN_ACTIONS = ['status', 'fetch', 'check_invoice', 'probe_gbiz', 'probe_kokuzei', 'search_kokuzei', 'probe_sansan_open', 'probe_sansan'];
 
 // ===== プロバイダ定義（キーの有無だけを外に見せる） =====
 function providerStatus() {
@@ -60,7 +62,7 @@ function providerStatus() {
   const inv = env('NTA_INVOICE_APP_ID');
   const sansanOk = env('SANSAN_CLIENT_ID') && env('SANSAN_CLIENT_SECRET') && env('SANSAN_COMPANY_FEED_ID');
   return {
-    kokuzei: { ok: !!nta, reason: nta ? '接続可' : 'NTA_APP_ID 未設定（アプリケーションID申請中）' },
+    kokuzei: { ok: !!nta, reason: nta ? '接続可（法人番号→商号・登記住所・カナ／商号検索／変更履歴）' : 'NTA_APP_ID 未設定' },
     gbizinfo: { ok: !!gbiz, reason: gbiz ? '接続可' : 'GBIZINFO_TOKEN 未設定（即時発行・未申請）' },
     invoice: {
       ok: !!inv,
@@ -274,33 +276,180 @@ async function checkInvoiceBatch(params: Record<string, unknown>) {
   return { ok: true, checked: results.length, tally, results, errors };
 }
 
-// ===== 国税庁 法人番号Web-API =====
-// 仕様: GET https://api.houjin-bangou.nta.go.jp/4/num?id={appId}&number={13桁}&type=12（JSON）
-//       商号検索は /4/name。1リクエスト10件・1日あたりの上限あり（レート制限は要確認）。
-async function fetchKokuzei(params: Record<string, string>) {
+// ===== 国税庁 法人番号Web-API（法人番号システム Web-API Ver.4） =====
+// 🔴応答は CSV か XML のみ（JSON は無い）。type=12（XML／Unicode）で受けて自前で読む。
+//   /4/num  … 法人番号で取得: ?id=&number=（最大10件・カンマ区切り）&type=12&history=0|1（1=商号・所在地の変更履歴も返す）
+//   /4/name … 商号で検索:     ?id=&name=&type=12&mode=1(前方一致)|2(部分一致)&target=1(JIS第一・第二水準)&close=0(閉鎖を含めない)|1&change=0|1&divide=
+//   エラーは HTTP 400 で本文がテキスト「エラーコード,メッセージ」（アプリケーションID不正・パラメータ不正など）
+//   kind（法人種別）: 101 国の機関／201 地方公共団体／301 株式会社／302 有限会社／303 合名会社／304 合資会社／305 合同会社／
+//                    399 その他の設立登記法人／401 外国会社等／499 その他
+//   furigana（商号フリガナ）は 2018年以降の登録分が中心＝古い法人は空で返る（正常）
+//   hihyoji=1 は「非表示」（DV被害者等）＝商号・所在地が空で返る（正常・そのまま扱う）
+//   postCode はハイフン無し7桁（会社マスタの保存形式と同じ）
+const NTA_BASE = 'https://api.houjin-bangou.nta.go.jp/4';
+const NTA_KIND: Record<string, string> = {
+  '101': '国の機関', '201': '地方公共団体', '301': '株式会社', '302': '有限会社', '303': '合名会社', '304': '合資会社',
+  '305': '合同会社', '399': 'その他の設立登記法人', '401': '外国会社等', '499': 'その他',
+};
+const NTA_TAGS = ['sequenceNumber', 'corporateNumber', 'process', 'correct', 'updateDate', 'changeDate', 'name', 'nameImageId',
+  'kind', 'prefectureName', 'cityName', 'streetNumber', 'addressImageId', 'prefectureCode', 'cityCode', 'postCode',
+  'addressOutside', 'addressOutsideImageId', 'closeDate', 'closeCause', 'successorCorporateNumber', 'changeCause',
+  'assignmentDate', 'latest', 'enName', 'enPrefectureName', 'enCityName', 'enAddressOutside', 'furigana', 'hihyoji'];
+
+function xmlUnescape(v: string) {
+  return v.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+}
+// 1つのタグの中身を取る（入れ子の無い平坦なXMLなので正規表現で足りる。空タグ・自己閉じは null）
+function xmlTag(block: string, tag: string): string | null {
+  const m = block.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`));
+  if (!m) return null;
+  const v = xmlUnescape(m[1].replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/, '$1')).trim();
+  return v === '' ? null : v;
+}
+type NtaCorp = Record<string, string | null>;
+function parseNtaXml(text: string) {
+  const corporations: NtaCorp[] = [];
+  const re = /<corporation>([\s\S]*?)<\/corporation>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const o: NtaCorp = {};
+    for (const t of NTA_TAGS) o[t] = xmlTag(m[1], t);
+    corporations.push(o);
+  }
+  // 見出し部（count 等）は <corporation> の外にある。<corporations> 全体から取ると子の同名タグと混ざらない
+  const head = text.replace(/<corporation>[\s\S]*<\/corporation>/, '');
+  return {
+    lastUpdateDate: xmlTag(head, 'lastUpdateDate'),
+    count: Number(xmlTag(head, 'count') || corporations.length),
+    divideNumber: Number(xmlTag(head, 'divideNumber') || 1),
+    divideSize: Number(xmlTag(head, 'divideSize') || 1),
+    corporations,
+  };
+}
+async function ntaGet(path: 'num' | 'name', q: Record<string, string>) {
   const id = env('NTA_APP_ID');
+  const qs = new URLSearchParams({ id, ...q, type: '12' });
+  const res = await fetch(`${NTA_BASE}/${path}?${qs}`, { headers: { Accept: 'application/xml' } });
+  const text = await res.text();
+  if (!res.ok) {
+    // 本文は「コード,メッセージ」のテキスト。IDの不正はここで分かる
+    const msg = text.trim().slice(0, 200);
+    const e = new Error(`国税庁 法人番号API HTTP ${res.status}: ${msg}`) as Error & { status?: number; body?: string };
+    e.status = res.status; e.body = msg;
+    throw e;
+  }
+  return parseNtaXml(text);
+}
+// 1法人分を画面の TM_ENRICH.PROVIDERS.kokuzei.map のキーへ正規化する
+function ntaNormalize(c: NtaCorp) {
+  const domesticAddr = [c.prefectureName, c.cityName, c.streetNumber].filter(Boolean).join('');
+  const abroad = c.kind === '401' || (!domesticAddr && !!c.addressOutside);
+  const address = domesticAddr || c.addressOutside || null;
+  return {
+    corporateNumber: c.corporateNumber,
+    name: c.name,
+    furigana: c.furigana,                       // 空＝フリガナ未登録（古い法人）。null のまま返す
+    postCode: c.postCode,                       // ハイフン無し7桁
+    address,                                    // 本社住所（#25）＝登記上の所在地
+    registeredAddress: address,                 // 本店所在地（登記簿）（#26）
+    kind: '法人',                               // #14 法人/個人区分。法人番号を持つのは法人だけ（個人は持たない）
+    domestic: abroad ? '海外' : '国内',         // #15 国内/海外区分
+    // 参考（map の対象外・画面は _ 付きを無視する）
+    _kindCode: c.kind, _kindLabel: c.kind ? (NTA_KIND[c.kind] || c.kind) : null,
+    _prefecture: c.prefectureName, _city: c.cityName, _street: c.streetNumber, _prefectureCode: c.prefectureCode, _cityCode: c.cityCode,
+    _addressOutside: c.addressOutside, _enName: c.enName,
+    _closeDate: c.closeDate, _closeCause: c.closeCause, _successorCorporateNumber: c.successorCorporateNumber,
+    _changeDate: c.changeDate, _changeCause: c.changeCause, _assignmentDate: c.assignmentDate, _updateDate: c.updateDate,
+    _latest: c.latest, _hihyoji: c.hihyoji, _process: c.process,
+  };
+}
+// 法人番号で1社取得。params.history='1' で商号・所在地の変更履歴（旧社名 #5 の元）も _history に返す
+async function fetchKokuzei(params: Record<string, string>) {
   const num = (params.corporateNumber || '').replace(/\D/g, '');
   if (!/^\d{13}$/.test(num)) throw new Error('法人番号13桁が必要です');
-  const url = `https://api.houjin-bangou.nta.go.jp/4/num?id=${encodeURIComponent(id)}&number=${num}&type=12`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`国税庁API HTTP ${res.status}`);
-  const d = await res.json();
-  const c = (d.corporations || d.corporation || [])[0];
-  if (!c) return null;
-  // 画面側 TM_ENRICH.PROVIDERS.kokuzei.map のキーに合わせて正規化する
+  const history = params.history === '1' ? '1' : '0';
+  const d = await ntaGet('num', { number: num, history });
+  if (!d.corporations.length) return null;
+  // history=1 は同じ法人番号の履歴行が並ぶ（latest=1 が現在）。現在行を本体に、残りを _history に
+  const cur = d.corporations.find((c) => c.latest === '1') || d.corporations[d.corporations.length - 1];
+  const rec = ntaNormalize(cur) as Record<string, unknown>;
+  if (history === '1') {
+    rec._history = d.corporations.filter((c) => c !== cur).map((c) => {
+      const n = ntaNormalize(c);
+      return { changeDate: n._changeDate, changeCause: n._changeCause, updateDate: n._updateDate, name: n.name, address: n.address, process: n._process };
+    });
+  }
+  rec._lastUpdateDate = d.lastUpdateDate;
+  return rec;
+}
+// 商号で検索（法人番号が分からない会社を探す・登録前の重複確認）。1ページ分（divideSize>1 なら続きがある）を返す
+async function searchKokuzei(params: Record<string, string>) {
+  const name = (params.name || '').trim();
+  if (name.length < 2) throw new Error('商号は2文字以上で指定してください');
+  const mode = params.mode === '1' ? '1' : '2';           // 既定＝部分一致
+  const close = params.close === '1' ? '1' : '0';         // 既定＝閉鎖した法人を含めない
+  const q: Record<string, string> = { name, mode, target: '1', close, change: '0' };
+  if (params.address) q.address = params.address;         // 都道府県コード(2桁) または 都道府県+市区町村コード(5桁)
+  if (params.divide) q.divide = params.divide;
+  const d = await ntaGet('name', q);
   return {
-    corporateNumber: c.corporateNumber ?? null,
-    name: c.name ?? null,
-    furigana: c.furigana ?? null,
-    postCode: c.postCode ?? null,
-    address: [c.prefectureName, c.cityName, c.streetNumber].filter(Boolean).join('') || null,
-    registeredAddress: [c.prefectureName, c.cityName, c.streetNumber].filter(Boolean).join('') || null,
-    // kind=法人種別コード（101=国の機関/301=株式会社 等）。画面では「法人/個人区分」に入る想定
-    kind: c.kind ?? null,
-    addressOutside: c.addressOutside || null,
-    // 参考（マッピング対象外だが raw で残す）
-    closeDate: c.closeDate ?? null,
-    successorCorporateNumber: c.successorCorporateNumber ?? null,
+    count: d.count, divideNumber: d.divideNumber, divideSize: d.divideSize, lastUpdateDate: d.lastUpdateDate,
+    items: d.corporations.map((c) => {
+      const n = ntaNormalize(c);
+      return { corporateNumber: n.corporateNumber, name: n.name, furigana: n.furigana, postCode: n.postCode, address: n.address,
+               kind: n._kindLabel, domestic: n.domestic, closeDate: n._closeDate, closeCause: n._closeCause, assignmentDate: n._assignmentDate };
+    }),
+  };
+}
+// 疎通・実データ調査（結線前の下見）。ID の有効性→法人番号取得→商号検索→変更履歴 の順に確かめる
+async function probeKokuzei(params: Record<string, unknown>) {
+  const num = String(params.corporateNumber || '').replace(/\D/g, '');
+  if (!/^\d{13}$/.test(num)) {
+    return { ok: false, step: 'params', message: '法人番号13桁を指定してください（params.corporateNumber）' };
+  }
+  const steps: string[] = [];
+  let d;
+  try {
+    d = await ntaGet('num', { number: num, history: '0' });
+  } catch (e) {
+    const err = e as Error & { status?: number; body?: string };
+    const auth = /ID|アプリケーション/i.test(err.body || '') || err.status === 403;
+    return {
+      ok: false, step: auth ? 'auth' : 'fetch', message: auth ? '認証に失敗しました' : '取得に失敗しました',
+      detail: err.message, hint: auth ? 'NTA_APP_ID（国税庁から届いたアプリケーションID）を確認してください。前後の空白混入にも注意' : '',
+    };
+  }
+  steps.push(`認証OK（法人番号 ${num} で ${d.corporations.length}件・公表データ更新日 ${d.lastUpdateDate || '不明'}）`);
+  if (!d.corporations.length) return { ok: true, steps, records: 0, message: 'この法人番号では見つかりませんでした' };
+  const c = d.corporations[0];
+  const EXPECT = ['corporateNumber', 'name', 'postCode', 'prefectureName', 'cityName', 'streetNumber', 'kind', 'assignmentDate', 'latest', 'updateDate'];
+  const has = (k: string) => c[k] !== null && c[k] !== undefined && String(c[k]).trim() !== '';
+  // 商号検索（取れた商号の前方一致）と変更履歴も確かめる
+  let search: Record<string, unknown> = {};
+  try {
+    const r = await searchKokuzei({ name: String(c.name || '').slice(0, 20), mode: '1' });
+    search = { count: r.count, divideSize: r.divideSize, first: r.items[0]?.name || null };
+    steps.push(`商号検索OK（前方一致「${String(c.name || '').slice(0, 20)}」で ${r.count}件）`);
+  } catch (e) {
+    search = { error: e instanceof Error ? e.message : String(e) };
+  }
+  let history: Record<string, unknown> = {};
+  try {
+    const h = await fetchKokuzei({ corporateNumber: num, history: '1' }) as Record<string, unknown>;
+    const rows = (h?._history as unknown[]) || [];
+    history = { rows: rows.length };
+    steps.push(`変更履歴OK（${rows.length}件）`);
+  } catch (e) {
+    history = { error: e instanceof Error ? e.message : String(e) };
+  }
+  const nSample = Math.min(Math.max(Number(params.sample ?? 0) || 0, 0), 1);
+  return {
+    ok: true, steps, records: d.corporations.length,
+    mapping: { expected: EXPECT.length, found: EXPECT.filter(has).length, foundKeys: EXPECT.filter(has), missingKeys: EXPECT.filter((k) => !has(k)) },
+    furigana: has('furigana') ? 'あり' : '空（フリガナ未登録の法人＝正常）',
+    keysSeen: NTA_TAGS.filter(has),
+    search, history,
+    samples: nSample ? [ntaNormalize(c)] : undefined,
   };
 }
 
@@ -587,6 +736,24 @@ Deno.serve(async (req) => {
       return json(await probeGbiz(body.params || {}));
     } catch (e) {
       return json({ ok: false, step: 'exception', message: e instanceof Error ? e.message : String(e) }, 200);
+    }
+  }
+
+  if (body.action === 'probe_kokuzei') {
+    if (!status.kokuzei.ok) return json({ ok: false, step: 'secrets', message: status.kokuzei.reason }, 200);
+    try {
+      return json(await probeKokuzei(body.params || {}));
+    } catch (e) {
+      return json({ ok: false, step: 'exception', message: e instanceof Error ? e.message : String(e) }, 200);
+    }
+  }
+
+  if (body.action === 'search_kokuzei') {
+    if (!status.kokuzei.ok) return json({ error: status.kokuzei.reason }, 200);
+    try {
+      return json(await searchKokuzei((body.params || {}) as Record<string, string>));
+    } catch (e) {
+      return json({ error: e instanceof Error ? e.message : String(e) }, 200);
     }
   }
 

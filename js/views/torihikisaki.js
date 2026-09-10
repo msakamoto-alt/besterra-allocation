@@ -3257,6 +3257,12 @@ const TorihikisakiView = {
         if (got) {
           Object.assign(prefill, this.enrichToCols(got.values));
           note = `${TM_ENRICH.PROVIDERS[provider].label} から ${Object.keys(got.values).length}項目を取得しました（内容を確認してください）`;
+          const raw = got.raw || {};
+          if (raw._closeDate) {
+            note += `／⚠ 国税庁の公表では ${raw._closeDate} に登記記録の閉鎖等（${raw._closeCause || '理由不明'}）`
+              + (raw._successorCorporateNumber ? `・承継先の法人番号 ${raw._successorCorporateNumber}` : '') + '。登録してよいか確認してください';
+          }
+          if (raw._hihyoji === '1') note += '／⚠ 国税庁で「非表示」の法人（商号・所在地は公表されません）';
         } else {
           note = `${TM_ENRICH.PROVIDERS[provider].label} に該当がありませんでした。手入力で登録できます`;
         }
@@ -3436,8 +3442,12 @@ const TorihikisakiView = {
      <div>
       <div class="sec"><h3>① 種別と入力経路 <span class="badge b-slate">${this.esc(this.NEW_METHOD_LABELS[this.newMethod] || '')}</span></h3>
         <div class="mf" style="font-size:11.5px;margin-bottom:8px">${
-          this.newMethod === 'sansan' ? 'Sansan API接続は9月以降の予定です。接続後は名刺から自動で埋まります（今は手入力）。'
-          : this.newMethod === 'hojin' ? '法人番号から登録します。国税庁APIオートフィルは接続後に有効になります（今は手入力）。'
+          this.newMethod === 'sansan' ? (TM_ENRICH.available('sansan') || TM_ENRICH.available('sansan_open')
+              ? '名刺（Sansan）から取得した内容を確認して登録します。' : 'Sansan API が未接続のため手入力です。')
+          : this.newMethod === 'hojin' ? (TM_ENRICH.available('kokuzei')
+              ? '法人番号から登録します。国税庁 法人番号Web-API（登記ベース）で商号・住所などを埋めました。内容を確認してください。'
+              : TM_ENRICH.available('gbizinfo') ? '法人番号から登録します。gBizINFO で商号・住所などを埋めました。内容を確認してください。'
+              : '法人番号から登録します。外部APIが未接続のため手入力です。')
           : this.newMethod === 'dup' ? `「${this.esc(this.dupFrom || '')}」の枠組みを複製しました。固有情報だけ入れ替えてください。`
           : '社名だけで下書き登録できます。'}</div>
         ${this.enrichNotice ? `<div class="alert warn" style="font-size:11px;margin:0">${this.esc(this.enrichNotice)}</div>` : ''}

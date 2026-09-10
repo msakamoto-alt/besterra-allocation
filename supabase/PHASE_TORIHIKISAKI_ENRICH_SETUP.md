@@ -38,7 +38,7 @@ Supabase ダッシュボード（**本番プロジェクト**）左メニュー 
 
 | Secret名 | 用途 | 状況 |
 |---|---|---|
-| `NTA_APP_ID` | 国税庁 法人番号Web-API（**法人番号・商号・登記住所**） | アプリケーションID申請中（9月上旬見込み） |
+| `NTA_APP_ID` | 国税庁 法人番号Web-API（**法人番号・商号・登記住所・カナ・法人種別**／商号検索／変更履歴） | アプリケーションID取得済み（2026-09-10）。設定後は関数の再デプロイ（版 2026-09-10.1 以上）と §3b の確認 |
 | `GBIZINFO_TOKEN` | gBizINFO（代表者名・資本金・**建設業許可の有効期限**） | トークン即時発行・未申請 |
 
 > ⚠️ `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` の設定は不要（自動注入）。
@@ -78,6 +78,26 @@ python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合�
 
 スクリプトは**設定済みの系統を自動判定**します（両方あれば Data Hub を優先）。
 
+## 3b. 国税庁 法人番号Web-API の確認（2026-09-10・アプリケーションID到着後）
+
+1. 手元で ID と応答の形を確かめる（Secrets に入れる前の切り分け・読取のみ）:
+   `C:\Users\sakamoto\.nta_api.env` に `NTA_APP_ID=（届いたID）` の1行を書いてから
+   ```
+   python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\自動化\API連携\nta_direct_probe.py"
+   ```
+   HTTP 200 で商号・所在地が出れば ID は有効。400 で「アプリケーションID」の文言なら ID の写し間違い。
+2. Supabase → Edge Functions → Secrets に `NTA_APP_ID` を追加（前後の空白に注意）
+3. 関数を貼り直して Deploy（§2）。**Secrets だけ更新して再デプロイを忘れると旧版（2026-08-26.4）のまま**＝応答をJSONとして読もうとして失敗する
+4. 関数経由の確認:
+   ```
+   python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合管理】\自動化\API連携\nta_probe_call.py" --sample 1 --search "ベステラ"
+   ```
+   `✓ 認証OK`／`✓ 商号検索OK`／`✓ 変更履歴OK`／`マッピング検証 10/10` が出れば画面から使える（法人番号で登録／APIで補完）。
+
+🔴 法人番号Web-API の応答は **CSV か XML のみ（JSON は無い）**。関数は type=12（XML）を自前で読む。
+   インボイス公表システム Web-API（`NTA_INVOICE_APP_ID`）は JSON（type=21）で別物。
+   同じ申請書で両方の ID を受けた場合は、それぞれの Secret に入れる（同じ値でもよい）。
+
 ## 4. つまずきやすい点
 
 | 症状 | 原因と対処 |
@@ -89,6 +109,8 @@ python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合�
 | `会社フィードの取得に失敗（HTTP 404）` | フィードIDが会社以外（拠点・人物・名刺）の可能性 |
 | `取得結果: 0行` | その期間に更新が無いだけ。`--days 30` で広げて再確認 |
 | `403 取得権限がありません` | ログインユーザーのロールが admin / accounting 以外 |
+| 国税庁: `HTTP 400: 0xx,…` | 本文のメッセージがそのまま原因（ID不正・パラメータ不正）。`nta_direct_probe.py` で手元から再現できる |
+| 国税庁: 社名カナが空 | フリガナは2018年以降の登録分が中心。古い法人は空で正常（手入力か gBizINFO の kana で補う） |
 
 ## 5. 🔴 Change Feed の性質（Data Hub を使う場合のみ・実装方針に関わる）
 
