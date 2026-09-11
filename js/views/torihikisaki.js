@@ -1355,7 +1355,7 @@ const TorihikisakiView = {
   setApiValue(host, api, f, path, val, label) {
     api.set(f, path, val);
     if (this.isNew) { this.apiPrefill = this.apiPrefill || {}; this.apiPrefill[path] = { val: String(val), label }; }
-    else this.apiPaths[path] = label;
+    else if (this.pending[path] !== undefined) this.apiPaths[path] = label;   // 現在値と同じ（保存する変更が無い）なら印も残さない＝印は必ず未保存の変更と対で持つ
     const el = host.querySelector(`[data-path="${CSS.escape(path)}"]`);
     if (el && el.value !== String(val)) el.value = String(val);
   },
