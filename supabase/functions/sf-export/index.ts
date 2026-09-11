@@ -54,7 +54,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-09-11.1'; // 連携ログ meta.version（画面の「版」に出る）
+const VERSION = '2026-09-11.2'; // 連携ログ meta.version（画面の「版」に出る）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -95,6 +95,13 @@ const FULL_LOCK_WINDOW_SEC = 120; // 全件配信の同時実行ガード：こ�
 
 type Admin = ReturnType<typeof createClient>;
 
+// 連携ログの文言に載せる時刻（JST・秒まで）。DB の値は timestamptz のまま、人が読む文だけ日本時間にする
+function jstStamp(iso: string | null | undefined): string {
+  if (!iso) return '?';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
 function json(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 }
@@ -438,7 +445,7 @@ Deno.serve(async (req) => {
       } else {
         const row = (Array.isArray(lk) ? lk[0] : lk) as { acquired?: boolean; lock_started_at?: string | null; lock_holder?: string | null } | null;
         if (row && row.acquired === false) {
-          const msg = `同時実行ガード: ${row.lock_holder || '別の実行'} が ${row.lock_started_at || '?'} に全件配信を開始済み（${FULL_LOCK_WINDOW_SEC}秒以内）のため、この実行は書かずに見送りました`;
+          const msg = `同時実行ガード: ${row.lock_holder || '別の実行'} が ${jstStamp(row.lock_started_at)} に全件配信を開始済み（${FULL_LOCK_WINDOW_SEC}秒以内）のため、この実行は書かずに見送りました`;
           const logged = await logRun(admin, { kind: 'skip', action, caller, source: body.source, sf: null, t0, message: msg,
             meta: { mode, scope, window_sec: FULL_LOCK_WINDOW_SEC, lock_started_at: row.lock_started_at || null, lock_holder: row.lock_holder || null } });
           return json({ ok: true, action, mode, skipped: true, reason: msg, lock_started_at: row.lock_started_at || null, lock_holder: row.lock_holder || null,

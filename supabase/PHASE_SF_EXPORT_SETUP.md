@@ -127,7 +127,9 @@ sf-export の実行記録は**アプリ共通の監査ログ（audit_logs）で�
 
 1. **SQL**（初回のみ・再実行可）: `supabase/sf_export_lock.sql` を SQL Editor に貼って Run（鍵は不要）。
    ロック表 `sf_export_lock`（1行）と RPC `sf_export_try_lock`／`sf_export_release_lock` を作り、連携ログの kind に `skip` を足す
-2. **関数の再デプロイ**: `supabase/functions/sf-export/index.ts`（**v2026-09-11.1** 以降）を Via Editor で置き換え
+2. **関数の再デプロイ**: `supabase/functions/sf-export/index.ts`（**v2026-09-11.1** 以降）を Via Editor で置き換え。
+   ⚠️ 貼り付け元は**ローカル** `C:\Users\sakamoto\besterra-allocation`（Box のコピーは2時間ごとのミラーで、push 直後は旧版のまま＝9/11 に旧版を貼って空振り）。
+   v2026-09-11.2 は見送りメッセージの時刻を JST 表記にしただけ（.1 のままでも動く）
 3. **確認**（翌朝 5:30 以降）: 画面「連携ログ」に **配信 1行（送信 2,339）＋見送り 1行**（グレーのバッジ「見送り」）。
    見送りが出なければ二重配送が止まっただけ＝それも正常。「システム連携」の直近30日の実績には見送りは数えない
 
