@@ -52,8 +52,9 @@ const env = (k: string) => (Deno.env.get(k) || '').trim();
 // 🔴この関数の版。Secretsだけ更新して関数の再デプロイを忘れる事故が起きたため、
 //   status で版と対応アクションを返し、呼び出し側が「古い版がデプロイされている」と気づけるようにする。
 //   ※機能を足したらここも上げること。
-const FN_VERSION = '2026-09-10.3';
-const FN_ACTIONS = ['status', 'fetch', 'check_invoice', 'probe_gbiz', 'probe_kokuzei', 'search_kokuzei', 'probe_sansan_open', 'probe_sansan'];
+const FN_VERSION = '2026-09-11.1';
+const FN_ACTIONS = ['status', 'fetch', 'check_invoice', 'probe_gbiz', 'probe_kokuzei', 'search_kokuzei', 'probe_sansan_open', 'probe_sansan',
+  'probe_jpost', 'zip_to_address', 'address_to_zip'];
 
 // ===== プロバイダ定義（キーの有無だけを外に見せる） =====
 function providerStatus() {
@@ -62,6 +63,7 @@ function providerStatus() {
   const openKey = env('SANSAN_API_KEY');
   const inv = env('NTA_INVOICE_APP_ID') || env('NTA_APP_ID');   // 共通ID＝法人番号側で代用できる
   const sansanOk = env('SANSAN_CLIENT_ID') && env('SANSAN_CLIENT_SECRET') && env('SANSAN_COMPANY_FEED_ID');
+  const jp = env('JPOST_CLIENT_ID') && env('JPOST_SECRET_KEY');
   return {
     kokuzei: { ok: !!nta, reason: nta ? '接続可（法人番号→商号・登記住所・カナ／商号検索／変更履歴）' : 'NTA_APP_ID 未設定' },
     gbizinfo: { ok: !!gbiz, reason: gbiz ? '接続可' : 'GBIZINFO_TOKEN 未設定（即時発行・未申請）' },
@@ -69,6 +71,10 @@ function providerStatus() {
       ok: !!inv,
       reason: inv ? '接続可（登録の失効・取消チェック）'
         : 'NTA_APP_ID／NTA_INVOICE_APP_ID 未設定（法人番号Web-API と共通のアプリケーションID）',
+    },
+    jpost: {
+      ok: !!jp,
+      reason: jp ? '接続可（〒→住所／住所→〒・API ver2.0）' : 'JPOST_CLIENT_ID／JPOST_SECRET_KEY 未設定（郵便番号・デジタルアドレス for Biz のシステムリストの値）',
     },
     sansan_open: {
       ok: !!openKey,
@@ -79,6 +85,105 @@ function providerStatus() {
       reason: sansanOk ? '接続可' : 'SANSAN_CLIENT_ID/SECRET/COMPANY_FEED_ID 未設定（Sansan担当者へ申請中）',
     },
   };
+}
+
+// ===== 日本郵便 郵便番号・デジタルアドレスAPI（API ver2.0・本番） =====
+// 🔴パスは /api/v2/。/api/v1/ は旧サイト（ver1.0）のAPIで、ver2.0 の鍵を送ると 401「スコープがありません」になる
+//   （2026-09-11 実測＝8/31〜9/11 の「本番不通」の真因。サイト・鍵・IPは無関係だった）。
+// 認証: POST /j/token に {grant_type, client_id, secret_key}（JSONボディ）→ token（600秒）。本番もIP制限なし（動的IPから取得できた）。
+// 正引き GET /searchcode/{〒}（事業所個別〒は biz_name 付き・ビル階層別〒は town_name にビル名）／逆引き POST /addresszip {freeword}（町名まで・番地を含めると404）。
+// 該当なしは 404（エラーではなく0件）。仕様の正本は新サイト（org.biz.da.pf.japanpost.jp）ログイン後の API リファレンス。
+// 役割は「会社を引く」ではなく **〒⇄住所の入力補助**（画面の #24 本社郵便番号）。既存データの点検はバッチ postal_check.py（読取のみ）。
+const JPOST_BASE = 'https://api.da.pf.japanpost.jp/api/v2';
+const JPOST_UA = 'besterra-torihikisaki-master/enrich';
+let jpostTok: { token: string; at: number } | null = null;   // 同じ isolate が生きている間だけ効くキャッシュ（600秒の手前で取り直す）
+
+async function jpostToken(force = false): Promise<string> {
+  if (!force && jpostTok && Date.now() - jpostTok.at < 540_000) return jpostTok.token;
+  const res = await fetch(`${JPOST_BASE}/j/token`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': JPOST_UA },
+    body: JSON.stringify({ grant_type: 'client_credentials', client_id: env('JPOST_CLIENT_ID'), secret_key: env('JPOST_SECRET_KEY') }),
+  });
+  if (!res.ok) throw new Error(`郵便番号API token HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`);
+  const d = await res.json();
+  jpostTok = { token: String(d.token), at: Date.now() };
+  return jpostTok.token;
+}
+
+// 200→JSON／404→null（該当なし）。401 は一度だけトークンを取り直す
+async function jpostCall(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(JPOST_BASE + path, {
+      method, headers: { 'Content-Type': 'application/json', 'User-Agent': JPOST_UA, Authorization: `Bearer ${await jpostToken(attempt > 0)}` },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (res.status === 404) return null;
+    if (res.status === 401 && attempt === 0) continue;
+    if (!res.ok) throw new Error(`郵便番号API HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`);
+    return await res.json();
+  }
+  throw new Error('郵便番号API: 認証を取り直しても 401');
+}
+
+type JpAddr = Record<string, unknown>;
+const JPOST_BUILDING_RE = /（.*?階|ビル|タワー|センター|スクエア|プラザ|ヒルズ|ガーデン/;
+// 応答1件をハブ向けに整える。is_business=大口事業所の個別〒／is_building=ビル階層別〒（どちらも町域番号ではない）
+function jpostNormalize(a: JpAddr) {
+  const s = (v: unknown) => (v === null || v === undefined ? null : String(v).trim() || null);
+  const town = s(a.town_name) || '';
+  const biz = s(a.biz_name) || s(a.business_name);
+  return {
+    zip_code: s(a.zip_code), pref_code: s(a.pref_code), pref_name: s(a.pref_name), pref_kana: s(a.pref_kana),
+    city_code: s(a.city_code), city_name: s(a.city_name), city_kana: s(a.city_kana),
+    town_name: town || null, town_kana: s(a.town_kana), block_name: s(a.block_name), other_name: s(a.other_name),
+    biz_name: biz, is_business: !!biz, is_building: !biz && JPOST_BUILDING_RE.test(town),
+    address: s(a.address), dgacode: s(a.dgacode),
+    // ver2.0 で増えた項目（ビジネスデジタルアドレスを登録した事業者のみ入る）
+    corporate_number: s(a.corporate_number), tel_number: s(a.tel_number), business_name: s(a.business_name), url: s(a.url),
+  };
+}
+
+// 〒→住所。部分検索も通るが、画面の補助は7桁だけを受け付ける
+async function jpostZipToAddress(params: Record<string, string>) {
+  const zip = String(params.zip || '').replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\D/g, '');
+  if (!/^\d{7}$/.test(zip)) throw new Error('郵便番号は7桁の数字で指定してください');
+  const d = await jpostCall('GET', `/searchcode/${zip}`);
+  const list = ((d?.addresses as JpAddr[] | undefined) || []).map(jpostNormalize);
+  return { zip, count: list.length, addresses: list };
+}
+
+// 住所→〒。都道府県＋町名（番地を含めない）で引き、町域番号／ビル階層別／事業所個別に分けて返す
+async function jpostAddressToZip(params: Record<string, string>) {
+  const q = String(params.freeword || `${params.pref || ''}${params.town || ''}`).replace(/[\s　]+/g, '').trim();
+  if (q.length < 2) throw new Error('都道府県と町名（番地を含めない）を指定してください');
+  const d = await jpostCall('POST', '/addresszip', { freeword: q });
+  const list = ((d?.addresses as JpAddr[] | undefined) || []).map(jpostNormalize);
+  return {
+    query: q, count: list.length, level: d?.level ?? null,
+    town_codes: list.filter((a) => !a.is_business && !a.is_building),
+    building_codes: list.filter((a) => a.is_building),
+    business_codes: list.filter((a) => a.is_business),
+  };
+}
+
+// 疎通確認（自動化\API連携\jpost_probe_call.py が呼ぶ）: token → 正引き → 逆引き
+async function probeJpost(params: Record<string, unknown>) {
+  const steps: Record<string, unknown>[] = [];
+  const t0 = Date.now();
+  try {
+    await jpostToken(true);
+    steps.push({ step: 'token', ok: true, ms: Date.now() - t0 });
+  } catch (e) {
+    steps.push({ step: 'token', ok: false, message: e instanceof Error ? e.message : String(e) });
+    return { ok: false, steps };
+  }
+  const zip = String(params.zip || '1350063');
+  const z = await jpostZipToAddress({ zip });
+  steps.push({ step: 'searchcode', ok: z.count > 0, zip, count: z.count, first: z.addresses[0] || null });
+  const q = String(params.freeword || '東京都江東区有明');
+  const r = await jpostAddressToZip({ freeword: q });
+  steps.push({ step: 'addresszip', ok: r.count > 0, query: q, count: r.count, town_codes: r.town_codes.slice(0, 3) });
+  return { ok: steps.every((s) => s.ok), steps };
 }
 
 // ===== Sansan Open API（名刺管理・APIキー1本） =====
@@ -776,6 +881,19 @@ Deno.serve(async (req) => {
       return json(await probeSansan(body.params || {}));
     } catch (e) {
       return json({ ok: false, step: 'exception', message: e instanceof Error ? e.message : String(e) }, 200);
+    }
+  }
+
+  if (body.action === 'probe_jpost' || body.action === 'zip_to_address' || body.action === 'address_to_zip') {
+    if (!status.jpost.ok) return json({ ok: false, step: 'secrets', error: status.jpost.reason, message: status.jpost.reason }, 200);
+    try {
+      const params = (body.params || {}) as Record<string, string>;
+      const out = body.action === 'probe_jpost' ? await probeJpost(params)
+        : body.action === 'zip_to_address' ? await jpostZipToAddress(params)
+        : await jpostAddressToZip(params);
+      return json(out);
+    } catch (e) {
+      return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 200);
     }
   }
 

@@ -41,6 +41,17 @@ const TM_ENRICH = {
         registeredAddress: 26,     // 本店所在地(登記簿)
       },
     },
+    // ===== 日本郵便 郵便番号・デジタルアドレスAPI（API ver2.0） =====
+    // 役割は「会社を引く」ではなく「〒⇄住所の入力補助」。#24 に〒を入れたら都道府県・市区郡・町名を出す／住所から町域の〒候補を出す。
+    // 法人番号のある会社の〒・住所は国税庁APIで埋まるため、主戦場は法人番号の無い会社・支店・入力時の確認（2026-09-11 の実測で優先順位を決めた）。
+    // 🔴Function側のパスは /api/v2/（v1 は旧APIで ver2.0 の鍵だと 401）。逆引きは町名まで（番地を含めると404）。
+    jpost: {
+      label: '日本郵便 郵便番号・デジタルアドレスAPI',
+      keyName: 'JPOST_CLIENT_ID',
+      needs: '郵便番号7桁（〒→住所）／都道府県＋町名（住所→〒）',
+      note: '〒→都道府県・市区郡・町名（カナ付き）。事業所個別〒は事業所名、ビル階層別〒はビル名を返す。会社検索の取得元ではないので fetchCompany には使わない',
+      map: { zip_code: 24, address: 25 },   // 供給できる項目（表示用）。値の反映は zipToAddress／addressToZip 経由
+    },
     // ===== 国税庁 適格請求書発行事業者公表システム Web-API =====
     // 🔴他のAPIと役割が違う。「値を埋める」のではなく **登録の失効・取消を見張る** ためのもの。
     //   インボイスは登録後に失効・取消がありうる（塩田さんの移行時点で失効13社・他社番号14社を検出済み）。
@@ -168,7 +179,7 @@ const TM_ENRICH = {
 
   // 出所の印。履歴の changed_by「名前(印)」に付け、出所バッジ（provenanceOf）がこれを読む
   badgeLabel(provider) {
-    return ({ kokuzei: '国税庁API', invoice: '国税庁API', gbizinfo: 'gBizINFO API', sansan: 'Sansan API', sansan_open: 'Sansan API' })[provider] || '外部API';
+    return ({ kokuzei: '国税庁API', invoice: '国税庁API', gbizinfo: 'gBizINFO API', sansan: 'Sansan API', sansan_open: 'Sansan API', jpost: '郵便番号API' })[provider] || '外部API';
   },
 
   // 疎通状況のキャッシュ（画面表示用）。null=未確認
@@ -224,6 +235,29 @@ const TM_ENRICH = {
     if (d.error) throw new Error(d.error);
     if (!d.record) return null;
     return { provider, values: this.toFieldValues(provider, d.record), raw: d.record };
+  },
+
+  // ===== 郵便番号API（〒⇄住所の入力補助） =====
+  // 🔴取得した値は勝手に保存しない。呼び出し側（TorihikisakiView.wirePostalAssist）が案内を出し、人が「反映」を押したら未保存の変更に入る
+  async jpostCall(action, params) {
+    if (!this.available('jpost')) {
+      const why = (this.status && this.status.jpost && this.status.jpost.reason) || '未接続';
+      throw new Error(`${this.PROVIDERS.jpost.label} は利用できません（${why}）`);
+    }
+    const res = await this.fnClient().functions.invoke(this.fnName(), { body: { action, params } });
+    if (res.error) throw new Error(res.error.message || String(res.error));
+    const d = res.data || {};
+    if (d.error) throw new Error(d.error);
+    return d;
+  },
+  // 〒（7桁）→ {zip, count, addresses:[{pref_name, city_name, town_name, biz_name, is_business, is_building, …}]}
+  zipToAddress(zip) { return this.jpostCall('zip_to_address', { zip: String(zip || '') }); },
+  // 都道府県＋町名（番地を含めない）→ {town_codes:[…], building_codes:[…], business_codes:[…]}
+  addressToZip(pref, town) { return this.jpostCall('address_to_zip', { pref: String(pref || ''), town: String(town || '') }); },
+  // 住所欄から町名までを切り出す（数字・「四丁目」等・ハイフン類の手前。postal_check.py の town_part と同じ規則）
+  townPart(line) {
+    const s = String(line || '').replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[\s　]/g, '');
+    return s.split(/[0-9]|[一二三四五六七八九十]*丁目|[-‐−–—ー－]/)[0] || '';
   },
 
   // APIの返却レコード → {項目No: 値}（PROVIDERS[].map に従う。ネスト表記 'ss.xxx' に対応）
@@ -383,6 +417,10 @@ const TM_ENRICH = {
     kokuzei: {
       always: ['法人番号', '正式社名', '本社郵便番号', '本社住所', '法人/個人区分', '国内/海外区分'],
       sometimes: '社名カナ（フリガナは2018年以降の登録分が中心）。閉鎖・合併は raw の _closeDate／_successorCorporateNumber で分かる',
+    },
+    jpost: {
+      always: ['〒→都道府県・市区郡・町名'],
+      sometimes: '住所→〒は町名まで（番地を含めない）で引く。ビル階層別・事業所個別の〒は別枠。本番もIP制限なし（2026-09-11 実測）',
     },
     gbizinfo: {
       always: ['法人番号', '正式社名', '社名カナ', '本社郵便番号', '本社住所'],

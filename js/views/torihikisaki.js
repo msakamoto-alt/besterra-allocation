@@ -1058,6 +1058,7 @@ const TorihikisakiView = {
   provenanceOf(changedBy) {
     const s = String(changedBy || '');
     if (/\(gBizINFO/i.test(s)) return ['api', 'gBizINFO API'];
+    if (/\(郵便番号API/.test(s)) return ['api', '郵便番号API'];   // 〒⇄住所の入力補助（2026-09-11）
     if (/\(Sansan/i.test(s)) return ['api', 'Sansan API'];
     if (/\(国税庁|\(invoice/i.test(s)) return ['api', '国税庁API'];
     if (/\(自動判定\)/.test(s)) return ['auto', '自動判定'];
@@ -1350,6 +1351,108 @@ const TorihikisakiView = {
     }
   },
 
+  // API由来の値を入力欄に入れ、出所の印を付ける（詳細=apiPaths／新規=apiPrefill）。人が触れば api.set 側で印が外れる
+  setApiValue(host, api, f, path, val, label) {
+    api.set(f, path, val);
+    if (this.isNew) { this.apiPrefill = this.apiPrefill || {}; this.apiPrefill[path] = { val: String(val), label }; }
+    else this.apiPaths[path] = label;
+    const el = host.querySelector(`[data-path="${CSS.escape(path)}"]`);
+    if (el && el.value !== String(val)) el.value = String(val);
+  },
+
+  // 〒⇄住所の入力補助（郵便番号API・2026-09-11）。#24 本社郵便番号の欄の下に案内を出す。
+  //   〒を7桁打ち終えた → 〒→住所を引いて整合を見せ、「住所に反映」で都道府県・市区郡・町名を入れる
+  //   〒が空で住所がある → 「住所から〒を探す」で町域の候補（ビル階層別・事業所個別は除く）を出し、押した候補を入れる
+  //   🔴API未接続なら何も出さない（画面は手入力で動き続ける）。開いただけでは照会しない（既存データの点検はバッチ postal_check.py の役目）。
+  //   値は人が押したときだけ未保存の変更に入る（保存で確定・履歴の changed_by に「(郵便番号API)」の印）
+  wirePostalAssist(host, ownerOf, api, refreshBadge) {
+    const ZIP = 'company.postal_code', PREF = 'company.prefecture', LINE = 'company.address_line';
+    const zipEl = host.querySelector(`[data-path="${ZIP}"]`);
+    const fZip = ownerOf[ZIP], fAddr = ownerOf[PREF];
+    if (!zipEl || zipEl.disabled || !fZip || !fAddr) return;
+    let box = zipEl.parentElement.querySelector('.zipassist');
+    if (!box) { box = document.createElement('div'); box.className = 'mf subnote zipassist'; zipEl.parentElement.appendChild(box); }
+    const label = TM_ENRICH.badgeLabel('jpost');
+    const norm7 = v => String(v || '').replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\D/g, '');
+    const put = (f, path, val) => { this.setApiValue(host, api, f, path, val, label); refreshBadge(f); };
+    const esc = s => this.esc(s);
+    let timer = null;
+
+    const showZip = async (zip) => {
+      box.textContent = '〒を照会中…';
+      try {
+        const r = await TM_ENRICH.zipToAddress(zip);
+        const a = (r.addresses || [])[0];
+        if (!a) { box.innerHTML = `<span class="badge b-amber">該当なし</span> 〒${esc(zip)} は郵便番号データにありません（廃止・桁ずれの可能性）`; return; }
+        const pref = String(api.get(PREF) || '').trim(), line = String(api.get(LINE) || '').trim();
+        const apiTown = `${a.city_name || ''}${a.is_business || a.is_building ? '' : (a.town_name || '')}`;
+        const tag = a.is_business ? `<span class="badge b-slate">事業所個別〒: ${esc(a.biz_name)}</span>`
+          : a.is_building ? `<span class="badge b-slate">ビル階層別〒: ${esc(a.town_name)}</span>` : '';
+        const prefNg = pref && pref !== a.pref_name;
+        const cityNg = line && a.city_name && TM_ENRICH.normAddr(line).indexOf(TM_ENRICH.normAddr(a.city_name)) < 0;
+        const state = !pref && !line ? '<span class="badge b-amber">住所が空</span>'
+          : prefNg ? `<span class="badge b-amber">都道府県が違う（入力=${esc(pref)}）</span>`
+          : cityNg ? '<span class="badge b-amber">市区郡が住所に見当たらない</span>'
+          : '<span class="badge b-green">住所と整合</span>';
+        const btnLabel = !pref && !line ? '住所に反映（都道府県＋市区郡・町名）' : (prefNg || cityNg) ? '都道府県だけ反映（住所は目視で直す）' : '';
+        box.innerHTML = `〒${esc(zip)} → <b>${esc(a.pref_name || '')}${esc(apiTown)}</b> ${tag} ${state}` +
+          (r.count > 1 ? `<span class="mf">（他 ${r.count - 1} 町域）</span>` : '') +
+          (btnLabel ? ` <button type="button" class="btn btn-sm" data-zipapply>${esc(btnLabel)}</button>` : '');
+        const b = box.querySelector('[data-zipapply]');
+        if (b) b.onclick = () => {
+          if (a.pref_name) put(fAddr, PREF, a.pref_name);
+          if (!line && apiTown) put(fAddr, LINE, apiTown);
+          box.innerHTML = `<span class="badge b-green">反映しました</span> 番地・建物を続けて入力し、「保存」で確定します（出所は「${esc(label)}」と記録されます）`;
+        };
+      } catch (e) { box.innerHTML = `<span class="badge b-amber">照会失敗</span> ${esc(String(e.message || e))}`; }
+    };
+
+    const showReverse = () => {
+      const pref = String(api.get(PREF) || '').trim(), line = String(api.get(LINE) || '').trim();
+      const town = TM_ENRICH.townPart(line);
+      if (!pref && !town) { box.innerHTML = ''; return; }
+      box.innerHTML = `<button type="button" class="btn btn-sm" data-zipsearch>住所から〒を探す（${esc(pref + town)}）</button>`;
+      box.querySelector('[data-zipsearch]').onclick = async () => {
+        box.textContent = '〒を照会中…';
+        try {
+          const r = await TM_ENRICH.addressToZip(pref, town);
+          const cands = r.town_codes || [];
+          if (!cands.length) {
+            box.innerHTML = `<span class="badge b-amber">候補なし</span> 「${esc(pref + town)}」は郵便番号データと合いません（表記・旧町名の可能性）` +
+              ((r.building_codes || []).length ? `<span class="mf">　ビル階層別〒 ${r.building_codes.length}件は除外</span>` : '');
+            return;
+          }
+          const shown = cands.slice(0, 8);
+          box.innerHTML = `候補 ${cands.length}件${cands.length > 8 ? '（先頭8件）' : ''}: ` +
+            shown.map((c, i) => `<button type="button" class="btn btn-sm" data-zippick="${i}">〒${esc(c.zip_code)} ${esc(c.city_name || '')}${esc(c.town_name || '')}</button>`).join(' ') +
+            (cands.length > 1 ? '<span class="mf">　町名まで確定してから選んでください</span>' : '');
+          box.querySelectorAll('[data-zippick]').forEach(bt => bt.onclick = () => {
+            const c = shown[+bt.dataset.zippick];
+            put(fZip, ZIP, c.zip_code);
+            box.innerHTML = `<span class="badge b-green">〒${esc(c.zip_code)} を入れました</span> 「保存」で確定します（出所は「${esc(label)}」と記録されます）`;
+          });
+        } catch (e) { box.innerHTML = `<span class="badge b-amber">照会失敗</span> ${esc(String(e.message || e))}`; }
+      };
+    };
+
+    const render = async (auto) => {
+      await TM_ENRICH.probe();
+      if (!TM_ENRICH.available('jpost')) { box.innerHTML = ''; return; }
+      const zip = norm7(zipEl.value);
+      if (/^\d{7}$/.test(zip)) {
+        if (auto) { showZip(zip); return; }
+        box.innerHTML = '<button type="button" class="btn btn-sm" data-ziplookup>〒から住所を確認</button>';
+        box.querySelector('[data-ziplookup]').onclick = () => showZip(zip);
+        return;
+      }
+      if (!zip) { showReverse(); return; }
+      box.innerHTML = '';
+    };
+    zipEl.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => render(true), 400); });
+    [PREF, LINE].forEach(p => { const el = host.querySelector(`[data-path="${p}"]`); if (el) el.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => render(false), 400); }); });
+    render(false);
+  },
+
   // 入力欄の配線（パス方式）。data-path=編集値・data-gen=自動生成・data-tmk-type=種別チェック
   wireFieldInputs(host, fields, api) {
     const ownerOf = {};
@@ -1406,6 +1509,7 @@ const TorihikisakiView = {
         }
       });
     });
+    this.wirePostalAssist(host, ownerOf, api, refreshBadge);   // 〒⇄住所の入力補助（郵便番号API）
     // 自動生成: 半角カナ=全角カナから機械変換（99.2%一致を実測済み）・半角社名=正式社名から候補
     host.querySelectorAll('[data-gen]').forEach(btn => {
       btn.onclick = () => {
