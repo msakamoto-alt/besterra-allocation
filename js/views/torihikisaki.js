@@ -1689,9 +1689,9 @@ const TorihikisakiView = {
       <div class="sec"><h3>文書（Boxリンク）</h3>
         <div class="mf" style="font-size:11px;margin-bottom:8px">許可証PDF・契約書PDF・名刺画像のBox共有リンクを登録します（ファイル本体はBoxに置く）</div>
         <div id="tmk-rc-document"></div></div>
-      <div class="sec"><h3>外部APIで補完</h3>
+      <div class="sec"><h3>外部APIで照合・補完</h3>
         <div class="mf" style="font-size:11px;margin-bottom:8px">法人番号（国税庁・gBizINFO）／社名（Sansan名刺）で照会します。<b>空欄だけ</b>を候補として提示し、既存の値は上書きしません</div>
-        <button class="btn btn-sm" id="tmk-enrich-run" ${(c.corporate_number || c.official_name) ? '' : 'disabled title="法人番号も社名も無いため照会できません"'}>🔎 APIで補完</button>
+        <button class="btn btn-sm" id="tmk-enrich-run" ${(c.corporate_number || c.official_name) ? '' : 'disabled title="法人番号も社名も無いため照会できません"'}>🔎 APIで照合・補完</button>
         <div id="tmk-enrich-result" style="margin-top:8px"></div></div>
       <div class="sec"><h3>システム連携状況</h3><div class="mf" style="font-size:11px;margin-bottom:8px">人は編集不可・システム側の状態</div>${this.slinkHtml()}</div>
      </div>
@@ -2126,9 +2126,10 @@ const TorihikisakiView = {
     b.innerHTML = this.histRowsHtml(rows);
   },
 
-  // ===== 外部APIでの補完（既存社） =====
-  // 🔴出所ガバナンス: 取得値は「提案」。空欄だけを候補にし、採用は人が選ぶ。
-  //   経理が確定させた値をAPIが黙って上書きしないための決めごと（ブリーフのモック GOV と同じ思想）。
+  // ===== 外部APIでの照合・補完（既存社＝会社ごとの API更新チェック） =====
+  // 🔴出所ガバナンス: 取得値は「提案」。採用は人が選ぶ。経理が確定させた値をAPIが黙って上書きしないための決めごと。
+  //   2026-09-11 坂本さん指示で「空欄だけ」から広げた: 埋まっている項目も一覧の API更新チェックと同じ判定（TM_ENRICH.judge）で突き合わせ、
+  //   空欄の補完（既定で選択）／マスタ側の誤り（既定で選択）／不一致・要確認（既定は外す＝人が見て選ぶ）／一致（畳む）／登記記録の閉鎖等（採用不可の警告）を同じ欄に出す。
   async runEnrich() {
     const box = this.el('tmk-enrich-result');
     const btn = this.el('tmk-enrich-run');
@@ -2155,67 +2156,103 @@ const TorihikisakiView = {
       const merged = {};
       const from = {};
       const fromKey = {};
+      const rawBy = {};
       for (const p of usable) {
         const got = await TM_ENRICH.fetchCompany(p, {
           corporateNumber: num, soc: this.detail.company.sansan_soc || '', name,
         });
         if (!got) continue;
+        rawBy[p] = got.raw;
         Object.keys(got.values).forEach(no => {
           if (merged[no] === undefined) { merged[no] = got.values[no]; from[no] = TM_ENRICH.PROVIDERS[p].label; fromKey[no] = p; }
         });
       }
-      // 空欄の項目だけを候補にする（複数列の項目は列ごとに空欄判定）
-      const cand = [];
+      // 取得値と現在値の突合（一覧の API更新チェックと同じ判定）。複数列の項目（住所・カナ）は結合した現在値で判定し、反映は列ごとに分ける
+      const cur1 = path => { const v = this.rawByPath(path, this.detail); return v === null || v === undefined ? '' : String(v).trim(); };
+      const cand = [];   // 反映できる候補（空欄の補完・マスタ側の誤り・不一致）
+      const same = [];   // 一致（表示だけ）
       Object.keys(merged).forEach(no => {
         const f = TM_META.FIELDS.find(x => x.no === +no);
         if (!f) return;
         const plan = this.editPlan(f);
         if (!plan) return;
+        const apiVal = String(merged[no]).trim();
         if (plan.kind === 'multi' && this.SPLIT_COLS[f.no]) {
-          this.splitValue(f, merged[no]).forEach(part => {
+          const parts = this.splitValue(f, apiVal);
+          if (!parts.length) return;
+          const curJoined = f.no === 25
+            ? [cur1('company.prefecture'), cur1('company.address_line'), cur1('company.building')].filter(Boolean).join(' ')
+            : cur1(`company.${parts[0].col}`);
+          const j = TM_ENRICH.judge(f.no, curJoined, apiVal);
+          if (j.state === 'same' || j.state === 'sameFuzzy') { same.push({ label: f.name, state: j.state, cur: curJoined }); return; }
+          parts.forEach(part => {
             const path = `company.${part.col}`;
-            const cur = this.rawByPath(path, this.detail);
-            if (cur !== null && String(cur).trim() !== '') return;   // 既存値は触らない
-            cand.push({ f, path, label: `${f.name}（${part.label}）`, val: part.val, src: from[no], srcKey: fromKey[no] });
+            const cur = cur1(path);
+            if (this.sameVal(cur || null, part.val)) return;   // この列は同じ
+            cand.push({ f, path, label: `${f.name}（${part.label}）`, val: part.val, cur, src: from[no], srcKey: fromKey[no],
+              state: cur ? j.state : 'fill', judgeLabel: cur ? j.label : '空欄を補完' });
           });
           return;
         }
         if (plan.kind !== 'single') return;
-        const cur = this.rawByPath(plan.path, this.detail);
-        if (cur !== null && String(cur).trim() !== '') return;   // 既存値は触らない
-        cand.push({ f, path: plan.path, label: f.name, val: merged[no], src: from[no], srcKey: fromKey[no] });
+        const cur = cur1(plan.path);
+        const j = TM_ENRICH.judge(f.no, cur, apiVal);
+        if (j.state === 'same' || j.state === 'sameFuzzy') { same.push({ label: f.name, state: j.state, cur }); return; }
+        cand.push({ f, path: plan.path, label: f.name, val: apiVal, cur, src: from[no], srcKey: fromKey[no], state: j.state, judgeLabel: j.label });
       });
+      const order = c => (this.STATE_STYLE[c.state] || { order: 9 }).order;
+      cand.sort((a, b) => order(a) - order(b));
       this._enrichCand = cand;
+      // 登記記録の閉鎖等（廃業・合併）は値の差異ではなく「この会社は存続しているか」の警告
+      const kok = rawBy.kokuzei || null;
+      const closed = kok && kok._closeDate
+        ? `<div class="alert warn" style="font-size:11px;margin:0 0 6px">⛔ 登記記録の閉鎖等: ${this.esc(kok._closeDate)} ${this.esc(kok._closeCause || '')}` +
+          `${kok._successorCorporateNumber ? `（承継先 ${this.esc(kok._successorCorporateNumber)}）` : ''}　廃業・合併の可能性。値を採用する前に取引状況を確認してください。</div>`
+        : '';
+      const n = st => cand.filter(c => c.state === st).length;
+      const nFuzzy = same.filter(x => x.state === 'sameFuzzy').length;
+      const sameHtml = same.length
+        ? `<details style="margin-top:6px;font-size:11px"><summary class="mf">一致 ${same.length}項目${nFuzzy ? `（うち表記ゆれのみ ${nFuzzy}）` : ''}</summary>` +
+          same.map(x => `<div class="mf">⚪ ${this.esc(x.label)}${x.state === 'sameFuzzy' ? '（表記ゆれのみ）' : ''}</div>`).join('') + '</details>'
+        : '';
       if (!cand.length) {
-        box.innerHTML = '<div class="mf" style="font-size:11px">埋められる空欄はありませんでした（取得できた項目は既に値が入っています）。</div>';
+        box.innerHTML = closed + `<div class="mf" style="font-size:11px">埋められる空欄はありません。不一致もありません（取得できた ${same.length}項目は全て一致）。</div>` + sameHtml;
         return;
       }
-      box.innerHTML = `<div style="font-size:11px;margin-bottom:6px">空欄 <b>${cand.length}件</b>の候補が見つかりました。採用すると「未保存の変更」に入ります（保存で確定・履歴に記録）。</div>` +
-        cand.map((c, i) => `<label class="ck" style="font-size:11px"><input type="checkbox" data-enr="${i}" checked>` +
-          `<span><b>${this.esc(c.label)}</b>: ${this.esc(c.val)} <span class="mf">(${this.esc(c.src)})</span></span></label>`).join('') +
-        '<button class="btn btn-sm btn-primary" id="tmk-enrich-apply" style="margin-top:6px">選んだ項目を反映</button>';
+      box.innerHTML = closed +
+        `<div style="font-size:11px;margin-bottom:6px">反映できる候補 <b>${cand.length}件</b>` +
+        `（空欄の補完 ${n('fill')}・マスタ側の誤り ${n('masterError')}・<b>不一致・要確認 ${n('mismatch')}</b>）。` +
+        '不一致は既定で外してあります。採用すると現在の値が置き換わり「未保存の変更」に入ります（保存で確定・履歴に記録）。</div>' +
+        cand.map((c, i) => {
+          const st = this.STATE_STYLE[c.state] || { badge: 'b-slate', mark: '' };
+          return `<label class="ck" style="font-size:11px;align-items:flex-start"><input type="checkbox" data-enr="${i}" ${c.state === 'mismatch' ? '' : 'checked'}>` +
+            `<span>${st.mark} <b>${this.esc(c.label)}</b> <span class="badge ${st.badge}">${this.esc(c.judgeLabel)}</span><br>` +
+            `${c.cur ? `<span class="old">${this.esc(c.cur)}</span> → ` : ''}<b>${this.esc(c.val)}</b> <span class="mf">(${this.esc(c.src)})</span></span></label>`;
+        }).join('') +
+        '<button class="btn btn-sm btn-primary" id="tmk-enrich-apply" style="margin-top:6px">選んだ項目を反映</button>' + sameHtml;
       this.el('tmk-enrich-apply').onclick = () => this.applyEnrich();
     } catch (e) {
       box.innerHTML = `<div class="alert warn" style="font-size:11px;margin:0">照会に失敗しました: ${this.esc(String(e.message || e))}</div>`;
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '🔎 APIで補完'; }
+      if (btn) { btn.disabled = false; btn.textContent = '🔎 APIで照合・補完'; }
     }
   },
 
   // 候補を未保存の変更（pending）へ入れる。DBへの反映は通常の「💾保存」を通す＝履歴も同じ経路で残る
   applyEnrich() {
     const box = this.el('tmk-enrich-result');
+    const picks = [...box.querySelectorAll('[data-enr]:checked')].map(cb => (this._enrichCand || [])[+cb.dataset.enr]).filter(Boolean);
+    if (!picks.length) { this.toast('選択された項目がありません'); return; }
+    const mis = picks.filter(c => c.state === 'mismatch');
+    if (mis.length && !confirm(`🔴 「不一致・要確認」${mis.length}件を含みます。現在の値がAPIの値に置き換わります（保存で確定・履歴に前の値が残ります）。\n\n` +
+      mis.map(c => `・${c.label}: ${c.cur} → ${c.val}`).join('\n') + '\n\nよろしいですか？')) return;
     let n = 0;
-    box.querySelectorAll('[data-enr]').forEach(cb => {
-      if (!cb.checked) return;
-      const c = (this._enrichCand || [])[+cb.dataset.enr];
-      if (!c) return;
+    picks.forEach(c => {
       this.pending[c.path] = String(c.val);
       this.apiPaths[c.path] = TM_ENRICH.badgeLabel(c.srcKey);   // 保存時に履歴へ「(国税庁API)」等の印＝出所バッジがAPIになる
       delete this.autoPaths[c.path];
       n++;
     });
-    if (!n) { this.toast('選択された項目がありません'); return; }
     this.renderDbody();
     this.refreshAiSide();
     box.innerHTML = `<div class="mf" style="font-size:11px">${n}件を反映しました。内容を確認して「💾 保存」を押してください。</div>`;
