@@ -274,3 +274,5 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 /* 〒⇄住所の入力補助（郵便番号API・2026-09-11）: 〒欄の下の案内と候補ボタン */
 #tab-torihikisaki .zipassist{margin-top:4px;line-height:1.9;font-size:11px}
 #tab-torihikisaki .zipassist .btn{margin:1px 2px;font-size:11px;padding:1px 8px}
+/* 金額欄（BIGINT: 資本金・売上高・与信限度額・与信使用状況）＝右寄せ・等幅数字（値は数字だけ・表示だけ3桁カンマ） 2026-09-11 */
+#tab-torihikisaki .ff input.amt{text-align:right;font-variant-numeric:tabular-nums;}

@@ -1025,6 +1025,22 @@ const TorihikisakiView = {
   },
   inputError(f, s) { return this.inputErrorDt(f.dtype, s); },
 
+  // 金額欄（BIGINT）の値と表示。値=数字だけ（全角数字・カンマ・空白を剥がす）／表示=3桁ごとのカンマ。
+  //   数字以外が混じる値は触らずそのまま返す（保存時にDBが弾く＝今までと同じ）。桁数に上限を置かないよう文字列で整形する
+  amtRaw(v) {
+    return String(v === null || v === undefined ? '' : v)
+      .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+      .replace(/[,，\s]/g, '');
+  },
+  amtFmt(v) {
+    const s = this.amtRaw(v);
+    if (!/^-?\d+$/.test(s)) return s;
+    const neg = s.startsWith('-'), d = neg ? s.slice(1) : s;
+    return (neg ? '-' : '') + d.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  },
+  // 項目が金額欄なら表示用に整える（API候補の前→後・確認ダイアログで使う）
+  amtIf(f, v) { return /^BIGINT/i.test((f && f.dtype) || '') ? this.amtFmt(v) : v; },
+
   sameVal(a, b) {
     const n = v => (v === null || v === undefined || v === '') ? null : v;
     const x = n(a), y = n(b);
@@ -1182,6 +1198,9 @@ const TorihikisakiView = {
     }
     // 自由記述（TEXT）は3行のテキストエリア＝改行して書ける（2026-09-08 坂本さん指示・備考など）
     if (dt === 'TEXT') return `<textarea data-path="${p}" rows="3"${dis}>${this.esc(v)}</textarea>`;
+    // 金額（BIGINT: 資本金・売上高・与信限度額・与信使用状況）は3桁ごとのカンマ付きで見せる（2026-09-11 坂本さん指示）。
+    //   保存する値は数字だけ＝入力時に amtRaw で剥がし、欄を離れたときに amtFmt で整える（入力中はカーソルを動かさない）
+    if (dt === 'BIGINT') return `<input type="text" inputmode="numeric" class="amt" data-path="${p}" data-amt="1" value="${this.esc(this.amtFmt(v))}"${dis}>`;
     const m = dt.match(/^(?:VARCHAR|CHAR)\((\d+)\)/);
     return `<input type="text" data-path="${p}" value="${this.esc(v)}" ${m ? `maxlength="${m[1]}"` : ''}${dis}>`;
   },
@@ -1357,7 +1376,7 @@ const TorihikisakiView = {
     if (this.isNew) { this.apiPrefill = this.apiPrefill || {}; this.apiPrefill[path] = { val: String(val), label }; }
     else if (this.pending[path] !== undefined) this.apiPaths[path] = label;   // 現在値と同じ（保存する変更が無い）なら印も残さない＝印は必ず未保存の変更と対で持つ
     const el = host.querySelector(`[data-path="${CSS.escape(path)}"]`);
-    if (el && el.value !== String(val)) el.value = String(val);
+    if (el) { const show = el.dataset.amt ? this.amtFmt(val) : String(val); if (el.value !== show) el.value = show; }
   },
 
   // 〒⇄住所の入力補助（郵便番号API・2026-09-11）。#24 本社郵便番号の欄の下に案内を出す。
@@ -1477,7 +1496,7 @@ const TorihikisakiView = {
           // 新規登録フォームには「保存済みの値」が無いので空に戻す
           const back = this.isNew ? '' : (this.editValOf(plan.path) || '');
           api.set(f, plan.path, back);
-          el.value = back;
+          el.value = el.dataset.amt ? this.amtFmt(back) : back;
         }
         refreshBadge(f);
         const row = el.closest('.ff') || el.parentElement;
@@ -1495,10 +1514,11 @@ const TorihikisakiView = {
       const f = ownerOf[inp.dataset.path];
       if (!f) return;
       const handler = () => {
-        api.set(f, inp.dataset.path, inp.value); refreshBadge(f);
+        api.set(f, inp.dataset.path, inp.dataset.amt ? this.amtRaw(inp.value) : inp.value); refreshBadge(f);
         syncLinked();                       // 連動でグレーになる欄をその場で切り替える
       };
       inp.addEventListener('input', handler);
+      if (inp.dataset.amt) inp.addEventListener('blur', () => { inp.value = this.amtFmt(inp.value); });
       if (inp.tagName === 'SELECT') inp.addEventListener('change', handler);
       if (this.fmt === 'Excel風グリッド') inp.addEventListener('keydown', e => {
         if (e.key === 'Enter' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -2227,7 +2247,7 @@ const TorihikisakiView = {
           const st = this.STATE_STYLE[c.state] || { badge: 'b-slate', mark: '' };
           return `<label class="ck" style="font-size:11px;align-items:flex-start"><input type="checkbox" data-enr="${i}" ${c.state === 'mismatch' ? '' : 'checked'}>` +
             `<span>${st.mark} <b>${this.esc(c.label)}</b> <span class="badge ${st.badge}">${this.esc(c.judgeLabel)}</span><br>` +
-            `${c.cur ? `<span class="old">${this.esc(c.cur)}</span> → ` : ''}<b>${this.esc(c.val)}</b> <span class="mf">(${this.esc(c.src)})</span></span></label>`;
+            `${c.cur ? `<span class="old">${this.esc(this.amtIf(c.f, c.cur))}</span> → ` : ''}<b>${this.esc(this.amtIf(c.f, c.val))}</b> <span class="mf">(${this.esc(c.src)})</span></span></label>`;
         }).join('') +
         '<button class="btn btn-sm btn-primary" id="tmk-enrich-apply" style="margin-top:6px">選んだ項目を反映</button>' + sameHtml;
       this.el('tmk-enrich-apply').onclick = () => this.applyEnrich();
@@ -2245,7 +2265,7 @@ const TorihikisakiView = {
     if (!picks.length) { this.toast('選択された項目がありません'); return; }
     const mis = picks.filter(c => c.state === 'mismatch');
     if (mis.length && !confirm(`🔴 「不一致・要確認」${mis.length}件を含みます。現在の値がAPIの値に置き換わります（保存で確定・履歴に前の値が残ります）。\n\n` +
-      mis.map(c => `・${c.label}: ${c.cur} → ${c.val}`).join('\n') + '\n\nよろしいですか？')) return;
+      mis.map(c => `・${c.label}: ${this.amtIf(c.f, c.cur)} → ${this.amtIf(c.f, c.val)}`).join('\n') + '\n\nよろしいですか？')) return;
     let n = 0;
     picks.forEach(c => {
       this.pending[c.path] = String(c.val);
