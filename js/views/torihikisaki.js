@@ -1690,7 +1690,7 @@ const TorihikisakiView = {
         <div class="mf" style="font-size:11px;margin-bottom:8px">許可証PDF・契約書PDF・名刺画像のBox共有リンクを登録します（ファイル本体はBoxに置く）</div>
         <div id="tmk-rc-document"></div></div>
       <div class="sec"><h3>外部APIで照合・補完</h3>
-        <div class="mf" style="font-size:11px;margin-bottom:8px">法人番号（国税庁・gBizINFO）／社名（Sansan名刺）で照会します。<b>空欄だけ</b>を候補として提示し、既存の値は上書きしません</div>
+        <div class="mf" style="font-size:11px;margin-bottom:8px">法人番号（国税庁・gBizINFO）／社名（Sansan名刺）で照会し、取得できた値を現在の値と突き合わせます。<b>空欄の補完・マスタ側の誤りは既定で選択、不一致は既定で外れています</b>。採用は人が選び、保存で確定します（履歴に前の値と出所が残ります）</div>
         <button class="btn btn-sm" id="tmk-enrich-run" ${(c.corporate_number || c.official_name) ? '' : 'disabled title="法人番号も社名も無いため照会できません"'}>🔎 APIで照合・補完</button>
         <div id="tmk-enrich-result" style="margin-top:8px"></div></div>
       <div class="sec"><h3>システム連携状況</h3><div class="mf" style="font-size:11px;margin-bottom:8px">人は編集不可・システム側の状態</div>${this.slinkHtml()}</div>
