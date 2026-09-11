@@ -41,6 +41,9 @@
 //   - 承認・反社ゲートは第1弾では掛けない（要決定⑤の推奨どおり）。掛けるときは buildRecord の手前で絞る
 //   - direct モード／company_ids 指定は対象の会社だけをハブ・SF から読む（全件読取をしない）。
 //     失敗は監査ログ ERROR と応答に残し、夜間の全件配信（sf_export_cron.sql）が取りこぼしを拾う
+//   - 全件配信（export・mode=full・company_ids 無し・limit 無し）は同時実行ガードで直列化する（2026-09-11）。
+//     夜間 cron の要求1本に対し関数が約1秒差で2回起動する事象（Supabase 側の二重配送・9/10・9/11）への対処。
+//     後から来た方は書かずに連携ログへ kind='skip'（見送り）を残して返す。ロック表・RPC は supabase/sf_export_lock.sql
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -51,7 +54,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-09-09.5'; // 連携ログ meta.version（画面の「版」に出る）
+const VERSION = '2026-09-11.1'; // 連携ログ meta.version（画面の「版」に出る）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -88,6 +91,7 @@ const KEEP_IF_EMPTY = new Set(['HubCompanyId__c', 'Name', 'Business_Partners_Cod
 const LOG = 'integration_log';   // 取引先マスタの連携ログ
 const SYSTEM = 'salesforce';
 const DIRECT_SETTLE_MS = 3000; // direct: 保存の残りのトランザクションが確定するのを待つ
+const FULL_LOCK_WINDOW_SEC = 120; // 全件配信の同時実行ガード：この秒数以内に別の全件配信が開始済みなら書かずに見送る（sf_export_lock.sql）
 
 type Admin = ReturnType<typeof createClient>;
 
@@ -354,7 +358,7 @@ function targetLabel(sf: Sf | null): string {
   return (Deno.env.get('SF_EXPORT_INSTANCE_URL') || '').replace(/^https?:\/\//, '');
 }
 // 記録の失敗は配信本体を巻き添えにしない（記録できたかは応答の log_written で可視化）
-async function logRun(admin: Admin, e: { kind: 'run' | 'error'; action: string; caller: string; source: unknown; sf: Sf | null;
+async function logRun(admin: Admin, e: { kind: 'run' | 'error' | 'skip'; action: string; caller: string; source: unknown; sf: Sf | null;
   counts?: Record<string, number | string>; companyIds?: string[] | null; reason?: unknown; message?: string; meta?: Record<string, unknown>; payload?: unknown; t0: number }): Promise<boolean> {
   const who = resolveSource(e.caller, e.source);
   try {
@@ -370,11 +374,20 @@ async function logRun(admin: Admin, e: { kind: 'run' | 'error'; action: string; 
   } catch (err) { console.error('連携ログ記録失敗（配信本体は継続）:', String((err as Error)?.message || err)); return false; }
 }
 
+// 全件配信ロックの解放（情報用・失敗しても本体を巻き添えにしない。判定は started_at の窓だけで行う）
+async function releaseLock(admin: Admin, mode: string): Promise<void> {
+  try {
+    const { error } = await admin.rpc('sf_export_release_lock', { p_mode: mode });
+    if (error) console.error('ロック解放失敗（無視）:', error.message);
+  } catch (err) { console.error('ロック解放失敗（無視）:', String((err as Error)?.message || err)); }
+}
+
 // ---------------- 本体 ----------------
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const t0 = Date.now();
   let logCtx: { admin: Admin; caller: string; source: unknown; action: string; sf: Sf | null } | null = null;
+  let heldLock: string | null = null; // 取得した全件配信ロックの mode（catch で解放するため外に置く）
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
@@ -407,6 +420,33 @@ Deno.serve(async (req) => {
     }
     const scope = onlyIds ? 'all' : String(body.scope || 'active');
     if (action !== 'dry_run') logCtx = { admin, caller, source: body.source, action, sf: null };
+
+    // --- 全件配信の同時実行ガード（2026-09-11・sf_export_lock.sql） ---
+    // 夜間 5:30 の pg_cron は要求を1本しか出していないのに、関数が約1秒差で2回起動する事象が 9/10・9/11 と続いた
+    // （Supabase 側の二重配送）。冪等なので結果は同じだが、同じ Account を同時に更新して行ロック競合になる芽がある。
+    // 1文の UPDATE で行ロックを取る RPC で直列化し、後から来た方は書かずに「見送り」を記録して返す。
+    // 対象は本当の全件だけ。即時配信（direct）・company_ids 指定・limit 付きの試し流しには掛けない
+    const needsLock = action === 'export' && mode === 'full' && !onlyIds && limit === 0;
+    let guardNote = needsLock ? 'あり（取得）' : '対象外';
+    if (needsLock) {
+      const holder = resolveSource(caller, body.source).email;
+      const { data: lk, error: lkErr } = await admin.rpc('sf_export_try_lock', { p_mode: 'full', p_holder: holder, p_window_sec: FULL_LOCK_WINDOW_SEC });
+      if (lkErr) {
+        // ロック表・RPC が未作成（sf_export_lock.sql 未実行）などは、ガード無しで配信を続ける（配信を止めない）。meta.guard に理由を残す
+        console.error('同時実行ガード取得失敗（ガード無しで続行）:', lkErr.message);
+        guardNote = `無し（${lkErr.message}）`.slice(0, 200);
+      } else {
+        const row = (Array.isArray(lk) ? lk[0] : lk) as { acquired?: boolean; lock_started_at?: string | null; lock_holder?: string | null } | null;
+        if (row && row.acquired === false) {
+          const msg = `同時実行ガード: ${row.lock_holder || '別の実行'} が ${row.lock_started_at || '?'} に全件配信を開始済み（${FULL_LOCK_WINDOW_SEC}秒以内）のため、この実行は書かずに見送りました`;
+          const logged = await logRun(admin, { kind: 'skip', action, caller, source: body.source, sf: null, t0, message: msg,
+            meta: { mode, scope, window_sec: FULL_LOCK_WINDOW_SEC, lock_started_at: row.lock_started_at || null, lock_holder: row.lock_holder || null } });
+          return json({ ok: true, action, mode, skipped: true, reason: msg, lock_started_at: row.lock_started_at || null, lock_holder: row.lock_holder || null,
+            log_written: logged, elapsed_ms: Date.now() - t0 });
+        }
+        heldLock = 'full';
+      }
+    }
 
     // --- 接続（org ガード込み）・ハブ読取・SF 現状読取 ---
     const sf = await sfConnect();
@@ -527,10 +567,11 @@ Deno.serve(async (req) => {
         wroteBack += c.length;
       }
     }
+    if (heldLock) { await releaseLock(admin, heldLock); heldLock = null; }
     const logged = await logRun(admin, { kind: 'run', action: 'export', caller, source: body.source, sf, t0,
       counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, changed: totalChanged },
       companyIds: onlyIds, reason: body.reason, payload,
-      meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty] } });
+      meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty], guard: guardNote } });
     return json({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
       targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
       failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack,
@@ -538,6 +579,7 @@ Deno.serve(async (req) => {
       log_written: logged, elapsed_ms: Date.now() - t0 });
   } catch (e) {
     const msg = String((e as Error)?.message || e);
+    if (heldLock && logCtx) { await releaseLock(logCtx.admin, heldLock); heldLock = null; }
     if (logCtx) {
       await logRun(logCtx.admin, { kind: 'error', action: logCtx.action, caller: logCtx.caller, source: logCtx.source, sf: logCtx.sf, t0, message: msg.slice(0, 500) });
     }

@@ -7,6 +7,7 @@
 --   run   … sf-export の1実行（配信・突合）。counts に件数、meta に接続先/版/方式（関数が毎回書く＝陳腐化しない）
 --   error … sf-export の失敗（message に本文）
 --   note  … 人が書く出来事の記録（登録方法・運用変更・不具合と復旧など）。画面「連携ログ」から追記できる
+--   skip  … 同時実行ガードで書かずに見送った実行（2026-09-11・sf_export_lock.sql）。配信の実績には数えない
 -- 書込: run/error は Edge Function（service_role・RLS 迂回）。note は admin / accounting が画面から。
 
 create table if not exists public.integration_log (
@@ -14,7 +15,7 @@ create table if not exists public.integration_log (
   at          timestamptz not null default now(),
   system      text not null,                 -- 'salesforce' など（将来 Bill One・奉行も同じ表に）
   target      text,                          -- 接続先（org 名・ID・sandbox か）
-  kind        text not null check (kind in ('run','error','note')),
+  kind        text not null check (kind in ('run','error','note','skip')),
   action      text,                          -- export / link / dry_run
   trigger     text,                          -- 自動（保存時・即時）／自動（夜間・全件）／手動（スクリプト）／手動（アプリ）
   actor       text,                          -- 関数名または人のメール

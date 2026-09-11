@@ -2959,6 +2959,8 @@ const TorihikisakiView = {
       return `${when}　<b>${this.esc(r.actor || '')}</b>${ev}　${this.esc(r.message || '')}`;
     }
     if (r.kind === 'error') return `${when}　<span class="badge b-amber">失敗</span> ${this.esc(r.action || '')}（${this.esc(r.trigger || '')}）${this.esc(r.message || '')}`;
+    // skip＝同時実行ガードで書かずに見送った実行（夜間の二重起動の片方）。配信の実績には数えない
+    if (r.kind === 'skip') return `${when}　<span class="badge b-slate">見送り</span> ${this.esc(r.action || '')}（${this.esc(r.trigger || '')}）${this.esc(r.message || '')}`;
     if (r.action === 'link') return `${when}　突合：キー付与 ${n('linked')}・失敗 ${n('failed')}（${this.esc(r.trigger || '')}）`;
     const scope = (r.company_ids && r.company_ids.length) ? `対象 ${r.company_ids.length}社` : '全件';
     return `${when}　配信：送信 ${n('sent')}・新規 ${n('created')}・更新 ${n('updated')}・失敗 ${n('failed')}${Number(c.code_conflict || 0) ? `・コード衝突 ${n('code_conflict')}` : ''}（${this.esc(r.trigger || '')}・${scope}${r.reason ? '・' + this.esc(r.reason) : ''}）`;
@@ -2973,9 +2975,9 @@ const TorihikisakiView = {
       const runs = rows.filter(r => r.kind === 'run');
       const notes = rows.filter(r => r.kind === 'note');
       const last = runs[0] || null;
-      const lastAny = rows.find(r => r.kind !== 'note') || null;
+      const lastAny = rows.find(r => r.kind !== 'note' && r.kind !== 'skip') || null;
       const days30 = Date.now() - 30 * 86400000;
-      const recent = rows.filter(r => r.kind !== 'note' && new Date(r.at).getTime() >= days30);
+      const recent = rows.filter(r => r.kind !== 'note' && r.kind !== 'skip' && new Date(r.at).getTime() >= days30);
       const byTrig = {};
       recent.forEach(r => { const k = r.trigger || '不明'; byTrig[k] = byTrig[k] || { runs: 0, errors: 0, sent: 0, failed: 0 }; if (r.kind === 'error') byTrig[k].errors++; else { byTrig[k].runs++; byTrig[k].sent += Number((r.counts || {}).sent || 0); byTrig[k].failed += Number((r.counts || {}).failed || 0); } });
       const fresh = lastAny && (Date.now() - new Date(lastAny.at).getTime()) < 7 * 86400000;
@@ -2997,7 +2999,7 @@ const TorihikisakiView = {
         `</div>` +
         `<div style="margin-top:8px"><b style="font-size:12px">直近30日の実績（契機別）</b>` +
         (trigRows ? `<table class="tbl" style="margin-top:4px"><thead><tr><th>契機</th><th>実行回数</th><th>送信社数</th><th>失敗</th><th>関数エラー</th></tr></thead><tbody>${trigRows}</tbody></table>` : '<div class="mf">まだ実績がありません</div>') + '</div>' +
-        `<div style="margin-top:8px"><b style="font-size:12px">最終配信</b><div class="mf" style="font-size:11.5px;line-height:1.7">${rows.filter(r => r.kind !== 'note').slice(0, 3).map(r => `<div>${this.ilogRunLine(r)}</div>`).join('') || '—'}</div></div>` +
+        `<div style="margin-top:8px"><b style="font-size:12px">最終配信</b><div class="mf" style="font-size:11.5px;line-height:1.7">${rows.filter(r => r.kind !== 'note' && r.kind !== 'skip').slice(0, 3).map(r => `<div>${this.ilogRunLine(r)}</div>`).join('') || '—'}</div></div>` +
         `<div style="margin-top:8px"><b style="font-size:12px">出来事の記録（人が書いたもの・新しい順）</b>` +
         (notes.length ? `<table class="tbl" style="margin-top:4px;table-layout:fixed;width:100%"><thead><tr><th style="width:130px">記録日時</th><th style="width:90px">出来事</th><th style="width:150px">記録者</th><th>内容</th></tr></thead><tbody>` +
           notes.slice(0, 8).map(r => `<tr style="cursor:default"><td class="tnum" style="white-space:normal">${this.esc(this.jstStamp(r.at))}</td><td class="tnum" style="white-space:normal">${this.esc(r.event_on || '')}</td><td class="mf" style="white-space:normal;word-break:break-all">${this.esc(r.actor || '')}</td><td class="mf" style="white-space:normal;word-break:break-word">${this.esc(r.message || '')}</td></tr>`).join('') + '</tbody></table>' : '<div class="mf">まだ記録がありません</div>') +
@@ -3018,7 +3020,7 @@ const TorihikisakiView = {
     const canNote = ['admin', 'accounting'].includes(Sync.role);
     wrap.innerHTML = `<div class="sub">ハブ→Salesforce 配信の実行記録と、出来事の記録。新しい順・最大300件。</div>` +
       `<div class="tool" style="margin:8px 0;display:flex;gap:8px;align-items:center"><span class="mf" style="font-size:11px">種類</span>` +
-      `<select class="inp" id="tmk-ilog-kind"><option value="">すべて</option><option value="run"${kind === 'run' ? ' selected' : ''}>配信・突合</option><option value="error"${kind === 'error' ? ' selected' : ''}>失敗</option><option value="note"${kind === 'note' ? ' selected' : ''}>出来事の記録</option></select></div>` +
+      `<select class="inp" id="tmk-ilog-kind"><option value="">すべて</option><option value="run"${kind === 'run' ? ' selected' : ''}>配信・突合</option><option value="error"${kind === 'error' ? ' selected' : ''}>失敗</option><option value="note"${kind === 'note' ? ' selected' : ''}>出来事の記録</option><option value="skip"${kind === 'skip' ? ' selected' : ''}>見送り（同時実行ガード）</option></select></div>` +
       (canNote ? `<div class="fcard" style="margin-bottom:10px"><b style="font-size:12px">出来事を記録する</b><div class="mf" style="font-size:11px">記録者＝${this.esc(Sync.email || '')}</div>` +
         `<textarea class="inp" id="tmk-ilog-note" rows="2" style="width:100%;margin-top:4px" placeholder="例: 本番 org 向けの書込用アプリを作成し、Secrets を差し替えた"></textarea>` +
         `<div style="margin-top:6px;display:flex;gap:8px;align-items:center"><span class="mf" style="font-size:11px">出来事の日付</span><input type="date" class="inp" id="tmk-ilog-date" value="${this.esc(this.jstToday())}" max="${this.esc(this.jstToday())}" style="width:150px">` +
@@ -3047,9 +3049,9 @@ const TorihikisakiView = {
       const nameByCid = {};
       (this.rows || []).forEach(r => nameByCid[r.company_id] = r.official_name);
       list.innerHTML = '<div class="tl">' + rows.map(r => {
-        const dot = r.kind === 'note' ? 'human' : (r.kind === 'error' || Number((r.counts || {}).failed || 0) > 0 ? 'create' : 'approve');
+        const dot = r.kind === 'note' ? 'human' : r.kind === 'skip' ? '' : (r.kind === 'error' || Number((r.counts || {}).failed || 0) > 0 ? 'create' : 'approve');
         const cids = (r.company_ids || []).slice(0, 5).map(c => `<a data-hcid="${this.esc(c)}" style="cursor:pointer;text-decoration:underline">${this.esc(nameByCid[c] || c)}</a>`).join('、') + ((r.company_ids || []).length > 5 ? ` ほか${r.company_ids.length - 5}社` : '');
-        const meta = r.kind === 'run' && r.meta ? `<span class="mf"> ／ ${this.esc(r.target || '')}・v${this.esc(r.meta.version || '?')}・${r.duration_ms ? (r.duration_ms / 1000).toFixed(1) + '秒' : ''}</span>` : '';
+        const meta = (r.kind === 'run' || r.kind === 'skip') && r.meta ? `<span class="mf"> ／ ${this.esc(r.target || '')}・v${this.esc(r.meta.version || '?')}・${r.duration_ms ? (r.duration_ms / 1000).toFixed(1) + '秒' : ''}</span>` : '';
         return `<div class="tlrow"><div class="tldot ${dot}"></div><div>${this.ilogRunLine(r)}${cids ? `<div class="mf">対象: ${cids}</div>` : ''}${meta}${this.ilogPayloadHtml(r)}</div></div>`;
       }).join('') + '</div>';
       list.querySelectorAll('[data-hcid]').forEach(a => a.onclick = () => this.openDetail(a.dataset.hcid));

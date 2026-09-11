@@ -118,6 +118,25 @@ sf-export の実行記録は**アプリ共通の監査ログ（audit_logs）で�
 5. **時刻ガード**（`supabase/integration_log_time_guard.sql`・実行済み）: 人からの insert は記録時刻＝now()・記録者＝ログイン情報・kind=note に強制、出来事の日付（event_on）は別列、未来は拒否。**記録時刻を人が指定してはいけない**
 6. 変更履歴 `company_history.changed_at` は timestamptz 化済み（`supabase/company_history_timestamptz.sql`・9/9）
 
+## 8. 全件配信の同時実行ガード（sf_export_lock.sql・2026-09-11）
+
+夜間 5:30 の pg_cron は `net.http_post` を1本しか出していない（`net._http_response` が1行）のに、関数 sf-export が約1秒差で
+**2回起動**する事象が 9/10・9/11 と2日続いた（連携ログ #28/#29・#35/#36）。cron の二重登録ではなく Supabase 側の二重配送。
+配信は冪等なので結果は同じだが、API 呼び出しが2倍になり、同じ Account を同時に更新して行ロック競合になる芽がある。
+**cron 設定は触らず、関数側で直列化**する。
+
+1. **SQL**（初回のみ・再実行可）: `supabase/sf_export_lock.sql` を SQL Editor に貼って Run（鍵は不要）。
+   ロック表 `sf_export_lock`（1行）と RPC `sf_export_try_lock`／`sf_export_release_lock` を作り、連携ログの kind に `skip` を足す
+2. **関数の再デプロイ**: `supabase/functions/sf-export/index.ts`（**v2026-09-11.1** 以降）を Via Editor で置き換え
+3. **確認**（翌朝 5:30 以降）: 画面「連携ログ」に **配信 1行（送信 2,339）＋見送り 1行**（グレーのバッジ「見送り」）。
+   見送りが出なければ二重配送が止まっただけ＝それも正常。「システム連携」の直近30日の実績には見送りは数えない
+
+- 仕組み: 1行のロック表を **1文の UPDATE** で取る。Postgres は行ロック待ちの後に WHERE を再評価するため、同時に2本来ても片方だけが取れる。
+  後から来た方は書かずに `kind='skip'` を1行残して 200（`skipped: true`）で返す。窓は 120 秒（全件配信は約 25 秒）
+- 対象は**本当の全件だけ**（export・mode=full・company_ids 無し・limit 無し）。即時配信（direct）・`--ids`・`--limit` の試し流しには掛けない
+- SQL を流す前に関数だけ先に置き換えても配信は止まらない（RPC が無ければ「ガード無し」で続行し、meta.guard に理由が残る）
+- 手動の `sf_export_call.py export` を夜間直後（2分以内）に流すと見送られる。応答の `reason` にその旨が出る
+
 ## 5. 本番へ向けるときのチェックリスト（未実施）
 
 - [ ] 書込専用 ECA＋連携専用ユーザーを本番に作成（システム管理者）→ Secrets を差し替え
