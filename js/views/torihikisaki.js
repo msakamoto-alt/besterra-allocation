@@ -2177,16 +2177,27 @@ const TorihikisakiView = {
       const from = {};
       const fromKey = {};
       const rawBy = {};
+      const provErr = {};   // 取得元ごとの失敗。片方が止まっていても（2026-09-16 gBizINFO の計画メンテナンス）他の取得元の結果で続ける
       for (const p of usable) {
-        const got = await TM_ENRICH.fetchCompany(p, {
-          corporateNumber: num, soc: this.detail.company.sansan_soc || '', name,
-        });
+        let got = null;
+        try {
+          got = await TM_ENRICH.fetchCompany(p, { corporateNumber: num, soc: this.detail.company.sansan_soc || '', name });
+        } catch (e) { provErr[p] = String(e.message || e); continue; }
         if (!got) continue;
         rawBy[p] = got.raw;
         Object.keys(got.values).forEach(no => {
           if (merged[no] === undefined) { merged[no] = got.values[no]; from[no] = TM_ENRICH.PROVIDERS[p].label; fromKey[no] = p; }
         });
       }
+      const failed = Object.keys(provErr);
+      if (failed.length === usable.length) {
+        // 全ての取得元が落ちた＝照会失敗（理由は取得元ごとに）
+        throw new Error(failed.map(k => `${TM_ENRICH.PROVIDERS[k].label}: ${provErr[k]}`).join(' ／ '));
+      }
+      const unreachable = failed.length
+        ? `<div class="alert warn" style="font-size:11px;margin:0 0 6px">⚠ ${failed.map(k => `${this.esc(TM_ENRICH.PROVIDERS[k].label)}（${this.esc(provErr[k])}）`).join('・')} は照会できませんでした。` +
+          '他の取得元の結果だけで判定しています。復旧後にもう一度押してください。</div>'
+        : '';
       // 取得値と現在値の突合（一覧の API更新チェックと同じ判定）。複数列の項目（住所・カナ）は結合した現在値で判定し、反映は列ごとに分ける
       const cur1 = path => { const v = this.rawByPath(path, this.detail); return v === null || v === undefined ? '' : String(v).trim(); };
       const cand = [];   // 反映できる候補（空欄の補完・マスタ側の誤り・不一致）
@@ -2236,10 +2247,10 @@ const TorihikisakiView = {
           same.map(x => `<div class="mf">⚪ ${this.esc(x.label)}${x.state === 'sameFuzzy' ? '（表記ゆれのみ）' : ''}</div>`).join('') + '</details>'
         : '';
       if (!cand.length) {
-        box.innerHTML = closed + `<div class="mf" style="font-size:11px">埋められる空欄はありません。不一致もありません（取得できた ${same.length}項目は全て一致）。</div>` + sameHtml;
+        box.innerHTML = unreachable + closed + `<div class="mf" style="font-size:11px">埋められる空欄はありません。不一致もありません（取得できた ${same.length}項目は全て一致）。</div>` + sameHtml;
         return;
       }
-      box.innerHTML = closed +
+      box.innerHTML = unreachable + closed +
         `<div style="font-size:11px;margin-bottom:6px">反映できる候補 <b>${cand.length}件</b>` +
         `（空欄の補完 ${n('fill')}・マスタ側の誤り ${n('masterError')}・<b>不一致・要確認 ${n('mismatch')}</b>）。` +
         '不一致は既定で外してあります。採用すると現在の値が置き換わり「未保存の変更」に入ります（保存で確定・履歴に記録）。</div>' +
@@ -2886,52 +2897,77 @@ const TorihikisakiView = {
     if (this.apiChk && this.apiChk.rows) this.renderApiCheckResult();
   },
 
-  async runApiCheck() {
+  // opts.retry=true: 取得元の不通で「照会失敗」または片方の取得元だけで判定した社を、もう一度照会する（復旧後に結果欄のボタンから）
+  async runApiCheck(opts = {}) {
+    if (this._chkBusy) { this.toast('照会中です。完了までお待ちください'); return; }
     const scope = this.el('tmk-chk-scope').value;
     const limit = +this.el('tmk-chk-limit').value;
     const btn = this.el('tmk-chk-run');
     const prog = this.el('tmk-chk-prog');
-    let targets = (this.rows || []).filter(r => !r.is_suspended && r.corporate_number);
-    if (scope === 'empty') {
-      targets = targets.filter(r => !r.address_line || !r.postal_code || !r.name_kana || !r.representative_name);
-    }
-    // 既にチェック済みの社は後回しにして、未チェックから進める
-    const doneIds = new Set((this.apiChk && this.apiChk.rows || []).map(r => r.company_id));
-    targets = targets.filter(r => !doneIds.has(r.company_id)).slice(0, limit);
-    if (!targets.length) { this.toast('対象がありません（この条件は確認済みです）'); return; }
-
-    btn.disabled = true;
     this.apiChk = this.apiChk || { rows: [], stat: {} };
     const out = this.apiChk.rows;
-    for (let i = 0; i < targets.length; i++) {
-      const r = targets[i];
-      prog.textContent = `照会中… ${i + 1} / ${targets.length}社`;
-      try {
-        // 国税庁（登記の正本・毎日更新）を先に、gBizINFO（代表者・資本金など）を後に。同じ項目は先に来た値を採る
-        const parts = [];
-        for (const p of ['kokuzei', 'gbizinfo']) {
-          if (!TM_ENRICH.available(p)) continue;
-          const got = await TM_ENRICH.fetchCompany(p, { corporateNumber: r.corporate_number });
-          if (got) parts.push({ provider: p, raw: got.raw });
-        }
-        if (!parts.length) {
-          out.push({ company_id: r.company_id, name: r.official_name, notfound: true, diffs: [] });
-        } else {
-          const rec = TM_ENRICH.mergeDiffRecords(parts);
-          const diffs = TM_ENRICH.diffCompany(r, rec);
-          // 登記記録の閉鎖等（廃業・合併）は値の差異ではなく「この会社は存続しているか」の警告（採用はできない）
-          if (rec._closeDate) diffs.unshift({ no: 58, label: '登記記録の閉鎖等', col: null, current: '有効',
-            api: `${rec._closeDate} ${rec._closeCause || ''}${rec._successorCorporateNumber ? '（承継先 ' + rec._successorCorporateNumber + '）' : ''}`.trim(),
-            state: 'closed', judgeLabel: '閉鎖・合併（要確認）', adopt: false, src: '国税庁API' });
-          out.push({ company_id: r.company_id, name: r.official_name, diffs });
-        }
-      } catch (e) {
-        out.push({ company_id: r.company_id, name: r.official_name, error: String(e.message || e), diffs: [] });
+    let targets = (this.rows || []).filter(r => !r.is_suspended && r.corporate_number);
+    if (opts.retry) {
+      const ids = new Set(out.filter(x => x.error || x.provErr).map(x => x.company_id));
+      targets = targets.filter(r => ids.has(r.company_id));
+      if (!targets.length) { this.toast('再チェックする社はありません'); return; }
+    } else {
+      if (scope === 'empty') {
+        targets = targets.filter(r => !r.address_line || !r.postal_code || !r.name_kana || !r.representative_name);
       }
-      await new Promise(res => setTimeout(res, 350));   // 外部APIへの集中を避ける
+      // 既にチェック済みの社は後回しにして、未チェックから進める
+      const doneIds = new Set(out.map(r => r.company_id));
+      targets = targets.filter(r => !doneIds.has(r.company_id)).slice(0, limit);
+      if (!targets.length) { this.toast('対象がありません（この条件は確認済みです）'); return; }
+    }
+
+    // 同じ社の前回の結果（照会失敗・片方だけで判定）は差し替える＝累計の社数は増やさない
+    const put = rec => { const k = out.findIndex(x => x.company_id === rec.company_id); if (k >= 0) out.splice(k, 1, rec); else out.push(rec); };
+    this._chkBusy = true;
+    btn.disabled = true;
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const r = targets[i];
+        prog.textContent = `照会中… ${i + 1} / ${targets.length}社`;
+        try {
+          // 国税庁（登記の正本・毎日更新）を先に、gBizINFO（代表者・資本金など）を後に。同じ項目は先に来た値を採る
+          // 🔴取得元ごとに受け止める: 片方が止まっていても（2026-09-16 gBizINFO の計画メンテナンスで全社が「照会失敗」になった）、
+          //   もう片方の結果で判定を続け、落ちた取得元は provErr に残して結果欄で知らせる
+          const parts = [];
+          const provErr = {};
+          for (const p of ['kokuzei', 'gbizinfo']) {
+            if (!TM_ENRICH.available(p)) continue;
+            try {
+              const got = await TM_ENRICH.fetchCompany(p, { corporateNumber: r.corporate_number });
+              if (got) parts.push({ provider: p, raw: got.raw });
+            } catch (e) { provErr[p] = String(e.message || e); }
+          }
+          const failed = Object.keys(provErr);
+          if (!parts.length && failed.length) {
+            // 全ての取得元が落ちた＝この社は照会失敗（理由は取得元ごとに残す）
+            put({ company_id: r.company_id, name: r.official_name, diffs: [],
+              error: failed.map(k => `${TM_ENRICH.badgeLabel(k)}: ${provErr[k]}`).join(' ／ ') });
+          } else if (!parts.length) {
+            put({ company_id: r.company_id, name: r.official_name, notfound: true, diffs: [] });
+          } else {
+            const rec = TM_ENRICH.mergeDiffRecords(parts);
+            const diffs = TM_ENRICH.diffCompany(r, rec);
+            // 登記記録の閉鎖等（廃業・合併）は値の差異ではなく「この会社は存続しているか」の警告（採用はできない）
+            if (rec._closeDate) diffs.unshift({ no: 58, label: '登記記録の閉鎖等', col: null, current: '有効',
+              api: `${rec._closeDate} ${rec._closeCause || ''}${rec._successorCorporateNumber ? '（承継先 ' + rec._successorCorporateNumber + '）' : ''}`.trim(),
+              state: 'closed', judgeLabel: '閉鎖・合併（要確認）', adopt: false, src: '国税庁API' });
+            put({ company_id: r.company_id, name: r.official_name, diffs, provErr: failed.length ? provErr : undefined });
+          }
+        } catch (e) {
+          put({ company_id: r.company_id, name: r.official_name, error: String(e.message || e), diffs: [] });
+        }
+        await new Promise(res => setTimeout(res, 350));   // 外部APIへの集中を避ける
+      }
+    } finally {
+      this._chkBusy = false;
+      btn.disabled = false;
     }
     prog.textContent = `完了（累計 ${out.length}社）`;
-    btn.disabled = false;
     this.renderApiCheckResult();
   },
 
@@ -2953,6 +2989,13 @@ const TorihikisakiView = {
     all.forEach(d => { stat[d.state] = (stat[d.state] || 0) + 1; });
     const notfound = this.apiChk.rows.filter(r => r.notfound).length;
     const errors = this.apiChk.rows.filter(r => r.error).length;
+    // 取得元の不通（gBizINFO の計画メンテナンス等）を件数だけで終わらせない: 失敗の理由は重複を畳んで先頭3件、
+    // 片方の取得元だけで判定した社は取得元ごとに数えて出す。どちらも「不通だった社を再チェック」で復旧後にやり直せる
+    const reasons = [...new Set(this.apiChk.rows.filter(r => r.error).map(r => r.error))].slice(0, 3);
+    const partial = {};
+    this.apiChk.rows.forEach(r => Object.keys(r.provErr || {}).forEach(k => { partial[k] = (partial[k] || 0) + 1; }));
+    const partialKeys = Object.keys(partial);
+    const wireRetry = () => { const rb = this.el('tmk-chk-retry'); if (rb) rb.onclick = () => this.runApiCheck({ retry: true }); };
 
     // 対応が要るものだけ上に出す（一致は畳む）
     const actionable = all.filter(d => d.state === 'fill' || d.state === 'masterError' || d.state === 'mismatch' || d.state === 'closed')
@@ -2963,6 +3006,13 @@ const TorihikisakiView = {
       `<div style="font-size:12px">照会 <b>${this.apiChk.rows.length.toLocaleString()}社</b>` +
       (notfound ? ` ／ 登記情報に該当なし ${notfound}社` : '') +
       (errors ? ` ／ <span style="color:var(--accent)">照会失敗 ${errors}社</span>` : '') + '</div>' +
+      (reasons.length || partialKeys.length
+        ? '<div class="mf" style="margin-top:6px;font-size:11px;line-height:1.7">' +
+          (reasons.length ? `照会失敗の理由: ${reasons.map(s => this.esc(s)).join('<br>')}<br>` : '') +
+          (partialKeys.length ? `⚠ 取得元の不通: ${partialKeys.map(k => `${this.esc(TM_ENRICH.badgeLabel(k))} ${partial[k]}社`).join('・')}（他の取得元の結果だけで判定しています）<br>` : '') +
+          '<button type="button" class="btn btn-sm" id="tmk-chk-retry" style="margin-top:4px">不通だった社を再チェック</button>' +
+          '</div>'
+        : '') +
       '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px">' +
         (stat.closed ? `<span>⛔ 閉鎖・合併 <b>${stat.closed}</b></span>` : '') +
         `<span>🟢 空欄を補完 <b>${stat.fill || 0}</b></span>` +
@@ -2973,6 +3023,7 @@ const TorihikisakiView = {
 
     if (!actionable.length) {
       box.innerHTML = summary + '<div class="fcard mf">対応が必要な差異はありませんでした。</div>';
+      wireRetry();
       return;
     }
 
@@ -3021,6 +3072,7 @@ const TorihikisakiView = {
     };
     this.el('tmk-chk-apply').onclick = () => this.applyApiCheck();
     upd();
+    wireRetry();
   },
 
   // 選択された差異をマスタへ反映（CSV取込と同じ経路＝履歴に残る）

@@ -230,11 +230,23 @@ const TM_ENRICH = {
     const res = await sb.functions.invoke(this.fnName(), {
       body: { action: 'fetch', provider, params },
     });
-    if (res.error) throw new Error(res.error.message || String(res.error));
+    if (res.error) throw new Error(this.readableError(provider, res.error.message || String(res.error)));
     const d = res.data || {};
-    if (d.error) throw new Error(d.error);
+    if (d.error) throw new Error(this.readableError(provider, d.error));
     if (!d.record) return null;
     return { provider, values: this.toFieldValues(provider, d.record), raw: d.record };
+  },
+
+  // 関数側の生のエラー文を人が読める文にする。
+  // 2026-09-16 実測: gBizINFO の計画メンテナンス中は API が案内ページ（HTML）へ転送され、関数が「Unexpected token '<' … is not valid JSON」を返した。
+  // 関数側（2026-09-16.1）でも見分けるが、旧版の関数が動いていても画面が読める言葉を出せるように、ここでも受け止める
+  readableError(provider, msg) {
+    const s = String(msg || '');
+    if (/Unexpected token '<'|is not valid JSON|<!DOCTYPE|<html/i.test(s)) {
+      const label = (this.PROVIDERS[provider] || {}).label || provider;
+      return `${label} が案内ページ（HTML）を返しました。メンテナンス中の可能性があります。時間をおいて再度お試しください`;
+    }
+    return s;
   },
 
   // ===== 郵便番号API（〒⇄住所の入力補助） =====

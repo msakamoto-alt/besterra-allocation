@@ -126,6 +126,7 @@ python "C:\Users\sakamoto\Box\m.sakamoto\Besterra\01_組織\ツール【統合�
 | `403 取得権限がありません` | ログインユーザーのロールが admin / accounting 以外 |
 | 国税庁: `HTTP 400: 0xx,…` | 本文のメッセージがそのまま原因（ID不正・パラメータ不正）。`nta_direct_probe.py` で手元から再現できる |
 | 国税庁: 社名カナが空 | フリガナは2018年以降の登録分が中心。古い法人は空で正常（手入力か gBizINFO の kana で補う） |
+| gBizINFO: `メンテナンス中です（API が案内ページへ転送…）`／旧版では `Unexpected token '<' … is not valid JSON` | gBizINFO の計画メンテナンス（2026-09-16 13:00〜21:00 で実測。API が 302 で maintenance.html へ転送され HTML が返る）。鍵や関数の不具合ではない。終了予定は https://info.gbiz.go.jp/ の「メンテナンス情報」。画面は国税庁の結果だけで判定を続け、結果欄の「不通だった社を再チェック」で復旧後にやり直せる（版 2026-09-16.1 で見分けを追加） |
 
 ## 5. 🔴 Change Feed の性質（Data Hub を使う場合のみ・実装方針に関わる）
 

@@ -52,7 +52,7 @@ const env = (k: string) => (Deno.env.get(k) || '').trim();
 // 🔴この関数の版。Secretsだけ更新して関数の再デプロイを忘れる事故が起きたため、
 //   status で版と対応アクションを返し、呼び出し側が「古い版がデプロイされている」と気づけるようにする。
 //   ※機能を足したらここも上げること。
-const FN_VERSION = '2026-09-11.1';
+const FN_VERSION = '2026-09-16.1';
 const FN_ACTIONS = ['status', 'fetch', 'check_invoice', 'probe_gbiz', 'probe_kokuzei', 'search_kokuzei', 'probe_sansan_open', 'probe_sansan',
   'probe_jpost', 'zip_to_address', 'address_to_zip'];
 
@@ -575,6 +575,7 @@ async function fetchGbiz(params: Record<string, string>) {
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`gBizINFO HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  assertGbizJson(res);
   const d = await res.json();
   const c = (d['hojin-infos'] || [])[0];
   if (!c) return null;
@@ -599,6 +600,19 @@ async function fetchGbiz(params: Record<string, string>) {
     _status: s(c.status),
     _close_date: s(c.close_date),
   };
+}
+
+// 🔴計画メンテナンス中は API が 302 で maintenance.html へ転送され、HTTP 200 の HTML が返る（2026-09-16 13:00〜21:00 実測）。
+//   そのまま res.json() すると「Unexpected token '<'」で原因が読めないため、先に見分けて人が読める文で投げる。
+//   fetch は転送を自動で追うので、転送の有無は res.redirected と最終 URL で判る
+function assertGbizJson(res: Response) {
+  if (res.redirected && /maintenance/i.test(res.url)) {
+    throw new Error('gBizINFO はメンテナンス中です（API が案内ページへ転送されました）。終了予定は https://info.gbiz.go.jp/ のメンテナンス情報で確認できます');
+  }
+  const ctype = res.headers.get('content-type') || '';
+  if (ctype && !/json/i.test(ctype)) {
+    throw new Error(`gBizINFO が JSON 以外（${ctype.split(';')[0]}）を返しました。メンテナンス中の可能性があります`);
+  }
 }
 
 // 🔴届出・認定情報（建設業許可を含む）は **基本情報とは別エンドポイント**（2026-08-26 実データで判明）。
@@ -637,6 +651,13 @@ async function probeGbiz(params: Record<string, unknown>) {
   }
   if (!res.ok) {
     return { ok: false, step: 'fetch', message: `取得に失敗しました（HTTP ${res.status}）`, detail: text.slice(0, 300) };
+  }
+  // メンテナンス中の案内ページ（HTML・HTTP 200）を JSON として読まない（2026-09-16 実測）
+  if (res.redirected && /maintenance/i.test(res.url)) {
+    return { ok: false, step: 'maintenance', message: 'gBizINFO はメンテナンス中です（API が案内ページへ転送されました）', detail: res.url };
+  }
+  if (!/json/i.test(res.headers.get('content-type') || '')) {
+    return { ok: false, step: 'fetch', message: 'gBizINFO が JSON 以外を返しました（メンテナンス中の可能性）', detail: text.slice(0, 300) };
   }
   const d = JSON.parse(text || '{}');
   const list = d['hojin-infos'] || [];
