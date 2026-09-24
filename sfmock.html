@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SF 案件・工事管理 モックアップ（レビュー）｜ベステラ統合管理ツール</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{ --navy:#1e3a8a; --line:#e2e8f0; }
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{ font-family:"Noto Sans JP","Yu Gothic","Meiryo",sans-serif; margin:0; background:#f1f5f9; color:#1e293b; overflow:hidden; }
+/* ===== ヘッダー（統合管理ツールと同一の赤グラデ）===== */
+.app-header{ background:linear-gradient(135deg,#991b1b 0%,#b91c1c 45%,#7f1d1d 100%); position:relative; overflow:hidden; flex:0 0 auto; }
+.app-header::before{ content:''; position:absolute; inset:0;
+  background:radial-gradient(circle at 80% 50%,rgba(255,255,255,.10) 0%,rgba(255,255,255,0) 50%),
+  repeating-linear-gradient(135deg,rgba(255,255,255,.04) 0,rgba(255,255,255,.04) 1px,transparent 1px,transparent 14px); pointer-events:none; }
+.app-header>*{ position:relative; z-index:1; }
+/* ===== 3カラム ===== */
+.shell{ display:flex; height:calc(100vh - 56px); }
+.rail{ flex:0 0 250px; background:#fff; border-right:1px solid var(--line); overflow-y:auto; }
+.stage{ flex:1 1 auto; overflow:auto; background:#e2e8f0; position:relative; }
+.side{ flex:0 0 360px; background:#fff; border-left:1px solid var(--line); display:flex; flex-direction:column; }
+/* ===== 左レール ===== */
+.rail-ttl{ font-size:11px; font-weight:700; color:#64748b; letter-spacing:.05em; padding:10px 12px 4px; }
+.proj{ display:block; width:100%; text-align:left; padding:8px 12px; border-left:3px solid transparent; cursor:pointer; background:none; border-top:none; border-right:none; border-bottom:none; }
+.proj:hover{ background:#f8fafc; }
+.proj.on{ background:#eff6ff; border-left-color:var(--navy); }
+.proj-name{ font-size:13px; font-weight:700; }
+.proj-sub{ font-size:11px; color:#64748b; }
+.pg{ display:flex; align-items:center; gap:6px; width:100%; text-align:left; padding:6px 12px 6px 20px; font-size:12.5px; cursor:pointer; background:none; border:none; }
+.pg:hover{ background:#f8fafc; }
+.pg.on{ background:#1e3a8a; color:#fff; }
+.pg.locked{ color:#94a3b8; cursor:not-allowed; }
+.pg-badge{ margin-left:auto; font-size:10px; font-weight:700; background:#dc2626; color:#fff; border-radius:9px; padding:0 6px; line-height:16px; min-width:16px; text-align:center; }
+.pg.on .pg-badge{ background:#fff; color:#dc2626; }
+.pg-badge.done{ background:#94a3b8; }
+/* ===== 画面（撮影画像＋クリック領域＋ピン）===== */
+.canvas-wrap{ position:relative; margin:12px auto; width:max-content; box-shadow:0 2px 14px rgba(15,23,42,.18); background:#fff; }
+.canvas-wrap img{ display:block; }
+.hot{ position:absolute; border-radius:3px; cursor:pointer; background:rgba(30,58,138,0); transition:background .12s; }
+.show-hot .hot{ background:rgba(30,58,138,.10); outline:1px dashed rgba(30,58,138,.45); }
+.hot:hover{ background:rgba(30,58,138,.20); }
+.hot.dead{ cursor:not-allowed; }
+.show-hot .hot.dead{ background:rgba(148,163,184,.10); outline:1px dashed rgba(148,163,184,.5); }
+.pin{ position:absolute; width:26px; height:26px; margin:-26px 0 0 -13px; border-radius:50% 50% 50% 2px; transform:rotate(-45deg);
+  background:#dc2626; color:#fff; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.35); cursor:pointer; display:flex; align-items:center; justify-content:center; }
+.pin span{ transform:rotate(45deg); font-size:11px; font-weight:700; }
+.pin.resolved{ background:#94a3b8; }
+.pin.active{ outline:3px solid #fbbf24; }
+.pin.stale{ background:#a16207; }
+.commenting .canvas-wrap{ cursor:crosshair; }
+.commenting .hot{ pointer-events:none; }
+/* ===== 右パネル ===== */
+.side-head{ flex:0 0 auto; border-bottom:1px solid var(--line); padding:10px 12px; }
+.side-body{ flex:1 1 auto; overflow-y:auto; padding:10px 12px; }
+.thread{ border:1px solid var(--line); border-radius:8px; padding:9px 10px; margin-bottom:10px; background:#fff; }
+.thread.active{ border-color:#fbbf24; box-shadow:0 0 0 2px rgba(251,191,36,.35); }
+.thread.resolved{ background:#f8fafc; opacity:.72; }
+.c-head{ display:flex; align-items:center; gap:6px; font-size:11px; color:#64748b; }
+.c-who{ font-weight:700; color:#1e293b; font-size:12px; }
+.c-body{ font-size:13px; white-space:pre-wrap; word-break:break-word; margin-top:3px; line-height:1.6; }
+.c-reply{ margin:6px 0 0 12px; padding-left:8px; border-left:2px solid var(--line); }
+.c-act{ font-size:11px; color:#2563eb; cursor:pointer; background:none; border:none; padding:0; }
+.c-act:hover{ text-decoration:underline; }
+.c-act.danger{ color:#dc2626; }
+.chip{ font-size:10px; font-weight:700; border-radius:4px; padding:1px 5px; }
+.chip-open{ background:#fee2e2; color:#b91c1c; }
+.chip-done{ background:#e2e8f0; color:#475569; }
+.chip-stale{ background:#fef3c7; color:#92400e; }
+/* ===== 新規コメントのポップオーバー ===== */
+.pop{ position:absolute; z-index:40; width:300px; background:#fff; border:1px solid #cbd5e1; border-radius:10px; box-shadow:0 10px 30px rgba(15,23,42,.25); padding:10px; }
+.pop textarea{ width:100%; height:78px; border:1px solid #cbd5e1; border-radius:6px; padding:6px 8px; font:inherit; font-size:13px; resize:vertical; }
+.btn{ border-radius:6px; padding:5px 12px; font-size:12.5px; font-weight:700; cursor:pointer; border:1px solid transparent; }
+.btn-primary{ background:var(--navy); color:#fff; }
+.btn-primary:hover{ background:#1d4ed8; }
+.btn-ghost{ background:#fff; color:#475569; border-color:#cbd5e1; }
+.btn-ghost:hover{ background:#f8fafc; }
+.btn-on{ background:#dc2626; color:#fff; }
+.toast{ position:fixed; right:16px; bottom:16px; z-index:60; background:#0f172a; color:#fff; font-size:13px; padding:9px 14px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.3); }
+.spin{ width:16px; height:16px; border:2px solid #cbd5e1; border-top-color:var(--navy); border-radius:50%; animation:sp .8s linear infinite; }
+@keyframes sp{ to{ transform:rotate(360deg); } }
+</style>
+</head>
+<body class="flex flex-col">
+
+<!-- ========== ログイン ========== -->
+<div id="login-screen" class="fixed inset-0 z-50 bg-slate-100 flex items-center justify-center">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-8 border border-slate-200">
+    <h1 class="text-xl font-black text-slate-800">SF 案件・工事管理 モックアップ</h1>
+    <p class="mt-1 text-sm text-slate-500">工事部・関係者レビュー用。統合管理ツールと同じアカウントでログインしてください。</p>
+    <form id="login-form" class="mt-6 space-y-4">
+      <div>
+        <label for="auth-email" class="block text-xs font-semibold text-slate-600 mb-1.5">メールアドレス</label>
+        <input type="email" id="auth-email" autocomplete="username" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label for="auth-password" class="block text-xs font-semibold text-slate-600 mb-1.5">パスワード</label>
+        <input type="password" id="auth-password" autocomplete="current-password" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <p id="login-error" class="text-sm text-red-600 hidden"></p>
+      <button type="submit" class="w-full bg-red-700 hover:bg-red-800 text-white font-bold py-2.5 rounded-lg">ログイン</button>
+    </form>
+    <p class="mt-5 text-xs text-slate-400">アカウントが無い方は統合管理ツールの管理者（企画部）へご連絡ください。</p>
+  </div>
+</div>
+
+<!-- ========== ヘッダー ========== -->
+<header class="app-header text-white px-4 py-2 flex items-center gap-3" style="height:56px">
+  <div>
+    <div class="font-black text-[15px] leading-tight">SF 案件・工事管理 モックアップ<span class="ml-2 text-[11px] font-medium opacity-80">レビュー用（dev6 の画面そのまま）</span></div>
+    <div class="text-[11px] opacity-80" id="hdr-sub">読み込み中…</div>
+  </div>
+  <div class="ml-auto flex items-center gap-3 text-[12px]">
+    <span id="admin-bar" class="hidden flex items-center gap-2">
+      <button id="btn-import" class="bg-white/15 hover:bg-white/25 border border-white/30 px-2.5 py-1 rounded" title="SF リポジトリで撮った scripts/mockup/out フォルダを選ぶと、画面を入れ替えます（管理者のみ）">dev6 の撮影を取り込む</button>
+      <input type="file" id="import-input" class="hidden" webkitdirectory directory multiple>
+      <span id="import-status" class="hidden bg-black/25 px-2 py-1 rounded"></span>
+    </span>
+    <span id="hdr-user" class="opacity-90"></span>
+    <a href="index.html" class="underline opacity-90 hover:opacity-100">統合管理ツールへ</a>
+    <button id="btn-logout" class="underline opacity-90 hover:opacity-100">ログアウト</button>
+  </div>
+</header>
+
+<!-- ========== 本体 ========== -->
+<div class="shell">
+  <!-- 左：工事と画面 -->
+  <nav class="rail">
+    <div class="rail-ttl">工事を選ぶ</div>
+    <div id="proj-list"></div>
+    <div class="rail-ttl mt-2">画面</div>
+    <div id="page-list"></div>
+    <div class="px-3 py-3 mt-2 border-t border-slate-200 text-[11px] text-slate-500 leading-relaxed">
+      画面はすべて dev6 の実物を撮ったものです。左メニュー・案件ツリー・案件構成・見積カードはクリックで移動できます。
+      <br><br>入力や保存はできません。気になったところは<strong>コメントを置く</strong>を押して画面を直接クリックしてください。
+      <br><br>🔒 の画面は dev6 の段階ゲートでまだ開かないものです（受注前・実行予算なし）。
+      <br><br>画面と書き込みはログインした人だけに見えます（社外には出ません）。
+    </div>
+  </nav>
+
+  <!-- 中央：画面 -->
+  <main class="stage" id="stage">
+    <div class="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 px-3 py-2 flex items-center gap-2 text-[12px]">
+      <span class="font-bold" id="screen-title">—</span>
+      <span class="text-slate-400" id="screen-sub"></span>
+      <div class="ml-auto flex items-center gap-2">
+        <button id="btn-comment" class="btn btn-ghost">💬 コメントを置く</button>
+        <button id="btn-hot" class="btn btn-ghost" title="クリックできる場所を光らせる">クリック先を表示</button>
+        <button id="btn-zoom" class="btn btn-ghost">幅に合わせる</button>
+      </div>
+    </div>
+    <div id="canvas-host"></div>
+  </main>
+
+  <!-- 右：コメント -->
+  <aside class="side">
+    <div class="side-head">
+      <div class="flex items-center gap-2">
+        <strong class="text-[13px]">コメント</strong>
+        <span id="c-count" class="text-[11px] text-slate-500"></span>
+        <div class="ml-auto flex gap-1">
+          <button id="tab-this" class="btn btn-primary" style="padding:3px 9px">この画面</button>
+          <button id="tab-all" class="btn btn-ghost" style="padding:3px 9px">すべて</button>
+        </div>
+      </div>
+      <label class="mt-2 flex items-center gap-1.5 text-[11.5px] text-slate-600">
+        <input type="checkbox" id="chk-open" class="rounded border-slate-400"> 未対応だけ
+      </label>
+    </div>
+    <div class="side-body" id="c-list"></div>
+    <div class="flex-none border-t border-slate-200 p-2.5">
+      <textarea id="c-new" rows="2" placeholder="この画面へのコメント（場所を指したいときは「コメントを置く」）" class="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-[13px] resize-none"></textarea>
+      <div class="flex justify-end mt-1.5">
+        <button id="c-send" class="btn btn-primary">投稿</button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>window.Sync = window.Sync || {};</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js" onerror="console.error('js/config.js が読めません（Supabase 未設定）')"></script>
+<script src="js/sfmock.js?v=20260925"></script>
+</body>
+</html>
