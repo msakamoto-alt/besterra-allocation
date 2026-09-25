@@ -124,6 +124,15 @@ body {
 .sfm-h-btn:hover { background: rgba(255, 255, 255, .25); }
 .sfm-h-stat { background: rgba(0, 0, 0, .25); padding: .25rem .5rem; border-radius: 4px; }
 
+.sfm-pagenote {
+    flex: 0 0 auto;
+    background: #fffbeb;
+    border-bottom: 1px solid #fde68a;
+    color: #92400e;
+    font-size: 11.5px;
+    line-height: 1.7;
+    padding: .35rem .75rem;
+}
 .sfm-shell { flex: 1 1 auto; display: flex; min-height: 0; }
 /* 画面は dev6（Lightning の 1 画面）の横幅を前提に組まれている。狭いと列が潰れるので下限を置き、
    足りなければ横にスクロールさせる（潰れた見た目にコメントが付くのを避ける） */
@@ -555,6 +564,25 @@ lightning-button.sfm-lg, lightning-button-icon.sfm-lg, lightning-icon.sfm-lg {
 .sfm-btn-icon-border-filled { background: #fff; border-color: #c9c7c5; }
 .sfm-btn-icon-border { border-color: #c9c7c5; }
 .sfm-btn-icon:disabled { color: #c9c7c5; cursor: default; }
+/* lightning-card（SLDS の枠）。中身を持つ唯一の lightning 部品 */
+lightning-card.sfm-lg { display: block; }
+.sfm-card {
+    display: block;
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: .25rem;
+    box-shadow: 0 2px 2px rgba(0, 0, 0, .05);
+}
+.sfm-card-head {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    padding: .75rem 1rem;
+    border-bottom: 1px solid #e5e5e5;
+}
+.sfm-card-ttl { font-size: 1rem; font-weight: 700; color: #181818; margin: 0; }
+.sfm-card-acts { margin-left: auto; display: flex; align-items: center; gap: .25rem; flex-wrap: wrap; }
+.sfm-card-body { padding: .75rem 1rem; }
 .sfm-glyph { display: inline-block; line-height: 1; color: inherit; }
 .sfm-glyph-x-small { font-size: .75rem; }
 .sfm-glyph-small { font-size: .875rem; }

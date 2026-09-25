@@ -111,11 +111,24 @@ window.SfMockLwc = (function () {
             if (apiProps.indexOf(nm) < 0) apiProps.push(nm);
             return kind + ' ' + nm;
         });
+        // @api がメソッドに付く形（親から child.refresh() を呼ぶための公開メソッド）。
+        // これを落とさないと装飾子が残って「Invalid or unexpected token」で部品ごと読めなくなる
+        out = out.replace(/@api\s+([A-Za-z_$][\w$]*)\s*\(/g, function (m, nm) {
+            if (apiProps.indexOf(nm) < 0) apiProps.push(nm);
+            return nm + '(';
+        });
         out = out.replace(/@api\s+([A-Za-z_$][\w$]*)\s*([;=])/g, function (m, nm, tail) {
             if (apiProps.indexOf(nm) < 0) apiProps.push(nm);
             return nm + ' ' + tail;
         });
         out = out.replace(/@track\s+/g, '');
+        // 落とし残した装飾子があれば、その行を名指しで言う（原因の分からない構文エラーにしない）
+        const leftover = out.split('\n').map(function (l, i) { return [i + 1, l]; })
+            .filter(function (p) { return /^\s*@[A-Za-z]/.test(p[1]); });
+        if (leftover.length) {
+            throw new Error(label + ': 外せていない装飾子があります → ' +
+                leftover.slice(0, 3).map(function (p) { return p[0] + '行目 ' + p[1].trim(); }).join(' / '));
+        }
 
         // --- export → 戻り値 --------------------------------------------------
         const cm = out.match(/export\s+default\s+class\s+([A-Za-z_$][\w$]*)/);
@@ -159,7 +172,7 @@ window.SfMockLwc = (function () {
 
     // ===================== 3. テンプレートの解釈 =====================
 
-    const DIRECTIVES = { 'for:each': 1, 'for:item': 1, 'for:index': 1, key: 1 };
+    const DIRECTIVES = { 'for:each': 1, 'for:item': 1, 'for:index': 1, key: 1, 'if:true': 1, 'if:false': 1 };
 
     function compileTemplate(htmlText, label) {
         const doc = new DOMParser().parseFromString(htmlText, 'text/html');
@@ -226,6 +239,16 @@ window.SfMockLwc = (function () {
             if (n.nodeType === 8) { i++; continue; }                       // コメント
             if (n.nodeType === 3) { appendText(n.textContent, scope, comp, out); i++; continue; }
             if (n.nodeType !== 1) { i++; continue; }
+
+            // if:true / if:false（原島さんの部品が使う古い書き方）。lwc:if の連鎖とは別で、単独で効く
+            if (n.hasAttribute('if:true') || n.hasAttribute('if:false')) {
+                const neg = n.hasAttribute('if:false');
+                let ok;
+                try { ok = !!resolve(unwrap(n.getAttribute(neg ? 'if:false' : 'if:true')), scope, comp); } catch (x) { ok = false; }
+                if (neg ? !ok : ok) renderOne(n, scope, comp, out);
+                i++;
+                continue;
+            }
 
             // lwc:if / lwc:elseif / lwc:else の連鎖（<template> でも通常要素でも同じ）
             if (n.hasAttribute('lwc:if')) {
@@ -309,7 +332,12 @@ window.SfMockLwc = (function () {
         }
 
         let node;
-        if (tag.indexOf('lightning-') === 0) {
+        if (tag === 'lightning-card') {
+            // 中身を持つ唯一の lightning 部品（既定スロット＋slot="actions"）
+            const kids = document.createDocumentFragment();
+            renderChildren(el.childNodes, scope, comp, kids);
+            node = makeLightning(tag, props, comp, kids);
+        } else if (tag.indexOf('lightning-') === 0) {
             node = makeLightning(tag, props, comp);
         } else if (tag.indexOf('c-') === 0) {
             node = mountChild(tag, props, comp);
@@ -661,6 +689,66 @@ window.SfMockLwc = (function () {
         };
     }
 
+    // lightning-card は中身を持つ（既定スロット＝本体・slot="actions"＝見出しの右）。
+    // ほかの lightning 部品と違い、子を描いて渡す必要がある
+    function buildCard(host) {
+        const art = document.createElement('article');
+        art.className = 'sfm-card';
+        const head = document.createElement('div');
+        head.className = 'sfm-card-head';
+        const ttl = document.createElement('h2');
+        ttl.className = 'sfm-card-ttl';
+        const acts = document.createElement('div');
+        acts.className = 'sfm-card-acts';
+        head.appendChild(ttl);
+        head.appendChild(acts);
+        const body = document.createElement('div');
+        body.className = 'sfm-card-body';
+        art.appendChild(head);
+        art.appendChild(body);
+        host.appendChild(art);
+        return {
+            host: host,
+            update: function (p, frag) {
+                ttl.textContent = txt(p.title);
+                ttl.style.display = p.title ? '' : 'none';
+                acts.replaceChildren();
+                body.replaceChildren();
+                if (!frag) return;
+                Array.prototype.slice.call(frag.childNodes).forEach(function (n) {
+                    const slot = n.nodeType === 1 ? n.getAttribute('slot') : null;
+                    if (slot === 'actions') acts.appendChild(n);
+                    else if (slot === 'footer') acts.appendChild(n);
+                    else body.appendChild(n);
+                });
+                head.style.display = p.title || acts.childNodes.length ? '' : 'none';
+            }
+        };
+    }
+
+    // lightning-formatted-number（金額・数値の整形表示）
+    function buildFormattedNumber(host) {
+        const s = document.createElement('span');
+        host.appendChild(s);
+        return {
+            host: host,
+            update: function (p) {
+                const v = Number(p.value);
+                if (p.value === null || p.value === undefined || p.value === '' || isNaN(v)) { s.textContent = ''; return; }
+                const style = p.formatStyle || 'decimal';
+                const opt = { style: style === 'percent-fixed' ? 'percent' : style };
+                if (opt.style === 'currency') opt.currency = p.currencyCode || 'JPY';
+                if (p.minimumFractionDigits !== undefined && p.minimumFractionDigits !== null) opt.minimumFractionDigits = Number(p.minimumFractionDigits);
+                if (p.maximumFractionDigits !== undefined && p.maximumFractionDigits !== null) opt.maximumFractionDigits = Number(p.maximumFractionDigits);
+                try {
+                    s.textContent = new Intl.NumberFormat('ja-JP', opt).format(v);
+                } catch (e) {
+                    s.textContent = v.toLocaleString('ja-JP');
+                }
+            }
+        };
+    }
+
     function buildLightning(tag) {
         const host = document.createElement(tag);
         host.__sfmBase = 'sfm-lg';
@@ -673,6 +761,8 @@ window.SfMockLwc = (function () {
         if (kind === 'button-icon') return buildButtonIcon(host);
         if (kind === 'icon') return buildIcon(host);
         if (kind === 'record-picker') return buildRecordPicker(host);
+        if (kind === 'card') return buildCard(host);
+        if (kind === 'formatted-number') return buildFormattedNumber(host);
         if (kind === 'spinner') {
             host.appendChild(document.createTextNode('読み込み中…'));
             return { host: host, update: function () {} };
@@ -686,7 +776,7 @@ window.SfMockLwc = (function () {
     }
 
     /** テンプレートの位置ごとに 1 つ作って使い回す（位置は描画順で数える＝テンプレートは毎回同じ順に走る） */
-    function makeLightning(tag, props, comp) {
+    function makeLightning(tag, props, comp, frag) {
         const n = (comp.lgSeq[tag] = (comp.lgSeq[tag] || 0) + 1);
         const key = tag + '#' + n;
         let rec = comp.lg[key];
@@ -695,7 +785,7 @@ window.SfMockLwc = (function () {
             comp.lg[key] = rec;
         }
         try {
-            rec.update(props);
+            rec.update(props, frag);
         } catch (e) {
             report('部品の更新（' + tag + '）', e);
         }

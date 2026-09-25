@@ -1,7 +1,7 @@
 /**
  * app.js — SF 案件・工事管理モックアップ（工事部レビュー用）の外側。
  *
- * 中身は **dev6 の部品そのもの**（koujiKagami / kagamiYukaPage / multiPicklist / kagamiData）。
+ * 中身は **dev6 の部品そのもの**（koujiKagami を起点に辿って集めた 13 部品＋共通 CSS）。
  * lwc-runtime.js が Salesforce の代わりに描き、sf-data.js が dev6 から録った応答を返す。
  * だから画面の移動・入力・計算は dev6 と同じ手つきで試せる（保存だけは手元で止まる）。
  *
@@ -22,23 +22,12 @@
     const BUCKET = 'sfmock';
     const $ = (id) => document.getElementById(id);
 
-    // 部品のファイル → タグ名（LWC の命名そのまま）
-    const PARTS = [
-        { tag: 'c-kouji-kagami', html: 'koujiKagami.html', js: 'koujiKagami.js', css: 'koujiKagami.css', label: 'koujiKagami' },
-        { tag: 'c-kagami-yuka-page', html: 'kagamiYukaPage.html', js: 'kagamiYukaPage.js', css: 'kagamiYukaPage.css', label: 'kagamiYukaPage' },
-        { tag: 'c-multi-picklist', html: 'multiPicklist.html', js: 'multiPicklist.js', css: 'multiPicklist.css', label: 'multiPicklist' }
-    ];
-    // 共通 CSS。koujiKagami.css と kagamiYukaPage.css が @import 'c/kagamiCss'; で読んでいるもので、
-    // 配色トークン（--bg-card など 20 個）と共有クラス（帯・チャート・買受グリッド）の実体がここにある。
-    // 先に入れないと色も並びも崩れるので、部品の CSS より前に流し込む。
-    const SHARED_CSS = 'kagamiCss.css';
-    // 差し替えない部品（原島さん作）。何の画面かは札に書いて隠さない
-    const PLACEHOLDERS = {
-        'c-exec-budget-workspace': '実行予算の作業画面（原島さん作の部品）',
-        'c-exec-p-o-workspace': '発注の作業画面（原島さん作の部品）',
-        'c-dekidaka-grid': '出来高検収の一覧（原島さん作の部品）',
-        'c-receipt-entry': '受領書の入力（原島さん作の部品）'
-    };
+    // 部品の一覧は**目次（manifest）から来る**。採取が koujiKagami を起点にテンプレートの c- タグと
+    // import 'c/…' を辿って集めたもので、dev6 に部品が増えてもこちら側を直さなくていい。
+    //   parts   … .html を持つ＝画面の部品（タグ名つき）
+    //   modules … .js だけ＝値のモジュール（c/kagamiData）
+    //   styles  … .css だけ＝共通スタイル（c/kagamiCss ＝配色トークンと共有クラス）
+    // 組み立てに失敗した部品だけ、その場で札に置き換える（黙って空白にしない）。
     // コメントの目次に並べる画面 → 部品自身の移動メソッド（段階ゲートを通すため直接 currentPage は触らない）
     const PAGES = [
         { key: 'anken', label: '案件管理', go: 'goAnken' },
@@ -50,6 +39,11 @@
         { key: 'yuka', label: '有価物管理', go: 'goYukabutsu' },
         { key: 'jinhaichi', label: '人員配置', go: 'goJinhaichiPage' }
     ];
+    // 画面ごとの一言。原島さん作の 3 画面は「表示は本物・保存はできない」ことを先に伝える
+    const HARASHIMA_NOTE = 'この画面（実行予算・発注管理・出来高検収）は原島さん作の部品です。'
+        + '表示は dev6 の実物どおりですが、保存・承認・発行は共有版では動きません。'
+        + '実際の動きは dev6 でご確認ください。';
+    const PAGE_NOTES = { jikko: HARASHIMA_NOTE, hacchu: HARASHIMA_NOTE, dekidaka: HARASHIMA_NOTE };
     const ALL_SITES = { key: 'all', label: '人員配置（全工事）', no: '全工事のガント', note: '左の帯なしの全画面表示' };
 
     const S = {
@@ -150,9 +144,10 @@
         const manifest = await grab('manifest.json', true);
         if (!manifest) return null;
         const names = ['apex.json', 'records.json', 'picklists.json', 'names.json', 'formulas.json'];
-        const srcNames = [SHARED_CSS];
-        PARTS.forEach((p) => { srcNames.push(p.html, p.js, p.css); });
-        srcNames.push('kagamiData.js');
+        const srcNames = [];
+        (manifest.styles || []).forEach((x) => srcNames.push(x.css));
+        (manifest.modules || []).forEach((m) => srcNames.push(m.js));
+        (manifest.parts || []).forEach((p) => [p.html, p.js, p.css].forEach((f) => { if (f) srcNames.push(f); }));
 
         const jsons = await Promise.all(names.map((n) => grab(n, true)));
         const srcs = await Promise.all(srcNames.map((n) => grab('src/' + n, false)));
@@ -219,7 +214,8 @@
     function injectCss() {
         // @import 'c/kagamiCss'; は LWC の書き方（ブラウザは辿れない）＝落として、共通 CSS を先頭に置く
         const strip = (t) => String(t || '').replace(/@import\s+['"]c\/[^'"]+['"]\s*;?/g, '');
-        const files = [SHARED_CSS].concat(PARTS.map((p) => p.css));
+        const m = S.bundle.manifest;
+        const files = (m.styles || []).map((x) => x.css).concat((m.parts || []).map((p) => p.css).filter(Boolean));
         const css = files.map((n) => '/* ' + n + ' */\n' + scopeCss(strip(S.bundle.src[n]), '#sfm-mount')).join('\n');
         const st = document.createElement('style');
         st.id = 'sfm-part-css';
@@ -230,10 +226,26 @@
     // ===================== 部品を組み立てる =====================
     function buildParts() {
         window.SfMockLwc.onError((where, e) => showErr('画面の処理でつまずきました（' + where + '）: ' + ((e && e.message) || e)));
-        Object.keys(PLACEHOLDERS).forEach((t) => window.SfMockLwc.registerPlaceholder(t, PLACEHOLDERS[t]));
-        window.SfMockLwc.defineFromSource('c/kagamiData', S.bundle.src['kagamiData.js'], 'kagamiData.js');
+        const man = S.bundle.manifest;
+        (man.modules || []).forEach((mod) => {
+            try {
+                window.SfMockLwc.defineFromSource(mod.name, S.bundle.src[mod.js], mod.js);
+            } catch (e) {
+                showErr('モジュールを読めませんでした: ' + mod.name + '（' + e.message + '）');
+            }
+        });
         window.SfMockData.install(S.bundle);
-        PARTS.forEach((p) => window.SfMockLwc.buildComponent(p.tag, S.bundle.src[p.html], S.bundle.src[p.js], p.label));
+        const failed = [];
+        (man.parts || []).forEach((p) => {
+            try {
+                window.SfMockLwc.buildComponent(p.tag, S.bundle.src[p.html], p.js ? S.bundle.src[p.js] : '', p.bundle);
+            } catch (e) {
+                failed.push(p.tag);
+                window.SfMockLwc.registerPlaceholder(p.tag, p.bundle + '（この共有版では組み立てられませんでした）');
+            }
+        });
+        (man.missing || []).forEach((b) => window.SfMockLwc.registerPlaceholder('c-' + b, b + '（dev6 に見つからない部品）'));
+        if (failed.length) showErr('組み立てられなかった部品 ' + failed.length + ' 個: ' + failed.join(' / ') + '（その場所は札になります）');
         window.SfMockData.onNavigate(navNotice);
         window.SfMockLwc.onAfterRender(afterRender);
         $('sfm-mount').addEventListener('lightning__showtoast', (e) => {
@@ -296,6 +308,9 @@
             renderIndex();
         }
         $('sfm-title').textContent = currentLabel();
+        const note = PAGE_NOTES[pageKeyOf(S.comp.raw.currentPage)] || '';
+        $('sfm-pagenote').textContent = note;
+        $('sfm-pagenote').classList.toggle('sfm-hidden', !note);
         placePins();
     }
 

@@ -250,9 +250,11 @@ window.SfMockData = (function () {
             if (bundle && Object.prototype.hasOwnProperty.call(bundle.apex, key)) {
                 return Promise.resolve(bundle.apex[key]);
             }
+            // 録っていない呼び出し＝「保存・承認などの操作」か「採取のとき通らなかった画面」のどちらか。
+            // どちらも共有版では先へ進めないので、技術用語ではなく何が起きているかで伝える
             return Promise.reject(mkError(
-                'この共有版には ' + name + ' のこの呼び出しの応答が入っていません。' +
-                'dev6 でこの組み合わせが一度も走らなかった分です（引数: ' + stableKey(params === undefined ? {} : params).slice(0, 120) + '）'
+                'ここから先は共有版では動きません（レビュー用のため）。実際の動きは dev6 でご確認ください。' +
+                '［' + name + '］'
             ));
         };
     }
