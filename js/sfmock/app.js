@@ -86,6 +86,15 @@
         const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
         return d.toDateString() === now.toDateString() ? '今日 ' + hm : (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hm;
     }
+    // コメントを置くモード。ON の間は画面全体に受け皿を被せるので、画面の操作はできなくなる。
+    // 付けっぱなしにすると「押しても何も起きない」になるため、1 か所置いたら自動で戻す。
+    function setCommenting(on) {
+        S.commenting = !!on;
+        $('sfm-btn-comment').className = 'sfm-btn2 ' + (S.commenting ? 'on' : 'ghost');
+        $('sfm-btn-comment').textContent = S.commenting ? '置くのをやめる' : 'コメントを置く';
+        placePins();
+    }
+
     function showErr(msg) {
         const bar = $('sfm-errbar');
         $('sfm-errbar-text').textContent = msg;
@@ -395,11 +404,12 @@
         pop.style.left = Math.min(window.innerWidth - 312, Math.max(8, clientX + 12)) + 'px';
         pop.style.top = Math.min(window.innerHeight - 170, Math.max(8, clientY + 8)) + 'px';
         $('sfm-pop-text').focus();
-        $('sfm-pop-cancel').addEventListener('click', closePopover);
+        $('sfm-pop-cancel').addEventListener('click', () => { closePopover(); setCommenting(false); });
         $('sfm-pop-save').addEventListener('click', async () => {
             const body = $('sfm-pop-text').value.trim();
             if (!body) return;
             closePopover();
+            setCommenting(false);   // 1 か所置いたら操作に戻す（受け皿を被せたままにしない）
             await addComment(body, xPct, yPct, null, anchor);
         });
         pop.addEventListener('keydown', (e) => {
@@ -430,7 +440,14 @@
             capture_version: S.bundle.manifest.capturedAt
         };
         if (anchor) row.anchor_label = anchor;
-        const { data, error } = await S.sb.from('sf_mock_comments').insert(row).select().single();
+        let { data, error } = await S.sb.from('sf_mock_comments').insert(row).select().single();
+        // 器が古くて anchor_label の列が無いことがある（SQL を流し直せば入る）。
+        // 目印ひとつのためにコメントを失わせない＝目印を落として入れ直し、直し方を帯で伝える
+        if (error && /anchor_label/.test(error.message || '')) {
+            delete row.anchor_label;
+            ({ data, error } = await S.sb.from('sf_mock_comments').insert(row).select().single());
+            if (!error) showErr('コメントの器が古いままです（ピンの目印が残りません）。supabase/add_sf_mock_comments.sql を流し直すと直ります。');
+        }
         if (error) {
             toast(S.tableReady ? '投稿できませんでした（' + error.message + '）' : 'コメントの器がまだありません（管理者が SQL を流すと使えます）', 'err', 7000);
             return;
@@ -665,10 +682,8 @@
         $('sfm-logout').addEventListener('click', async () => { await S.sb.auth.signOut(); location.reload(); });
         $('sfm-errbar-close').addEventListener('click', () => $('sfm-errbar').classList.add('sfm-hidden'));
         $('sfm-btn-comment').addEventListener('click', () => {
-            S.commenting = !S.commenting;
-            $('sfm-btn-comment').className = 'sfm-btn2 ' + (S.commenting ? 'on' : 'ghost');
-            placePins();
-            if (S.commenting) toast('画面の気になるところをクリックしてください（もう一度押すと操作に戻ります）');
+            setCommenting(!S.commenting);
+            if (S.commenting) toast('画面の気になるところをクリックしてください（1 か所置くと操作に戻ります）');
         });
         $('sfm-catch').addEventListener('click', (e) => {
             if (!S.commenting) return;
@@ -710,7 +725,11 @@
         $('sfm-guide-close').addEventListener('click', () => setGuide(true));
 
         window.addEventListener('resize', () => { if (S.comp) placePins(); });
-        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePopover(); });
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            closePopover();
+            if (S.commenting) setCommenting(false);
+        });
 
         S.user = await currentUser();
         if (!S.user) { showLogin(true); return; }

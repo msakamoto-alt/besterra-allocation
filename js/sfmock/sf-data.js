@@ -324,6 +324,8 @@ window.SfMockData = (function () {
             if (!parents.some(function (p) { return p && p.Id === parentId; })) return;
             if (!Array.isArray(v[plan.container])) v[plan.container] = [];
             v[plan.container].push(fake);
+            // 削除できるように、入れた配列も控える（ここを忘れると「追加はできるが消せない」になる）
+            (arrayIndex[fake.Id] = arrayIndex[fake.Id] || []).push({ arr: v[plan.container], obj: fake });
             placed++;
         });
         if (!placed) return Promise.reject(mkError('追加先の器（' + plan.container + '）が見つかりませんでした'));
@@ -332,8 +334,25 @@ window.SfMockData = (function () {
         return Promise.resolve({ id: fake.Id, fields: fields });
     }
 
+    /** 索引に無い行を探し直す（索引漏れで「消せない」が黙って起きないようにする保険） */
+    function locateInArrays(id) {
+        const hits = [];
+        const walk = function (v, parentArr) {
+            if (!v || typeof v !== 'object') return;
+            if (Array.isArray(v)) {
+                v.forEach(function (x) { walk(x, v); });
+                return;
+            }
+            if (v.Id === id && parentArr) hits.push({ arr: parentArr, obj: v });
+            Object.keys(v).forEach(function (k) { walk(v[k], null); });
+        };
+        walk(bundle && bundle.apex, null);
+        return hits;
+    }
+
     function deleteRecord(id) {
-        const spots = arrayIndex[id] || [];
+        let spots = arrayIndex[id] || [];
+        if (!spots.length) spots = locateInArrays(id);
         if (!spots.length) return Promise.reject(mkError('この共有版には ' + id + ' の削除先が入っていません'));
         spots.forEach(function (s) {
             const i = s.arr.indexOf(s.obj);

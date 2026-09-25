@@ -611,8 +611,11 @@ window.SfMockLwc = (function () {
         box.appendChild(clr);
         host.appendChild(box);
         let obj = '';
+        // 「今入っている名前」が出たまま開くと、その名前で絞られて候補が 1 件しか出ない。
+        // 本物のピッカーは開いた時点で選び直せるので、人が打つまでは絞り込みに使わない
+        let typed = false;
         const draw = function () {
-            const q = inp.value.trim();
+            const q = typed ? inp.value.trim() : '';
             const hits = recordSearch(obj, q).slice(0, 12);
             list.textContent = '';
             if (!hits.length) {
@@ -628,14 +631,18 @@ window.SfMockLwc = (function () {
                 r.addEventListener('mousedown', function (ev) {
                     ev.preventDefault();
                     list.hidden = true;
+                    typed = false;
                     fireChange(host, { recordId: h.id });
+                    // 焦点が入力欄に残ったままだと「入力中は値を上書きしない」規則で
+                    // 選んだ名前に変わらない。選び終わったら外す
+                    inp.blur();
                 });
                 list.appendChild(r);
             });
             list.hidden = false;
         };
-        inp.addEventListener('focus', draw);
-        inp.addEventListener('input', function (ev) { ev.stopPropagation(); draw(); });
+        inp.addEventListener('focus', function () { if (!typed) inp.select(); draw(); });
+        inp.addEventListener('input', function (ev) { ev.stopPropagation(); typed = true; draw(); });
         inp.addEventListener('change', function (ev) { ev.stopPropagation(); });
         inp.addEventListener('blur', function () { setTimeout(function () { list.hidden = true; }, 150); });
         clr.addEventListener('click', function () { fireChange(host, { recordId: null }); });
@@ -649,6 +656,7 @@ window.SfMockLwc = (function () {
                 if (document.activeElement === inp) return;
                 const v = p.value ? (recordNameLookup(p.value) || p.value) : '';
                 if (inp.value !== v) inp.value = v;
+                typed = false;   // 外から値が入った＝人が打った文字ではない
             }
         };
     }
