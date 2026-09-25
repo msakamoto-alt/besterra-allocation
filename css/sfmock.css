@@ -1,0 +1,613 @@
+/* sfmock.css — 共有モックアップ（工事部レビュー用）の外側と、Salesforce 部品の代わりの見た目。
+ *
+ * 画面の中身の見た目は dev6 の koujiKagami.css / kagamiYukaPage.css / multiPicklist.css をそのまま使う
+ * （実行時に読み込んで #sfm-mount の中だけに効くよう包む）。ここに書くのは 3 つだけ:
+ *   1. 外側（ログイン・ヘッダ・左レール・コメント欄）… すべて sfm- を付けて中身と衝突させない
+ *   2. SLDS の代わり … テンプレートが使っている slds-* だけ（36 クラス・実測）
+ *   3. lightning 部品の代わり … 入力欄・選択・ボタン・アイコン・ピッカー（dev6 側で装飾していないため、
+ *      ここが見た目の正になる。SLDS の寸法・色に合わせている）
+ */
+
+/* ===================== 0. 土台 ===================== */
+:root {
+    --sfm-navy: #1e3a8a;
+    --sfm-line: #e2e8f0;
+    --sfm-ink: #1e293b;
+    --sfm-sub: #64748b;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+    font-family: "Noto Sans JP", "Yu Gothic", Meiryo, sans-serif;
+    margin: 0;
+    background: #f1f5f9;
+    color: var(--sfm-ink);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.sfm-hidden { display: none !important; }
+
+/* ===================== 1. 外側 ===================== */
+.sfm-login {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: #f1f5f9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.sfm-login-card {
+    background: #fff;
+    border: 1px solid var(--sfm-line);
+    border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(15, 23, 42, .12);
+    width: 100%;
+    max-width: 26rem;
+    padding: 2rem;
+}
+.sfm-login-card h1 { font-size: 1.25rem; font-weight: 900; margin: 0; }
+.sfm-login-card p.lead { margin: .35rem 0 0; font-size: .875rem; color: var(--sfm-sub); }
+.sfm-field { margin-top: 1rem; }
+.sfm-field label { display: block; font-size: .7rem; font-weight: 700; color: #475569; margin-bottom: .35rem; }
+.sfm-field input {
+    width: 100%;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: .5rem .75rem;
+    font: inherit;
+    font-size: .875rem;
+}
+.sfm-login-btn {
+    width: 100%;
+    margin-top: 1.25rem;
+    background: #b91c1c;
+    color: #fff;
+    font-weight: 700;
+    border: none;
+    border-radius: 8px;
+    padding: .625rem;
+    cursor: pointer;
+    font-size: .9rem;
+}
+.sfm-login-btn:hover { background: #991b1b; }
+.sfm-login-err { color: #dc2626; font-size: .85rem; margin-top: .75rem; }
+.sfm-login-note { margin-top: 1.25rem; font-size: .7rem; color: #94a3b8; }
+
+.sfm-header {
+    flex: 0 0 auto;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    padding: 0 1rem;
+    color: #fff;
+    background: linear-gradient(135deg, #991b1b 0%, #b91c1c 45%, #7f1d1d 100%);
+    position: relative;
+    overflow: hidden;
+}
+.sfm-header::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(circle at 80% 50%, rgba(255, 255, 255, .10) 0%, rgba(255, 255, 255, 0) 50%),
+        repeating-linear-gradient(135deg, rgba(255, 255, 255, .04) 0, rgba(255, 255, 255, .04) 1px, transparent 1px, transparent 14px);
+    pointer-events: none;
+}
+.sfm-header > * { position: relative; z-index: 1; }
+.sfm-h-ttl { font-size: 15px; font-weight: 900; line-height: 1.2; }
+.sfm-h-tag { margin-left: .5rem; font-size: 11px; font-weight: 500; opacity: .8; }
+.sfm-h-sub { font-size: 11px; opacity: .8; }
+.sfm-h-right { margin-left: auto; display: flex; align-items: center; gap: .75rem; font-size: 12px; }
+.sfm-h-right a, .sfm-h-right button.link {
+    color: #fff;
+    text-decoration: underline;
+    opacity: .9;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+}
+.sfm-h-right a:hover, .sfm-h-right button.link:hover { opacity: 1; }
+.sfm-h-btn {
+    background: rgba(255, 255, 255, .15);
+    border: 1px solid rgba(255, 255, 255, .3);
+    color: #fff;
+    border-radius: 4px;
+    padding: .25rem .625rem;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+}
+.sfm-h-btn:hover { background: rgba(255, 255, 255, .25); }
+.sfm-h-stat { background: rgba(0, 0, 0, .25); padding: .25rem .5rem; border-radius: 4px; }
+
+.sfm-shell { flex: 1 1 auto; display: flex; min-height: 0; }
+/* 画面は dev6（Lightning の 1 画面）の横幅を前提に組まれている。狭いと列が潰れるので下限を置き、
+   足りなければ横にスクロールさせる（潰れた見た目にコメントが付くのを避ける） */
+.sfm-stage { flex: 1 1 auto; overflow: auto; background: #f3f5f8; position: relative; }
+.sfm-panel {
+    flex: 0 0 320px;
+    background: #fff;
+    border-left: 1px solid var(--sfm-line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.sfm-panel.folded { display: none; }
+
+/* 上の帯（工事の切替と操作） */
+.sfm-bar {
+    flex: 0 0 auto;
+    background: #fff;
+    border-bottom: 1px solid var(--sfm-line);
+    padding: .375rem .75rem;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    font-size: 12px;
+}
+.sfm-bar .lab { font-size: 11px; font-weight: 700; color: var(--sfm-sub); }
+.sfm-bar .ttl { font-weight: 700; margin-left: .5rem; }
+.sfm-bar .right { margin-left: auto; display: flex; gap: .5rem; }
+.sfm-projs { display: flex; gap: .25rem; }
+.sfm-proj {
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    border-radius: 6px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.4;
+    text-align: left;
+    white-space: nowrap;
+}
+.sfm-proj:hover { background: #f8fafc; }
+.sfm-proj.on { background: var(--sfm-navy); border-color: var(--sfm-navy); color: #fff; }
+.sfm-proj .sub { display: block; font-size: 10px; opacity: .7; }
+
+/* 使い方の案内 */
+.sfm-guide {
+    flex: 0 0 auto;
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem 1.25rem;
+    background: #eff6ff;
+    border-bottom: 1px solid #bfdbfe;
+    color: #1e3a5f;
+    font-size: 11.5px;
+    line-height: 1.7;
+    padding: .4rem 2rem .4rem .75rem;
+}
+.sfm-guide.folded { display: none; }
+.sfm-guide button {
+    position: absolute;
+    right: .5rem;
+    top: .25rem;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: #1e3a5f;
+    font: inherit;
+    font-size: 14px;
+}
+
+/* コメントの目次（画面ごとの件数） */
+.sfm-index { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .5rem; }
+.sfm-ix {
+    border: 1px solid var(--sfm-line);
+    background: #fff;
+    border-radius: 999px;
+    padding: 1px 8px;
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: .25rem;
+}
+.sfm-ix:hover { background: #f8fafc; }
+.sfm-ix.on { background: var(--sfm-navy); border-color: var(--sfm-navy); color: #fff; }
+.sfm-badge-n {
+    font-size: 10px;
+    font-weight: 700;
+    background: #dc2626;
+    color: #fff;
+    border-radius: 9px;
+    padding: 0 5px;
+    line-height: 15px;
+    min-width: 15px;
+    text-align: center;
+}
+.sfm-ix.on .sfm-badge-n { background: #fff; color: #dc2626; }
+.sfm-badge-n.done { background: #94a3b8; }
+
+.sfm-btn2 {
+    border-radius: 6px;
+    padding: 5px 12px;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    border: 1px solid transparent;
+}
+.sfm-btn2.primary { background: var(--sfm-navy); color: #fff; }
+.sfm-btn2.primary:hover { background: #1d4ed8; }
+.sfm-btn2.ghost { background: #fff; color: #475569; border-color: #cbd5e1; }
+.sfm-btn2.ghost:hover { background: #f8fafc; }
+.sfm-btn2.on { background: #dc2626; color: #fff; }
+.sfm-btn2.small { padding: 3px 9px; }
+
+/* 画面（実物の部品）とピンの重ね合わせ */
+/* 下限だけ置く。max-content にすると中の横スクロール領域（ガント等）まで広がって
+   画面が数千 px になるので使わない。狭いときはこの枠ごと横スクロールさせる */
+.sfm-wrap { position: relative; min-height: 200px; min-width: 1160px; }
+.sfm-mount { background: #fff; }
+.sfm-pins { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 20; }
+.sfm-pins > * { pointer-events: auto; }
+.sfm-catch { position: absolute; left: 0; top: 0; z-index: 25; cursor: crosshair; background: rgba(30, 58, 138, .04); }
+.sfm-pin {
+    position: absolute;
+    width: 26px;
+    height: 26px;
+    margin: -26px 0 0 -13px;
+    border-radius: 50% 50% 50% 2px;
+    transform: rotate(-45deg);
+    background: #dc2626;
+    color: #fff;
+    border: 2px solid #fff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .35);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.sfm-pin span { transform: rotate(45deg); font-size: 11px; font-weight: 700; }
+.sfm-pin.resolved { background: #94a3b8; }
+.sfm-pin.active { outline: 3px solid #fbbf24; }
+.sfm-pin.stale { background: #a16207; }
+
+/* コメント欄 */
+.sfm-p-head { flex: 0 0 auto; border-bottom: 1px solid var(--sfm-line); padding: 10px 12px; }
+.sfm-p-head .row { display: flex; align-items: center; gap: .5rem; }
+.sfm-p-head strong { font-size: 13px; }
+.sfm-p-head .cnt { font-size: 11px; color: var(--sfm-sub); }
+.sfm-p-head .tabs { margin-left: auto; display: flex; gap: .25rem; }
+.sfm-chk { margin-top: .5rem; display: flex; align-items: center; gap: .375rem; font-size: 11.5px; color: #475569; }
+.sfm-p-body { flex: 1 1 auto; overflow-y: auto; padding: 10px 12px; min-height: 0; }
+.sfm-p-foot { flex: 0 0 auto; border-top: 1px solid var(--sfm-line); padding: 10px; }
+.sfm-p-foot textarea, .sfm-reply textarea {
+    width: 100%;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: .5rem .625rem;
+    font: inherit;
+    font-size: 13px;
+    resize: none;
+}
+.sfm-p-foot .act { display: flex; justify-content: flex-end; margin-top: .375rem; }
+.sfm-thread { border: 1px solid var(--sfm-line); border-radius: 8px; padding: 9px 10px; margin-bottom: 10px; background: #fff; }
+.sfm-thread.active { border-color: #fbbf24; box-shadow: 0 0 0 2px rgba(251, 191, 36, .35); }
+.sfm-thread.resolved { background: #f8fafc; opacity: .72; }
+.sfm-c-head { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--sfm-sub); flex-wrap: wrap; }
+.sfm-c-who { font-weight: 700; color: var(--sfm-ink); font-size: 12px; }
+.sfm-c-body { font-size: 13px; white-space: pre-wrap; word-break: break-word; margin-top: 3px; line-height: 1.6; }
+.sfm-c-where { font-size: 11px; color: #1d4ed8; cursor: pointer; }
+.sfm-c-where:hover { text-decoration: underline; }
+.sfm-c-anchor { font-size: 11px; color: var(--sfm-sub); }
+.sfm-c-reply { margin: 6px 0 0 12px; padding-left: 8px; border-left: 2px solid var(--sfm-line); }
+.sfm-act { font-size: 11px; color: #2563eb; cursor: pointer; background: none; border: none; padding: 0; font: inherit; }
+.sfm-act:hover { text-decoration: underline; }
+.sfm-act.danger { color: #dc2626; }
+.sfm-acts { display: flex; gap: .75rem; margin-top: .5rem; }
+.sfm-chip { font-size: 10px; font-weight: 700; border-radius: 4px; padding: 1px 5px; }
+.sfm-chip.open { background: #fee2e2; color: #b91c1c; }
+.sfm-chip.done { background: #e2e8f0; color: #475569; }
+.sfm-chip.stale { background: #fef3c7; color: #92400e; }
+.sfm-chip.no { background: var(--sfm-navy); color: #fff; }
+.sfm-reply { margin-top: .5rem; }
+.sfm-reply .act { display: flex; justify-content: flex-end; margin-top: .25rem; }
+.sfm-empty { font-size: 12.5px; color: var(--sfm-sub); line-height: 1.8; }
+.sfm-warn {
+    font-size: 12.5px;
+    color: #92400e;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    padding: .75rem;
+    line-height: 1.8;
+}
+.sfm-pop {
+    position: absolute;
+    z-index: 40;
+    width: 300px;
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, .25);
+    padding: 10px;
+}
+.sfm-pop .lab { font-size: 11px; color: var(--sfm-sub); margin-bottom: .25rem; }
+.sfm-pop textarea {
+    width: 100%;
+    height: 78px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: .375rem .5rem;
+    font: inherit;
+    font-size: 13px;
+    resize: vertical;
+}
+.sfm-pop .act { display: flex; justify-content: flex-end; gap: .375rem; margin-top: .375rem; }
+.sfm-toast {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 60;
+    background: #0f172a;
+    color: #fff;
+    font-size: 13px;
+    padding: 9px 14px;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .3);
+    max-width: 30rem;
+    line-height: 1.6;
+}
+.sfm-toast.err { background: #7f1d1d; }
+.sfm-toast.ok { background: #14532d; }
+.sfm-note {
+    margin: 1.5rem;
+    padding: 1.5rem;
+    background: #fff;
+    border: 1px solid var(--sfm-line);
+    border-radius: 12px;
+    max-width: 42rem;
+    font-size: 13px;
+    line-height: 1.9;
+    color: #334155;
+}
+.sfm-note .ttl { font-weight: 700; color: #0f172a; margin-bottom: .5rem; }
+.sfm-note code { background: #f1f5f9; padding: .1rem .3rem; border-radius: 3px; font-size: 12px; }
+.sfm-errbar {
+    background: #7f1d1d;
+    color: #fff;
+    font-size: 12px;
+    padding: .5rem .75rem;
+    display: flex;
+    align-items: flex-start;
+    gap: .5rem;
+    line-height: 1.6;
+}
+.sfm-errbar button { margin-left: auto; background: none; border: none; color: #fff; cursor: pointer; font: inherit; }
+.sfm-spin {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #cbd5e1;
+    border-top-color: var(--sfm-navy);
+    border-radius: 50%;
+    animation: sfm-sp .8s linear infinite;
+    display: inline-block;
+}
+@keyframes sfm-sp { to { transform: rotate(360deg); } }
+
+/* ===================== 2. SLDS の代わり（テンプレートが使う分だけ） ===================== */
+.slds-box { border: 1px solid #e5e5e5; border-radius: .25rem; padding: 1rem; background: #fff; }
+.slds-box_x-small { padding: .5rem; }
+.slds-grid { display: flex; }
+.slds-grid_vertical-align-center { align-items: center; }
+.slds-grid_align-spread { justify-content: space-between; }
+.slds-wrap { flex-wrap: wrap; }
+.slds-col { flex: 1 1 auto; min-width: 0; }
+.slds-gutters_x-small { margin-left: -.25rem; margin-right: -.25rem; }
+.slds-gutters_x-small > .slds-col { padding-left: .25rem; padding-right: .25rem; }
+.slds-size_1-of-1 { flex: 0 0 100%; max-width: 100%; }
+.slds-size_1-of-2 { flex: 0 0 50%; max-width: 50%; }
+.slds-p-around_small { padding: .75rem; }
+.slds-p-vertical_xx-small { padding-top: .25rem; padding-bottom: .25rem; }
+.slds-m-top_xx-small { margin-top: .25rem; }
+.slds-m-top_x-small { margin-top: .5rem; }
+.slds-m-top_medium { margin-top: 1rem; }
+.slds-m-bottom_xx-small { margin-bottom: .25rem; }
+.slds-m-bottom_x-small { margin-bottom: .5rem; }
+.slds-m-right_x-small { margin-right: .5rem; }
+.slds-m-right_small { margin-right: .75rem; }
+.slds-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slds-badge {
+    display: inline-block;
+    padding: .0625rem .5rem;
+    border-radius: 15rem;
+    background: #ecebea;
+    color: #3e3e3c;
+    font-size: .625rem;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+.slds-badge_inverse { background: #514f4d; color: #fff; }
+.slds-form-element { position: relative; }
+.slds-combobox_container { position: relative; }
+.slds-combobox__form-element { position: relative; }
+.slds-input-has-icon { position: relative; }
+.slds-input-has-icon_right .slds-input__icon_right { position: absolute; right: .5rem; top: 50%; transform: translateY(-50%); }
+.slds-input__icon { width: .875rem; height: .875rem; color: #747474; }
+.slds-dropdown {
+    position: absolute;
+    z-index: 30;
+    left: 0;
+    top: 100%;
+    min-width: 100%;
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: .25rem;
+    box-shadow: 0 2px 3px rgba(0, 0, 0, .16);
+    max-height: 20rem;
+    overflow-y: auto;
+}
+.slds-listbox { list-style: none; margin: 0; padding: .25rem 0; }
+.slds-listbox_vertical .slds-listbox__item { display: block; }
+.slds-media__figure { flex: 0 0 auto; margin-right: .5rem; }
+.slds-media__body { flex: 1 1 auto; min-width: 0; }
+@media (min-width: 64em) {
+    .slds-large-size_1-of-2 { flex: 0 0 50%; max-width: 50%; }
+    .slds-large-size_1-of-4 { flex: 0 0 25%; max-width: 25%; }
+}
+
+/* ===================== 2b. SLDS の下地（Salesforce が最初に当てているリセット） =====================
+   dev6 の CSS は「箇条書きの点は SLDS が消している」前提で書かれている。
+   ここが無いと左メニューと案件ツリーに点と字下げが出る。使われている要素の分だけ当てる。 */
+#sfm-mount { font-size: 13px; line-height: 1.5; }
+#sfm-mount * { box-sizing: border-box; }
+#sfm-mount ul, #sfm-mount ol { list-style: none; margin: 0; padding: 0; }
+#sfm-mount li { margin: 0; }
+#sfm-mount p, #sfm-mount figure, #sfm-mount blockquote, #sfm-mount dl, #sfm-mount dd { margin: 0; }
+#sfm-mount h1, #sfm-mount h2, #sfm-mount h3, #sfm-mount h4, #sfm-mount h5, #sfm-mount h6 {
+    font-size: inherit;
+    font-weight: inherit;
+    margin: 0;
+}
+#sfm-mount table { border-collapse: collapse; border-spacing: 0; }
+#sfm-mount th, #sfm-mount td { text-align: left; padding: 0; font-weight: inherit; vertical-align: top; }
+#sfm-mount a { color: #0176d3; text-decoration: none; }
+#sfm-mount a:hover { text-decoration: underline; }
+#sfm-mount button { font: inherit; color: inherit; }
+#sfm-mount input, #sfm-mount select, #sfm-mount textarea { font-family: inherit; }
+#sfm-mount hr { border: none; border-top: 1px solid #e5e5e5; margin: 0; }
+
+/* ===================== 3. lightning 部品の代わり ===================== */
+/* dev6 側で装飾していないため、ここが入力欄・ボタンの見た目の正。SLDS の寸法と色に合わせている */
+/* 入力・選択は本物と同じくブロック（親のグリッド列いっぱいに広がる）。ボタンとアイコンは行の中に並ぶ。
+   どちらも .sfm-lg より強い指定にしておく（クラスだけだと後勝ちにならない） */
+.sfm-lg { display: block; }
+lightning-button.sfm-lg, lightning-button-icon.sfm-lg, lightning-icon.sfm-lg {
+    display: inline-block;
+    vertical-align: middle;
+}
+.sfm-label { display: block; font-size: .75rem; color: #3e3e3c; margin-bottom: .125rem; }
+/* dev6 の CSS は lightning-input の見た目を SLDS の調整用変数で変えている
+   （--slds-c-input-color-border / -radius-border / -shadow ＝ 角を落として線を薄くする）。
+   共有版の入力欄もそれを読む＝dev6 と同じ見た目になる */
+.sfm-input, .sfm-select, .sfm-textarea {
+    width: 100%;
+    min-height: 2rem;
+    border: 1px solid var(--slds-c-input-color-border, #c9c7c5);
+    border-radius: var(--slds-c-input-radius-border, .25rem);
+    box-shadow: var(--slds-c-input-shadow, none);
+    background: #fff;
+    color: #080707;
+    font: inherit;
+    font-size: .8125rem;
+    padding: 0 .75rem;
+    line-height: 1.875rem;
+}
+.sfm-select { border-radius: var(--slds-c-combobox-radius-border, var(--slds-c-input-radius-border, .25rem)); }
+.sfm-textarea { padding: .25rem .75rem; line-height: 1.5; min-height: 4rem; resize: vertical; }
+.sfm-select { padding: 0 .5rem; }
+.sfm-input:focus, .sfm-select:focus, .sfm-textarea:focus {
+    outline: none;
+    border-color: #0176d3;
+    box-shadow: 0 0 0 1px #0176d3;
+}
+.sfm-input:disabled, .sfm-select:disabled { background: #ecebea; color: #746f6b; }
+.sfm-input[readonly] { background: #fafaf9; }
+.sfm-check { width: 1rem; height: 1rem; margin: .25rem 0; accent-color: #0176d3; }
+.sfm-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: .25rem;
+    min-height: 2rem;
+    padding: 0 1rem;
+    border: 1px solid #c9c7c5;
+    border-radius: .25rem;
+    background: #fff;
+    color: #0176d3;
+    font: inherit;
+    font-size: .8125rem;
+    font-weight: 400;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.sfm-btn:hover { background: #f3f3f3; }
+.sfm-btn-brand { background: #0176d3; border-color: #0176d3; color: #fff; }
+.sfm-btn-brand:hover { background: #014486; border-color: #014486; }
+.sfm-btn-destructive { background: #ba0517; border-color: #ba0517; color: #fff; }
+.sfm-btn-destructive:hover { background: #8e030f; }
+.sfm-btn-success { background: #2e844a; border-color: #2e844a; color: #fff; }
+.sfm-btn-base { border-color: transparent; background: none; }
+.sfm-btn:disabled { background: #ecebea; border-color: #c9c7c5; color: #c9c7c5; cursor: default; }
+.sfm-btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid transparent;
+    border-radius: .25rem;
+    background: none;
+    color: #747474;
+    font: inherit;
+    font-size: .95rem;
+    cursor: pointer;
+}
+.sfm-btn-icon:hover { background: #f3f3f3; color: #0176d3; }
+.sfm-btn-icon-border-filled { background: #fff; border-color: #c9c7c5; }
+.sfm-btn-icon-border { border-color: #c9c7c5; }
+.sfm-btn-icon:disabled { color: #c9c7c5; cursor: default; }
+.sfm-glyph { display: inline-block; line-height: 1; color: inherit; }
+.sfm-glyph-x-small { font-size: .75rem; }
+.sfm-glyph-small { font-size: .875rem; }
+.sfm-glyph-medium { font-size: 1.25rem; }
+.sfm-unknown { font-size: 11px; color: #b91c1c; background: #fee2e2; border-radius: 3px; padding: 0 .25rem; }
+.sfm-picker { position: relative; }
+.sfm-picker-clear {
+    position: absolute;
+    right: .25rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1.5rem;
+    height: 1.5rem;
+    border: none;
+    background: none;
+    color: #747474;
+    cursor: pointer;
+    font: inherit;
+}
+.sfm-picker-clear:hover { color: #ba0517; }
+.sfm-picker-list {
+    position: absolute;
+    z-index: 30;
+    left: 0;
+    right: 0;
+    top: 100%;
+    background: #fff;
+    border: 1px solid #c9c7c5;
+    border-radius: .25rem;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .16);
+    max-height: 14rem;
+    overflow-y: auto;
+}
+.sfm-picker-row { padding: .375rem .75rem; font-size: .8125rem; cursor: pointer; }
+.sfm-picker-row:hover { background: #f3f3f3; }
+.sfm-picker-empty { padding: .375rem .75rem; font-size: .75rem; color: #747474; }
+.sfm-placeholder {
+    display: block;
+    border: 1px dashed #c9c7c5;
+    border-radius: .25rem;
+    background: #fafaf9;
+    padding: 1.25rem;
+    text-align: center;
+}
+/* 本来ボタンとして埋め込まれている部品（受領書など）は行の中で浮かないよう小さく */
+.sfm-placeholder.inline {
+    display: inline-block;
+    padding: .25rem .625rem;
+    font-size: .75rem;
+    color: #747474;
+    text-align: center;
+    white-space: nowrap;
+    cursor: not-allowed;
+}
+.sfm-placeholder-ttl { font-size: .875rem; font-weight: 700; color: #514f4d; }
+.sfm-placeholder-msg { font-size: .75rem; color: #747474; margin-top: .375rem; line-height: 1.7; }
