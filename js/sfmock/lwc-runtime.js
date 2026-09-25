@@ -280,9 +280,18 @@ window.SfMockLwc = (function () {
         }
     }
 
+    // <template> は HTML では HTMLTemplateElement（中身は .content）だが、<svg> の中では SVG 名前空間のただの要素として
+    // 解析され .content が無い（中身は childNodes）。どちらでも同じに扱う（円グラフの弧・軸の目盛が描かれなかった 2026-09-26）
+    function isTemplate(el) {
+        return el.localName === 'template';
+    }
+    function templateNodes(el) {
+        return el.content ? el.content.childNodes : el.childNodes;
+    }
+
     function renderOne(el, scope, comp, out) {
         if (el.hasAttribute('for:each')) return renderLoop(el, scope, comp, out);
-        if (el.tagName === 'TEMPLATE') return renderChildren(el.content.childNodes, scope, comp, out);
+        if (isTemplate(el)) return renderChildren(templateNodes(el), scope, comp, out);
         return renderElement(el, scope, comp, out);
     }
 
@@ -297,7 +306,7 @@ window.SfMockLwc = (function () {
             const s = childScope(scope);
             s[iname] = arr[k];
             if (idxname) s[idxname] = k;
-            if (el.tagName === 'TEMPLATE') renderChildren(el.content.childNodes, s, comp, out);
+            if (isTemplate(el)) renderChildren(templateNodes(el), s, comp, out);
             else renderElement(el, s, comp, out);
         }
     }
