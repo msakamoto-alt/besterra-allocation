@@ -144,12 +144,13 @@
         const manifest = await grab('manifest.json', true);
         if (!manifest) return null;
         const names = ['apex.json', 'records.json', 'picklists.json', 'names.json', 'formulas.json'];
+        const optional = ['listview.json']; // 入口の一覧（無ければ案件の帯で代用）
         const srcNames = [];
         (manifest.styles || []).forEach((x) => srcNames.push(x.css));
         (manifest.modules || []).forEach((m) => srcNames.push(m.js));
         (manifest.parts || []).forEach((p) => [p.html, p.js, p.css].forEach((f) => { if (f) srcNames.push(f); }));
 
-        const jsons = await Promise.all(names.map((n) => grab(n, true)));
+        const jsons = await Promise.all(names.concat(optional).map((n) => grab(n, true)));
         const srcs = await Promise.all(srcNames.map((n) => grab('src/' + n, false)));
         const src = {};
         srcNames.forEach((n, i) => { src[n] = srcs[i]; });
@@ -162,6 +163,7 @@
             picklists: jsons[2] || {},
             names: jsons[3] || {},
             formulas: jsons[4] || {},
+            listview: jsons[5] || null,
             src,
             missing
         };
@@ -262,6 +264,88 @@
         toast('dev6 ではここから「' + what + '」へ移動します。共有版では移動しません。', '', 4200);
     }
 
+    // ===================== 入口＝案件のリストビュー（dev6 のまま） =====================
+    // 上の帯（工事のタブ）は SF に無い見た目で誤解を生む（2026-09-26 坂本さん）。dev6 の「案件」タブの
+    // リストビュー「すべての案件・工事」を、列・並び・表示値そのままに描く。案件名を押すと案件が開く（＝SF と同じ動き）
+    const LIST_KEY = 'list';
+
+    function mountList() {
+        S.projKey = LIST_KEY;
+        S.comp = null;
+        S.activeRoot = null;
+        S.screenId = LIST_KEY + '|anken-list';
+        $('sfm-mount').replaceChildren(buildListView());
+        renderChrome();
+        renderComments();
+        $('sfm-title').textContent = '案件一覧';
+        $('sfm-pagenote').classList.add('sfm-hidden');
+    }
+
+    function buildListView() {
+        const lv = S.bundle.listview;
+        const projs = S.bundle.manifest.projects;
+        const byId = {};
+        projs.forEach((x) => { byId[x.ankenId] = x; });
+        const wrap = document.createElement('div');
+        wrap.className = 'sfl';
+        // 採れていないときは、案件の帯と同じ中身を最小の列で（列は当てない＝dev6 の列が採れるまでの代用）
+        const view = lv || {
+            objectLabel: '案件', listLabel: '共有版に採ってある案件', themeColor: '', sortBy: 'Name', capturedAt: S.bundle.manifest.capturedAt,
+            columns: [{ label: '案件名', field: 'Name' }, { label: 'tera 工事番号', field: 'TeraProjectNo__c' }],
+            rows: projs.map((x) => ({ id: x.ankenId, fields: { Name: { display: x.label }, TeraProjectNo__c: { display: x.no } } }))
+        };
+        const cols = view.columns || [];
+        const sortField = String(view.sortBy || 'Name').split(',')[0].replace(/^-/, '');
+        const sortDesc = /^-/.test(String(view.sortBy || ''));
+        const sortLabel = (cols.find((c) => c.field === sortField) || {}).label || sortField;
+        const text = (r, c) => { const f = (r.fields || {})[c.field] || {}; return f.display !== null && f.display !== undefined ? String(f.display) : (f.value !== null && f.value !== undefined ? String(f.value) : ''); };
+        const th = cols.map((c) => `<th class="sfl-th${c.field === sortField ? ' sorted' : ''}" title="${esc(c.label)}"><span class="sfl-th-lab">${esc(c.label)}</span>${c.field === sortField ? `<span class="sfl-sort">${sortDesc ? '↓' : '↑'}</span>` : ''}<span class="sfl-chev">⌄</span></th>`).join('');
+        const tr = (view.rows || []).map((r, i) => {
+            const proj = byId[r.id];
+            const tds = cols.map((c) => {
+                const t = text(r, c);
+                if (c.field === 'Name') {
+                    return proj
+                        ? `<td class="sfl-td"><a class="sfl-link" data-proj="${esc(proj.key)}" href="#" title="${esc(proj.note || '')}">${esc(t)}</a></td>`
+                        : `<td class="sfl-td"><span class="sfl-dim" title="この案件は共有版に採っていません（dev6 で確認してください）">${esc(t)}</span></td>`;
+                }
+                if (c.lookupId && t) return `<td class="sfl-td"><a class="sfl-link sfl-look" href="#" data-look="${esc(c.label)}">${esc(t)}</a></td>`;
+                return `<td class="sfl-td">${esc(t)}</td>`;
+            }).join('');
+            return `<tr class="sfl-tr"><td class="sfl-num">${i + 1}</td><td class="sfl-chk"><span class="sfl-box"></span></td>${tds}<td class="sfl-act"><span class="sfl-actbtn" title="dev6 では行の操作（編集・削除）が開きます。共有版では開きません">▾</span></td></tr>`;
+        }).join('');
+        const color = view.themeColor ? '#' + String(view.themeColor).replace(/^#/, '') : '#5867e8';
+        wrap.innerHTML = `
+            <div class="sfl-head">
+              <div class="sfl-icon" style="background:${esc(color)}"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="#fff" d="M4 5h16v3H4zm0 5h16v3H4zm0 5h16v3H4z"/></svg></div>
+              <div class="sfl-head-txt">
+                <div class="sfl-obj">${esc(view.objectLabel || '案件')}</div>
+                <div class="sfl-name">${esc(view.listLabel || '')} <span class="sfl-chev">▾</span></div>
+              </div>
+              <div class="sfl-head-r">${lv ? 'dev6 のリストビューを列・並び・値そのままに（' + esc(when(view.capturedAt)) + ' 採取）' : 'dev6 のリストビューはまだ採れていません（列は仮）'}</div>
+            </div>
+            <div class="sfl-sub">
+              <span>${(view.rows || []).length} 個の項目・並び替え基準: ${esc(sortLabel)}・${esc(when(view.capturedAt))} に採取</span>
+              <input class="sfl-search" type="search" placeholder="このリストを検索..." aria-label="このリストを検索">
+            </div>
+            <div class="sfl-tablewrap"><table class="sfl-table"><thead><tr><th class="sfl-num"></th><th class="sfl-chk"><span class="sfl-box"></span></th>${th}<th class="sfl-act"></th></tr></thead><tbody>${tr}</tbody></table></div>
+            <div class="sfl-foot">
+              <span class="nt">共有版</span><span>案件名を押すと、その案件の画面（dev6 の部品そのもの）が開きます。共有版に採ってある案件は ${projs.length} 件。</span>
+              <a href="#" class="sfl-all" data-proj="all">人員配置（全工事のガント）を開く</a>
+            </div>`;
+        wrap.querySelectorAll('[data-proj]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); mountProject(a.dataset.proj); }));
+        wrap.querySelectorAll('[data-look]').forEach((a) => a.addEventListener('click', (e) => {
+            e.preventDefault();
+            toast('dev6 ではここから「' + a.dataset.look + '」のレコードへ移動します。共有版では移動しません。', '', 4200);
+        }));
+        const search = wrap.querySelector('.sfl-search');
+        search.addEventListener('input', () => {
+            const q = search.value.trim();
+            wrap.querySelectorAll('tbody tr').forEach((row) => { row.style.display = !q || row.textContent.indexOf(q) >= 0 ? '' : 'none'; });
+        });
+        return wrap;
+    }
+
     // ===================== 工事の切替（＝部品を作り直す） =====================
     function mountProject(key) {
         S.projKey = key;
@@ -319,21 +403,20 @@
     // Lightning の 1 画面ぶんの横幅を前提に組まれている＝帯を置くと列が潰れる）。
     // 工事の切替は上の帯、画面ごとのコメント件数はコメント欄の目次に出す。
     function renderChrome() {
-        const projs = S.bundle.manifest.projects.concat([ALL_SITES]);
-        $('sfm-projs').innerHTML = projs.map((p) => `
-            <button class="sfm-proj${p.key === S.projKey ? ' on' : ''}" data-proj="${esc(p.key)}" title="${esc(p.note || '')}">
-                ${esc(p.label)}<span class="sub">${esc(p.no || '')}</span>
-            </button>`).join('');
-        $('sfm-projs').querySelectorAll('[data-proj]').forEach((b) => b.addEventListener('click', () => {
-            if (b.dataset.proj === S.projKey) return;
-            mountProject(b.dataset.proj);
-        }));
+        // 工事のタブは置かない（SF に無い見た目＝誤解のもと・2026-09-26）。SF と同じく「一覧 › 案件」のパンくずだけ
+        const onList = S.projKey === LIST_KEY;
+        const proj = S.projKey === ALL_SITES.key ? ALL_SITES : S.bundle.manifest.projects.find((p) => p.key === S.projKey);
+        $('sfm-projs').innerHTML = onList
+            ? '<span class="sfm-crumb on">案件一覧</span>'
+            : `<button class="sfm-back" id="sfm-back" title="dev6 の「案件」タブのリストビューに戻る">‹ 案件一覧</button><span class="sfm-crumb-sep">›</span><span class="sfm-crumb on">${esc(proj ? proj.label : '')}<span class="sub">${esc(proj ? (proj.no || '') : '')}</span></span>`;
+        const back = $('sfm-back');
+        if (back) back.addEventListener('click', () => mountList());
         renderIndex();
     }
 
     function renderIndex() {
         const cur = pageKeyOf(S.comp ? S.comp.raw.currentPage : '');
-        const list = S.projKey === ALL_SITES.key ? [] : PAGES;
+        const list = S.projKey === ALL_SITES.key || S.projKey === LIST_KEY ? [] : PAGES;
         $('sfm-index').innerHTML = list.map((p) => {
             const sid = S.projKey + '|' + p.key;
             const roots = S.comments.filter((c) => c.screen_id === sid && !c.parent_id);
@@ -628,6 +711,7 @@
             const files = [...e.target.files];
             const want = ['manifest.json', 'apex.json', 'records.json', 'picklists.json', 'names.json', 'formulas.json'];
             const top = want.map((n) => files.find((f) => f.name === n && !/src[\\/]/.test(f.webkitRelativePath || ''))).filter(Boolean);
+            const extra = files.filter((f) => f.name === 'listview.json' && !/src[\\/]/.test(f.webkitRelativePath || '')); // 任意（入口の一覧）
             const src = files.filter((f) => /src[\\/]/.test(f.webkitRelativePath || ''));
             if (top.length !== want.length || !src.length) {
                 toast('採取フォルダ（' + want.join(' / ') + ' と src/ が入っているもの）を選んでください', 'err', 7000);
@@ -643,7 +727,7 @@
                 bar.textContent = `取り込み中… ${++done}/${total}　${path}`;
             };
             try {
-                for (const f of top) await up(f.name, f, 'application/json');
+                for (const f of top.concat(extra)) await up(f.name, f, 'application/json');
                 for (const f of src) {
                     const type = /\.css$/.test(f.name) ? 'text/css' : /\.html$/.test(f.name) ? 'text/html' : 'text/javascript';
                     await up('src/' + f.name, f, type);
@@ -685,7 +769,7 @@
         $('sfm-sub').textContent = 'dev6 の部品と応答を ' + when(S.bundle.manifest.capturedAt) + ' に採取／工事 ' +
             S.bundle.manifest.projects.length + ' 件';
         syncTabs();
-        mountProject(S.bundle.manifest.projects[0].key);
+        mountList(); // 入口は dev6 と同じ案件の一覧
         subscribe();
         if (!S.tableReady) toast('コメントの保存先がまだ作られていません（管理者が SQL を流すと書けます）', 'err', 7000);
         toast('dev6 と同じ画面です。入力も試せますが、保存はされません（開き直すと戻ります）。', '', 6500);
@@ -697,6 +781,7 @@
         $('sfm-logout').addEventListener('click', async () => { await S.sb.auth.signOut(); location.reload(); });
         $('sfm-errbar-close').addEventListener('click', () => $('sfm-errbar').classList.add('sfm-hidden'));
         $('sfm-btn-comment').addEventListener('click', () => {
+            if (S.projKey === LIST_KEY) { toast('案件一覧にはコメントを置けません。案件を開いてから置いてください。'); return; }
             setCommenting(!S.commenting);
             if (S.commenting) toast('画面の気になるところをクリックしてください（1 か所置くと操作に戻ります）');
         });

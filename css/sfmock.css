@@ -178,6 +178,44 @@ body {
 .sfm-proj.on { background: var(--sfm-navy); border-color: var(--sfm-navy); color: #fff; }
 .sfm-proj .sub { display: block; font-size: 10px; opacity: .7; }
 
+/* パンくず（一覧 › 案件）＝SF の「案件」タブと同じ行き来 */
+.sfm-crumb { font-size: 13px; font-weight: 700; color: var(--sfm-ink); }
+.sfm-crumb .sub { font-weight: 400; font-size: 11px; color: var(--sfm-sub); margin-left: .35rem; }
+.sfm-crumb-sep { color: var(--sfm-sub); margin: 0 .35rem; }
+.sfm-back { border: 1px solid #c9c9c9; background: #fff; border-radius: .25rem; padding: 2px 10px; cursor: pointer; font: inherit; font-size: 12px; color: #0176d3; }
+.sfm-back:hover { background: #f3f3f3; }
+
+/* 入口＝案件のリストビュー（dev6 の列・並び・値そのまま。見た目は Lightning のリストビューに寄せる） */
+.sfl { background: #fff; border: 1px solid #e5e5e5; border-radius: .25rem; margin: .75rem; font-size: 13px; color: #181818; }
+.sfl-head { display: flex; align-items: center; gap: .75rem; padding: .75rem 1rem .25rem; }
+.sfl-icon { width: 36px; height: 36px; border-radius: .25rem; display: grid; place-items: center; flex: 0 0 auto; }
+.sfl-obj { font-size: 13px; color: #444; }
+.sfl-name { font-size: 18px; font-weight: 700; line-height: 1.25; }
+.sfl-name .sfl-chev { font-size: 12px; color: #706e6b; margin-left: .25rem; }
+.sfl-head-r { margin-left: auto; font-size: 11px; color: #706e6b; }
+.sfl-sub { display: flex; align-items: center; padding: .25rem 1rem .5rem; font-size: 12px; color: #444; gap: 1rem; }
+.sfl-search { margin-left: auto; width: 240px; border: 1px solid #c9c9c9; border-radius: .25rem; padding: 4px 8px; font: inherit; font-size: 13px; }
+.sfl-tablewrap { overflow-x: auto; border-top: 1px solid #e5e5e5; }
+.sfl-table { width: 100%; border-collapse: collapse; }
+.sfl-table th { background: #fafaf9; color: #444; font-weight: 700; text-align: left; padding: 7px 8px; border-bottom: 1px solid #e5e5e5; white-space: nowrap; }
+.sfl-table td { padding: 7px 8px; border-bottom: 1px solid #e5e5e5; white-space: nowrap; }
+.sfl-tr:hover td { background: #f3f3f3; }
+.sfl-num { width: 24px; text-align: right; color: #444; }
+.sfl-chk { width: 28px; }
+.sfl-box { display: inline-block; width: 14px; height: 14px; border: 1px solid #747474; border-radius: 2px; background: #fff; vertical-align: middle; }
+.sfl-th { position: relative; padding-right: 22px !important; }
+.sfl-th .sfl-chev { position: absolute; right: 6px; top: 50%; transform: translateY(-60%); color: #706e6b; font-size: 12px; }
+.sfl-th.sorted .sfl-sort { margin-left: 4px; color: #181818; }
+.sfl-link { color: #0176d3; text-decoration: none; font-weight: 700; }
+.sfl-link.sfl-look { font-weight: 400; }
+.sfl-link:hover { text-decoration: underline; }
+.sfl-dim { color: #444; }
+.sfl-act { width: 36px; text-align: center; }
+.sfl-actbtn { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid #c9c9c9; border-radius: 50%; color: #0176d3; font-size: 11px; }
+.sfl-foot { padding: .5rem 1rem .75rem; font-size: 12px; color: var(--sfm-sub); display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.sfl-foot .nt { font-size: 10px; border: 1px solid #cbd5e1; border-radius: 999px; padding: 0 6px; }
+.sfl-all { color: #0176d3; margin-left: auto; }
+
 /* 使い方の案内 */
 .sfm-guide {
     flex: 0 0 auto;
