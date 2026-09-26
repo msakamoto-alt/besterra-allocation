@@ -277,7 +277,7 @@
         $('sfm-mount').replaceChildren(buildListView());
         renderChrome();
         renderComments();
-        $('sfm-title').textContent = '案件一覧';
+        $('sfm-title').textContent = ''; // パンくずが「案件一覧」を出すので重ねない
         $('sfm-pagenote').classList.add('sfm-hidden');
     }
 
