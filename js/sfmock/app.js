@@ -291,8 +291,8 @@
         // 採れていないときは、案件の帯と同じ中身を最小の列で（列は当てない＝dev6 の列が採れるまでの代用）
         const view = lv || {
             objectLabel: '案件', listLabel: '共有版に採ってある案件', themeColor: '', sortBy: 'Name', capturedAt: S.bundle.manifest.capturedAt,
-            columns: [{ label: '案件名', field: 'Name' }, { label: 'tera 工事番号', field: 'TeraProjectNo__c' }],
-            rows: projs.map((x) => ({ id: x.ankenId, fields: { Name: { display: x.label }, TeraProjectNo__c: { display: x.no } } }))
+            columns: [{ label: '案件名', field: 'Name' }, { label: '工事番号（現場管理表）', field: 'Construction__r.ConstructionNumber__c' }],
+            rows: projs.map((x) => ({ id: x.ankenId, fields: { Name: { display: x.label }, 'Construction__r.ConstructionNumber__c': { display: x.no } } }))
         };
         const cols = view.columns || [];
         const sortField = String(view.sortBy || 'Name').split(',')[0].replace(/^-/, '');
