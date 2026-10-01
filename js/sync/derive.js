@@ -170,6 +170,26 @@ Object.assign(Sync, {
     });
   },
 
+  // SFの完工日が過ぎただけで完成になった工事を、人員配置ツールで延ばした工期が残っていれば進行中に戻す。
+  // SFの工期更新が現場より遅れて、まだ動いている現場が配置から消える事故の対策（2026-10-01 坂本さん判断：
+  // 9/30完工のK0002402-01等が消えた）。見るのはツールで上書き・追加した配置（overridden）の終了予定だけ。
+  // SFの状態文言で完成のもの・手動の状態上書き（後段の mergeProjectStatusOverrides）はこれより優先。
+  // 逆（ツールの工期が先に終わりSFが先）は従来どおり進行中のまま＝ここでは扱わない。
+  reopenByToolPeriod(projects, assignments) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const reopen = new Set();
+    (assignments || []).forEach(a => {
+      if (!a.overridden || !a.planned_end) return;
+      const d = new Date(String(a.planned_end).replace(/\//g, '-'));
+      if (!isNaN(d) && d >= today) reopen.add(a.project_id);
+    });
+    return (projects || []).map(p => {
+      if (!p.completed || p.completed_by !== 'date' || !reopen.has(p.project_id)) return p;
+      return { ...p, completed: false, _reopened_by_tool: true };
+    });
+  },
+
   // Salesforceデータから projects と assignments を派生
   // 完成工事は projects.completed=true でフラグ付与（表示制御はビュー側）
   // 工事番号が空の行はスキップ（parseSalesforceCsv 段階で既に対応）
@@ -187,6 +207,8 @@ Object.assign(Sync, {
     let asgIdSeq = 1;
     sfRows.forEach(r => {
       const completed = this.isCompletedProject(r.status, r.end);
+      // 完成の根拠：'status'=SFの状態文言／'date'=SFの完工日が過ぎただけ（reopenByToolPeriod が見る）
+      const completedBy = !completed ? '' : (this.isCompletedProject(r.status, null) ? 'status' : 'date');
 
       if (!projectsMap[r.project_id]) {
         const deptParts = String(r.department || '').split('/');
@@ -203,6 +225,7 @@ Object.assign(Sync, {
           contract_type: r.contract_type || '',
           status: r.status,
           completed,
+          completed_by: completedBy,
         };
       }
 
@@ -517,6 +540,13 @@ Object.assign(Sync, {
         } catch (e) {
           console.error('overrides マージ失敗:', e);
         }
+      }
+
+      // SFの完工日超過だけで完成になった工事を、ツール側の工期で進行中に戻す（手動の状態上書きより前）
+      try {
+        this.cache.projects = this.reopenByToolPeriod(this.cache.projects, this.cache.assignments);
+      } catch (e) {
+        console.error('ツール工期による完成解除 失敗:', e);
       }
 
       // project_status_overrides を projects にマージ（v5: completed フラグの手動上書き）
