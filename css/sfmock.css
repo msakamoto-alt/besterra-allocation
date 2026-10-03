@@ -602,7 +602,38 @@ lightning-button.sfm-lg, lightning-button-icon.sfm-lg, lightning-icon.sfm-lg {
 .sfm-btn-icon-border-filled { background: #fff; border-color: #c9c7c5; }
 .sfm-btn-icon-border { border-color: #c9c7c5; }
 .sfm-btn-icon:disabled { color: #c9c7c5; cursor: default; }
-/* lightning-card（SLDS の枠）。中身を持つ唯一の lightning 部品 */
+/* lightning-button-menu（▼ の操作メニュー）＋ lightning-menu-item */
+lightning-button-menu.sfm-lg { display: inline-block; }
+.sfm-menu { position: relative; display: inline-block; }
+.sfm-menu-panel {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 60;
+    min-width: 12rem;
+    margin-top: .125rem;
+    padding: .25rem 0;
+    background: #fff;
+    border: 1px solid #c9c7c5;
+    border-radius: .25rem;
+    box-shadow: 0 2px 3px rgba(0, 0, 0, .16);
+}
+.sfm-menu-panel.sfm-menu-right { left: auto; right: 0; }
+.sfm-menu-item {
+    display: block;
+    width: 100%;
+    padding: .5rem .75rem;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: .8125rem;
+    text-align: left;
+    color: #181818;
+    cursor: pointer;
+}
+.sfm-menu-item:hover { background: #f3f3f3; }
+.sfm-menu-item:disabled { color: #c9c7c5; cursor: default; }
+/* lightning-card（SLDS の枠）。中身を持つ lightning 部品（ほかに button-menu） */
 lightning-card.sfm-lg { display: block; }
 .sfm-card {
     display: block;

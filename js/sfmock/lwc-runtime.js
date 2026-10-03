@@ -8,7 +8,7 @@
  *   1. モジュールの差し替え台    import 先を差し替える（lwc / lightning/* / @salesforce/*）
  *   2. モジュールの読み込み      import・@api・@wire・export default を素の JS に直して class を取り出す
  *   3. テンプレートの解釈        lwc:if / lwc:elseif / lwc:else / for:each / {式} / on* を DOM に起こす
- *   4. 部品の差し替え            lightning-input / combobox / button / button-icon / icon / record-picker
+ *   4. 部品の差し替え            lightning-input / combobox / button / button-icon / icon / record-picker / button-menu（menu-item）
  *   5. 再描画                    プロパティが変わったら次の描画で全部描き直す（入力位置とスクロールは保つ）
  *
  * データ（Apex と UI API の応答）は sf-data.js が受け持つ。ここはデータを知らない。
@@ -341,8 +341,8 @@ window.SfMockLwc = (function () {
         }
 
         let node;
-        if (tag === 'lightning-card') {
-            // 中身を持つ唯一の lightning 部品（既定スロット＋slot="actions"）
+        if (tag === 'lightning-card' || tag === 'lightning-button-menu') {
+            // 中身を持つ lightning 部品＝card（既定スロット＋slot="actions"）と button-menu（中身＝menu-item）
             const kids = document.createDocumentFragment();
             renderChildren(el.childNodes, scope, comp, kids);
             node = makeLightning(tag, props, comp, kids);
@@ -735,6 +735,61 @@ window.SfMockLwc = (function () {
         };
     }
 
+    // lightning-button-menu（▼ の操作メニュー）。中身＝lightning-menu-item。選ぶと本物と同じ select（detail.value）を出す
+    function buildButtonMenu(host) {
+        const box = document.createElement('span');
+        box.className = 'sfm-menu';
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'sfm-btn-icon sfm-btn-icon-border';
+        b.textContent = '▾';
+        const panel = document.createElement('div');
+        panel.className = 'sfm-menu-panel';
+        panel.hidden = true;
+        box.appendChild(b);
+        box.appendChild(panel);
+        host.appendChild(box);
+        b.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            panel.hidden = !panel.hidden;
+        });
+        b.addEventListener('blur', function () { setTimeout(function () { panel.hidden = true; }, 150); });
+        // mousedown で拾う＝ボタンの blur（150ms 後に閉じる）より先に選ばれる
+        panel.addEventListener('mousedown', function (ev) {
+            const it = ev.target && ev.target.closest ? ev.target.closest('.sfm-menu-item') : null;
+            if (!it || it.disabled) return;
+            ev.preventDefault();
+            panel.hidden = true;
+            host.dispatchEvent(new CustomEvent('select', { detail: { value: it.dataset.value } }));
+        });
+        return {
+            host: host,
+            update: function (p, frag) {
+                b.title = txt(p.alternativeText || p.title);
+                b.disabled = !!p.disabled;
+                panel.classList.toggle('sfm-menu-right', String(p.menuAlignment || '').indexOf('right') >= 0);
+                panel.replaceChildren();
+                if (!frag) return;
+                Array.prototype.slice.call(frag.childNodes).forEach(function (n) { panel.appendChild(n); });
+            }
+        };
+    }
+
+    function buildMenuItem(host) {
+        const it = document.createElement('button');
+        it.type = 'button';
+        it.className = 'sfm-menu-item';
+        host.appendChild(it);
+        return {
+            host: host,
+            update: function (p) {
+                it.textContent = txt(p.label);
+                it.dataset.value = p.value === null || p.value === undefined ? '' : String(p.value);
+                it.disabled = !!p.disabled;
+            }
+        };
+    }
+
     // lightning-formatted-number（金額・数値の整形表示）
     function buildFormattedNumber(host) {
         const s = document.createElement('span');
@@ -771,6 +826,8 @@ window.SfMockLwc = (function () {
         if (kind === 'icon') return buildIcon(host);
         if (kind === 'record-picker') return buildRecordPicker(host);
         if (kind === 'card') return buildCard(host);
+        if (kind === 'button-menu') return buildButtonMenu(host);
+        if (kind === 'menu-item') return buildMenuItem(host);
         if (kind === 'formatted-number') return buildFormattedNumber(host);
         if (kind === 'spinner') {
             host.appendChild(document.createTextNode('読み込み中…'));
