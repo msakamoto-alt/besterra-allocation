@@ -3,7 +3,11 @@
 // 役割：Salesforce の「あなた宛ての承認待ち」（ProcessInstanceWorkitem）と「回覧」（Circulation__c）を数分おきに拾い、
 //       宛先の人へ Teams のカード（要旨＋「Salesforce で開く」）で知らせる。SF→Teams の一方向・知らせるだけ。
 //       承認・既読は SF で付ける（Teams から SF へは何も書かない＝正は SF の一つ）。
-//       Teams 側は Workflows（Power Automate）の「Teams Webhook 要求を受信したとき」→ Flow bot で宛先へ個人チャット。
+//       渡し方は 2 通り（Secrets の TEAMS_DELIVERY）：
+//         feed（既定）… 送る分を teams_notify_log に「出した」（queued）として積む。別の関数 sf-teams-feed が秘密の URL で RSS として出し、
+//                       Power Automate の RSS のトリガーが読みに来て Flow bot で宛先へ個人チャット。
+//                       Webhook を外から直接呼べない環境でも使える道
+//         webhook   … Workflows の「Teams Webhook 要求を受信したとき」へ直接 POST（匿名の呼び出しが許されたとき用に残す）
 //       手順書＝supabase/PHASE_TEAMS_NOTIFY_SETUP.md
 //
 // 認証（sf-export と同じ・どちらかを満たすこと）：
@@ -11,7 +15,7 @@
 //   b) x-import-secret ヘッダが IMPORT_SECRET と一致（cron 用）
 //
 // POST body：
-//   action … dry_run（既定・送らず記録もせず、送る予定の一覧を返す）／send（送る）／ping（テストの宛先へ接続テストのカードを 1 枚）
+//   action … dry_run（既定・送らず記録もせず、送る予定の一覧を返す）／send（送る＝feed なら RSS に出す）／ping（テストの宛先へ接続テストのカードを 1 枚）
 //   source … 実行元の名乗り（cron / script / app）
 //   最初の send（送信記録が空のとき）は、その時点で SF にある分を「起点」として記録するだけで送らない
 //   （動かし始める前からある承認待ち・回覧を一斉に送らないため）。
@@ -19,7 +23,8 @@
 // 必要な Secrets：
 //   SF_EXPORT_INSTANCE_URL / SF_EXPORT_CLIENT_ID / SF_EXPORT_CLIENT_SECRET / SF_EXPORT_ALLOWED_ORG_IDS（sf-export と共通＝dev6）
 //   IMPORT_SECRET（sf-import・sf-export と共通）
-//   TEAMS_WEBHOOK_URL    … Workflows の Webhook の URL（合鍵と同じ。リポジトリ・チャットに書かない）
+//   TEAMS_DELIVERY       … feed（既定）／webhook
+//   TEAMS_WEBHOOK_URL    … webhook のときだけ。Workflows の Webhook の URL（合鍵と同じ。リポジトリ・チャットに書かない）
 //   TEAMS_TEST_RECIPIENT … テスト中の送り先（メール）。設定されている間は、本来の宛先に関係なく全部ここへ送る
 //   TEAMS_LIVE           … 'true' のときだけ本来の宛先へ送る（TEAMS_TEST_RECIPIENT を消したうえで設定する）
 //
@@ -37,7 +42,7 @@ const cors = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const API_VERSION = 'v61.0';
-const VERSION = '2026-10-10.2';
+const VERSION = '2026-10-10.3';
 const LOG = 'teams_notify_log';
 const LOOKBACK = 'LAST_N_DAYS:3'; // これより古い承認待ち・回覧は拾わない（送り直しもしない）
 const MAX_SEND_PER_RUN = 30;      // 1 回で送る上限（残りは次の回）
@@ -207,6 +212,10 @@ function buildCard(it: Item, sf: Sf, testMode: boolean) {
   };
 }
 
+function delivery(): 'feed' | 'webhook' {
+  return Deno.env.get('TEAMS_DELIVERY') === 'webhook' ? 'webhook' : 'feed';
+}
+
 async function postTeams(url: string, to: string, card: unknown): Promise<string | null> {
   const res = await fetch(url, {
     method: 'POST',
@@ -240,14 +249,23 @@ Deno.serve(async (req) => {
 
     // --- ping：テストの宛先へテストカードを 1 枚だけ送る（Webhook が匿名で呼べるか・カードが届くかの確認。SF は読まない・記録しない） ---
     if (action === 'ping') {
-      const webhook = Deno.env.get('TEAMS_WEBHOOK_URL');
       const to = (Deno.env.get('TEAMS_TEST_RECIPIENT') || '').trim();
-      if (!webhook || !to) return json({ ok: false, error: 'ping は TEAMS_WEBHOOK_URL と TEAMS_TEST_RECIPIENT の両方が要ります' }, 400);
+      if (!to) return json({ ok: false, error: 'ping は TEAMS_TEST_RECIPIENT が要ります' }, 400);
+      const mode = delivery();
       const card = { type: 'AdaptiveCard', $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', version: '1.4',
         body: [{ type: 'TextBlock', wrap: true, weight: 'Bolder', text: '統合管理ツールからの接続テストです' },
-          { type: 'TextBlock', wrap: true, size: 'Small', isSubtle: true, text: `sf-teams-notify ${VERSION}・このカードが届けば Webhook と Flow bot はつながっています` }] };
+          { type: 'TextBlock', wrap: true, size: 'Small', isSubtle: true, text: `sf-teams-notify ${VERSION}（${mode}）・このカードが届けば Teams までつながっています` }] };
+      if (mode === 'feed') {
+        // RSS に 1 項目出すだけ（Power Automate が次に読みに来たときに届く）
+        const { error } = await admin.from(LOG).insert({ sf_id: 'ping-' + crypto.randomUUID(), kind: 'ping', status: 'queued',
+          title: '接続テスト', sent_to: to, payload: { to, card } });
+        if (error) throw new Error('接続テストの記録に失敗: ' + error.message);
+        return json({ ok: true, action, version: VERSION, delivery: mode, note: 'RSS に接続テストを 1 件出しました。Power Automate が読みに来たら届きます', ms: Date.now() - t0 });
+      }
+      const webhook = Deno.env.get('TEAMS_WEBHOOK_URL');
+      if (!webhook) return json({ ok: false, error: 'webhook のときは TEAMS_WEBHOOK_URL が要ります' }, 400);
       const err = await postTeams(webhook, to, card).catch((e) => String(e?.message || e));
-      return json({ ok: !err, action, version: VERSION, ...(err ? { error: err } : {}), ms: Date.now() - t0 });
+      return json({ ok: !err, action, version: VERSION, delivery: mode, ...(err ? { error: err } : {}), ms: Date.now() - t0 });
     }
 
     const sf = await sfConnect();
@@ -285,8 +303,9 @@ Deno.serve(async (req) => {
       return json({ ok: true, action, ...summary, baseline: items.length, note: '初回のため起点を記録しました（送っていません）。次の回から新しく来た分を送ります', ms: Date.now() - t0 });
     }
 
-    const webhook = Deno.env.get('TEAMS_WEBHOOK_URL');
-    if (!webhook) throw new Error('TEAMS_WEBHOOK_URL のSecretが未設定です');
+    const mode = delivery();
+    const webhook = Deno.env.get('TEAMS_WEBHOOK_URL') || '';
+    if (mode === 'webhook' && !webhook) throw new Error('TEAMS_WEBHOOK_URL のSecretが未設定です');
     if (!testMode && Deno.env.get('TEAMS_LIVE') !== 'true') throw new Error('TEAMS_TEST_RECIPIENT も TEAMS_LIVE=true も無いため送りません（記録も付けません）');
 
     // --- 取り合い：新しい分は行を入れられた分だけ、送り直しは失敗の行を書き換えられた分だけが自分の担当 ---
@@ -310,11 +329,18 @@ Deno.serve(async (req) => {
     for (const it of mine) {
       const { to, reason } = resolveTo(it);
       let err: string | null = reason || null;
-      if (to) err = await postTeams(webhook, to, buildCard(it, sf, testMode)).catch((e) => String(e?.message || e));
+      if (to && mode === 'feed') {
+        // RSS に出す（queued_at は DB のトリガが付ける）。届いたかどうかは Power Automate の実行履歴で見る
+        const { error } = await admin.from(LOG).update({ status: 'queued', sent_to: to, payload: { to, card: buildCard(it, sf, testMode) } }).eq('sf_id', it.sf_id);
+        err = error ? 'RSS に出す記録に失敗: ' + error.message : null;
+        if (!err) { results.push({ sf_id: it.sf_id, title: it.title, to, ok: true }); continue; }
+      } else if (to) {
+        err = await postTeams(webhook, to, buildCard(it, sf, testMode)).catch((e) => String(e?.message || e));
+      }
       await admin.from(LOG).update(err ? { status: 'error', error: err, sent_to: to } : { status: 'sent', sent_to: to }).eq('sf_id', it.sf_id);
       results.push({ sf_id: it.sf_id, title: it.title, to, ok: !err, ...(err ? { error: err } : {}) });
     }
-    return json({ ok: true, action, ...summary, sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, results, ms: Date.now() - t0 });
+    return json({ ok: true, action, ...summary, delivery: mode, sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, results, ms: Date.now() - t0 });
   } catch (e) {
     return json({ ok: false, error: String((e as Error)?.message || e), ms: Date.now() - t0 }, 500);
   }
