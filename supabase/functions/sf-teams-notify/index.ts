@@ -11,7 +11,7 @@
 //   b) x-import-secret ヘッダが IMPORT_SECRET と一致（cron 用）
 //
 // POST body：
-//   action … dry_run（既定・送らず記録もせず、送る予定の一覧を返す）／send（送る）
+//   action … dry_run（既定・送らず記録もせず、送る予定の一覧を返す）／send（送る）／ping（テストの宛先へ接続テストのカードを 1 枚）
 //   source … 実行元の名乗り（cron / script / app）
 //   最初の send（送信記録が空のとき）は、その時点で SF にある分を「起点」として記録するだけで送らない
 //   （動かし始める前からある承認待ち・回覧を一斉に送らないため）。
@@ -37,7 +37,7 @@ const cors = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const API_VERSION = 'v61.0';
-const VERSION = '2026-10-10.1';
+const VERSION = '2026-10-10.2';
 const LOG = 'teams_notify_log';
 const LOOKBACK = 'LAST_N_DAYS:3'; // これより古い承認待ち・回覧は拾わない（送り直しもしない）
 const MAX_SEND_PER_RUN = 30;      // 1 回で送る上限（残りは次の回）
@@ -236,7 +236,19 @@ Deno.serve(async (req) => {
     }
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || 'dry_run');
-    if (!['dry_run', 'send'].includes(action)) return json({ error: `不明な action: ${action}` }, 400);
+    if (!['dry_run', 'send', 'ping'].includes(action)) return json({ error: `不明な action: ${action}` }, 400);
+
+    // --- ping：テストの宛先へテストカードを 1 枚だけ送る（Webhook が匿名で呼べるか・カードが届くかの確認。SF は読まない・記録しない） ---
+    if (action === 'ping') {
+      const webhook = Deno.env.get('TEAMS_WEBHOOK_URL');
+      const to = (Deno.env.get('TEAMS_TEST_RECIPIENT') || '').trim();
+      if (!webhook || !to) return json({ ok: false, error: 'ping は TEAMS_WEBHOOK_URL と TEAMS_TEST_RECIPIENT の両方が要ります' }, 400);
+      const card = { type: 'AdaptiveCard', $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', version: '1.4',
+        body: [{ type: 'TextBlock', wrap: true, weight: 'Bolder', text: '統合管理ツールからの接続テストです' },
+          { type: 'TextBlock', wrap: true, size: 'Small', isSubtle: true, text: `sf-teams-notify ${VERSION}・このカードが届けば Webhook と Flow bot はつながっています` }] };
+      const err = await postTeams(webhook, to, card).catch((e) => String(e?.message || e));
+      return json({ ok: !err, action, version: VERSION, ...(err ? { error: err } : {}), ms: Date.now() - t0 });
+    }
 
     const sf = await sfConnect();
     const items = [...await loadApprovals(sf), ...await loadCirculations(sf)];
