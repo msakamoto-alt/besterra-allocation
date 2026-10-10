@@ -20,8 +20,9 @@ SF（承認待ち ProcessInstanceWorkitem・回覧 Circulation__c）
 
 ## 2. Teams 側のフローを作る（坂本さんのアカウント）
 
-1. https://make.powerautomate.com を開く →［＋作成］→［自動化したクラウド フロー］
-2. 名前「SF 通知 → Teams（テスト）」、トリガーに「Teams Webhook」と入れて［**Teams Webhook 要求を受信したとき**］を選び［作成］
+1. https://make.powerautomate.com を開く →［＋作成］→［**インスタント クラウド フロー**］→［スキップ］（「自動化したクラウド フロー」の一覧には出ないことがある・2026-10-10 坂本さんの画面で見つからず）
+2. 名前「SF 通知 → Teams（テスト）」、トリガーの検索に「**webhook**」と入れ、Microsoft Teams の Webhook のトリガー（英語名 When a Teams webhook request is received）を選ぶ
+   - 見つからないときは Teams の［Workflows］アプリ →［新規作成］→ 検索「webhook」→ テンプレート「Webhook 要求を受信したらチャットに投稿する」（英語名 Post to a chat when a webhook request is received）で作り、できたフローを Power Automate で開いて 4 の形に直す
 3. トリガーの設定で［フローをトリガーできるユーザー］＝［**誰でも**］
 4. ［＋］→ Microsoft Teams の［**チャットまたはチャネルでカードを投稿する**］
    - 投稿者：**Flow bot**
