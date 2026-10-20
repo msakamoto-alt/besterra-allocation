@@ -99,7 +99,8 @@ const TorihikisakiView = {
   NEW_METHOD_LABELS: { sansan: '名刺・Sansan取込で登録', hojin: '法人番号で登録', dup: '既存社を複製して登録', quick: '名前だけ先行登録' },
 
   SYSTEM_BY_NO: { 60: 'tera', 61: 'obc_onpre', 62: 'obc_cloud', 63: 'salesforce', 64: 'new_erp', 128: 'bakuraku', 129: 'bill_one' },
-  SYSTEM_LABEL: { tera: 'teraServation', obc_onpre: '勘定奉行(オンプレ)', obc_cloud: '勘定奉行クラウド', salesforce: 'Salesforce', new_erp: '新ERP', bakuraku: 'バクラク', bill_one: 'Bill One' },
+  SYSTEM_LABEL: { tera: 'teraServation', obc_onpre: '勘定奉行(オンプレ)', obc_cloud: '勘定奉行クラウド', salesforce: 'Salesforce', new_erp: '新ERP', bakuraku: 'バクラク', bill_one: 'Bill One',
+    torihikisaki_code: '取引先番号（親コード・Salesforce が採番）' }, // 2026-10-20 与信設計書 第4版: sf-intake が system_code に入れる 5 桁（枝番はハブが本登録のときに付ける＝次の作業）
   // システム連携状況。
   // 🔴実態＝自動連携しているシステムは現時点で一つも無い（2026-08-26 坂本さん指摘で訂正）。
   //   tera と 勘定奉行(オンプレ) は同じ取引先コードを共有しているが、各システムへの登録は人が手で転記している。
