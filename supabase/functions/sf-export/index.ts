@@ -28,10 +28,14 @@
 //   company_ids … 会社マスタIDの配列で対象を絞る（試し流し・個別再送）
 //   limit   … 先頭 N 社だけ（試し流し用）
 //   writeback … true のとき upsert で返った Account Id を hub の system_code(system='salesforce') へ保存（既定 false）
+//   code_readback … 親コードの読み返し（2026-10-20.2）。省略＝接続先が SF_CODE_ISSUER_ORG_IDS にあれば書く・無ければ何もしない／
+//              'preview'＝書かずに件数と見本だけ返す（試しの org で確かめる用）／'off'＝しない。書く指定は body ではできない（Secret だけ）
 //
 // 必要な Secrets：
 //   SF_EXPORT_INSTANCE_URL / SF_EXPORT_CLIENT_ID / SF_EXPORT_CLIENT_SECRET
 //   SF_EXPORT_ALLOWED_ORG_IDS … 書込を許す org ID（15桁・カンマ区切り）。本番 org を誤って向けても書かない安全弁
+//   SF_CODE_ISSUER_ORG_IDS … 取引先番号の親コードを振る正の org ID（15桁・カンマ区切り）。ここにある org から配信のあとに
+//              親コード（Account.AccountCode__c）を読み返してハブに控える。切り替えまでは空（dev6 の試しの番号を本番のハブに書かない）
 //   IMPORT_SECRET（sf-import と共通）
 //
 // 安全鉄則：
@@ -54,7 +58,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-10-20.1'; // 連携ログ meta.version（画面の「版」に出る）。2026-10-20: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）
+const VERSION = '2026-10-20.2'; // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／.2: 配信のあとに SF の親コードを読み返してハブに控える（坂本さん「B にしましょう」）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -93,6 +97,7 @@ function diffFields(rec: Record<string, unknown>, cur: Record<string, unknown> |
 const KEEP_IF_EMPTY = new Set(['HubCompanyId__c', 'Name', 'Business_Partners_Code__c']);
 const LOG = 'integration_log';   // 取引先マスタの連携ログ
 const SYSTEM = 'salesforce';
+const CODE_SYSTEM = 'torihikisaki_code'; // 取引先番号の親コード（5桁）を system_code に持つ札（sf-intake と同じ）
 const DIRECT_SETTLE_MS = 3000; // direct: 保存の残りのトランザクションが確定するのを待つ
 const FULL_LOCK_WINDOW_SEC = 120; // 全件配信の同時実行ガード：この秒数以内に別の全件配信が開始済みなら書かずに見送る（sf_export_lock.sql）
 
@@ -367,6 +372,68 @@ async function sfUpdateBatch(sf: Sf, records: Record<string, unknown>[]): Promis
   return body as SfResult[];
 }
 
+// ---------------- 親コードの読み返し（与信設計書 第4版・2026-10-20 坂本さん「B にしましょう」） ----------------
+// SF が取引先を作ったときに振った取引先番号の親コード（Account.AccountCode__c・5桁）を読み返し、ハブの system_code(system='torihikisaki_code') に控える。
+// 外注先などハブで先に登録された会社は、配信で SF に届いた時点で SF が親コードを振る。ハブがそれを知らないと PROCES.S のコード（例 10002-F001）を組めない。
+// 切り替えの一斉付与（既存の会社に SF がまとめて振る）も、そのあとの全件配信で同じ道を通ってハブに戻る。
+// 書くのは接続先 org が SF_CODE_ISSUER_ORG_IDS（親コードを振る正の org）にあるときだけ＝試しの org（dev6 など）が振った番号を本番のハブに書かない。
+// 一度付いた番号は変えない＝ハブに別の番号が付いていたら上書きせず「食い違い」、同じ番号が別の会社に付いていたら「衝突」として返す。
+type CodeReadback = {
+  mode: 'off' | 'preview' | 'write'; read: number; written: number; would_write: number; unchanged: number; mismatch: number; conflict: number; invalid: number;
+  samples: { company_id: string; code: string; note: string }[];
+};
+function emptyReadback(mode: CodeReadback['mode']): CodeReadback {
+  return { mode, read: 0, written: 0, would_write: 0, unchanged: 0, mismatch: 0, conflict: 0, invalid: 0, samples: [] };
+}
+async function readBackCodes(admin: Admin, sf: Sf, companyIds: string[], mode: CodeReadback['mode'], who: string): Promise<CodeReadback> {
+  const rb = emptyReadback(mode);
+  if (mode === 'off' || !companyIds.length) return rb;
+  const sfCode = new Map<string, string>(); // 会社マスタID → SF が振った親コード
+  for (const c of chunks(companyIds, 200)) {
+    for (const a of await sfQuery(sf, `SELECT HubCompanyId__c, AccountCode__c FROM Account WHERE HubCompanyId__c IN (${soqlIn(c)}) AND AccountCode__c != null`)) {
+      sfCode.set(String(a.HubCompanyId__c), String(a.AccountCode__c));
+    }
+  }
+  rb.read = sfCode.size;
+  if (!sfCode.size) return rb;
+  const hubCode = new Map<string, string>(); // 会社マスタID → ハブに控えてある親コード
+  const holder = new Map<string, string>();  // 親コード → それを持つ会社マスタID
+  for (const c of chunks([...sfCode.keys()], 500)) {
+    const { data, error } = await admin.from('system_code').select('company_id,code').eq('system', CODE_SYSTEM).in('company_id', c);
+    if (error) throw new Error('system_code 読取失敗（親コード）: ' + error.message);
+    for (const r of (data || []) as { company_id: string; code: string }[]) { hubCode.set(String(r.company_id), String(r.code)); holder.set(String(r.code), String(r.company_id)); }
+  }
+  for (const c of chunks([...new Set(sfCode.values())], 500)) {
+    const { data, error } = await admin.from('system_code').select('company_id,code').eq('system', CODE_SYSTEM).in('code', c);
+    if (error) throw new Error('system_code 読取失敗（親コード）: ' + error.message);
+    for (const r of (data || []) as { company_id: string; code: string }[]) holder.set(String(r.code), String(r.company_id));
+  }
+  const rows: { company_id: string; system: string; code: string }[] = [];
+  for (const [cid, code] of sfCode) {
+    if (!/^\d{5}$/.test(code)) { rb.invalid++; continue; }
+    const cur = hubCode.get(cid);
+    if (cur === code) { rb.unchanged++; continue; }
+    if (cur) { rb.mismatch++; if (rb.samples.length < 20) rb.samples.push({ company_id: cid, code, note: `ハブには ${cur} が付いている（上書きしない）` }); continue; }
+    const h = holder.get(code);
+    if (h && h !== cid) { rb.conflict++; if (rb.samples.length < 20) rb.samples.push({ company_id: cid, code, note: `同じ番号が会社マスタ ${h} に付いている` }); continue; }
+    rows.push({ company_id: cid, system: CODE_SYSTEM, code });
+  }
+  rb.would_write = rows.length;
+  if (mode === 'preview') {
+    for (const r of rows) { if (rb.samples.length >= 20) break; rb.samples.push({ company_id: r.company_id, code: r.code, note: '控える（試し・書いていない）' }); }
+    return rb;
+  }
+  for (const c of chunks(rows, 500)) {
+    const { error } = await admin.from('system_code').upsert(c, { onConflict: 'company_id,system' });
+    if (error) throw new Error('system_code 登録失敗（親コード）: ' + error.message);
+    rb.written += c.length;
+    const hist = await admin.from('company_history').insert(c.map((r) => ({ company_id: r.company_id, table_name: 'system_code', column_name: CODE_SYSTEM, old_value: null,
+      new_value: `取引先番号の親コード ${r.code}（Salesforce が振った番号を配信のあとに読み返した）`, changed_by: who })));
+    if (hist.error) console.error('company_history 記録失敗（親コードは控え済み）:', hist.error.message);
+  }
+  return rb;
+}
+
 // ---------------- 連携ログ（integration_log・1実行1行） ----------------
 const SOURCES: Record<string, { email: string; trigger: string }> = {
   cron:    { email: 'sf-export（自動実行）',       trigger: '自動（夜間・全件）' },
@@ -592,14 +659,25 @@ Deno.serve(async (req) => {
         wroteBack += c.length;
       }
     }
+    // 親コードの読み返し（2026-10-20.2）。書くのは接続先が SF_CODE_ISSUER_ORG_IDS にあるときだけ。失敗しても配信の結果は返す
+    const issuerOrgs = (Deno.env.get('SF_CODE_ISSUER_ORG_IDS') || '').split(',').map((s) => s.trim().slice(0, 15)).filter(Boolean);
+    const rbMode: CodeReadback['mode'] = body.code_readback === 'preview' ? 'preview' : body.code_readback === 'off' ? 'off' : issuerOrgs.includes(sf.orgId) ? 'write' : 'off';
+    let codeRb = emptyReadback(rbMode);
+    try {
+      codeRb = await readBackCodes(admin, sf, records.map((r) => String(r.HubCompanyId__c)), rbMode, resolveSource(caller, body.source).email);
+    } catch (err) {
+      failed.push({ company_id: '-', name: '(親コードの読み返し)', message: String((err as Error)?.message || err).slice(0, 200) });
+    }
     if (heldLock) { await releaseLock(admin, heldLock); heldLock = null; }
     const logged = await logRun(admin, { kind: 'run', action: 'export', caller, source: body.source, sf, t0,
-      counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, changed: totalChanged },
+      counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, changed: totalChanged,
+        parent_code_read: codeRb.read, parent_code_written: codeRb.written, parent_code_would_write: codeRb.would_write, parent_code_mismatch: codeRb.mismatch, parent_code_conflict: codeRb.conflict },
       companyIds: onlyIds, reason: body.reason, payload,
-      meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty], guard: guardNote } });
+      meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, code_readback: rbMode, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty], guard: guardNote } });
     return json({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
       targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
       failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack,
+      parent_code: codeRb,
       changed: totalChanged, changes_sample: items.slice(0, 5),
       log_written: logged, elapsed_ms: Date.now() - t0 });
   } catch (e) {
