@@ -54,20 +54,23 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-09-11.2'; // 連携ログ meta.version（画面の「版」に出る）
+const VERSION = '2026-10-20.1'; // 連携ログ meta.version（画面の「版」に出る）。2026-10-20: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
-  Name: '取引先名', NameKana__c: '取引先名称（カナ）', CorporateNumber__c: '法人番号', RepresentativeName__c: '代表者名',
+  Name: '取引先名', NameKana__c: '取引先名称（カナ）', HubCorporateNumber__c: '法人番号（ハブ確定）', RepresentativeName__c: '代表者名',
   InvoiceRegNo__c: '適格請求書発行事業者登録番号', InvoiceStatus__c: '適格請求書 該当/非該当', IsNonQualified__c: '非適格事業者',
   BillingPostalCode: '郵便番号', BillingState: '都道府県', BillingCity: '市区郡', BillingStreet: '町名・番地', HeadOfficeAddress__c: '本社所在地',
   Phone: '電話', Fax: 'FAX', PartnerType__c: '取引先種別', IsActive__c: '有効フラグ', LastDealDate__c: '最終取引日', Capital__c: '資本金',
   HubRemarks__c: '会社マスタ備考', CreditLimit__c: '与信額', Licenses__c: '建設業許可（業種）', ConstructionPermitAuthority__c: '建設業許可 大臣/知事',
   ConstructionPermitNo__c: '建設業許可番号', WastePermitNo__c: '産廃収集運搬許可番号', BugyoPartnerCode__c: '奉行 取引先コード',
   Business_Partners_Code__c: '取引先コード', HubCompanyId__c: '会社マスタID',
+  // 与信設計書 第4版（2026-10-20）: 登録状態（仮登録＝申請中の箱／本登録）・与信不要（公共など）・与信の種類/期限/決裁日/使用額（正本はハブ credit_line）
+  RegistrationStage__c: '登録状態', CreditExempt__c: '与信不要（公共など）', CreditLimitType__c: '与信限度の種類', CreditExpiry__c: '与信の適用期限',
+  CreditDecisionDate__c: '与信の決裁日', CreditUsedAmount__c: '与信の使用額',
 };
 const MULTI_FIELDS = new Set(['PartnerType__c', 'Licenses__c']);
-const NUM_FIELDS = new Set(['Capital__c', 'CreditLimit__c']);
+const NUM_FIELDS = new Set(['Capital__c', 'CreditLimit__c', 'CreditUsedAmount__c']);
 // 差分比較用の正規化（空＝null・複数選択は順序無視・数値は数で）
 function normVal(f: string, v: unknown): string | null {
   if (v === null || v === undefined || v === '') return null;
@@ -175,7 +178,7 @@ type Hub = {
   types: Map<string, string[]>;
   codes: Map<string, Record<string, string>>;
   permits: Map<string, Record<string, unknown>[]>;
-  credit: Map<string, number>;
+  credit: Map<string, Record<string, unknown>>; // credit_line の行（limit_amount / limit_type / valid_until / approved_on / used_amount）
 };
 
 // ハブ読取。ids を渡すとその会社だけ（queue／company_ids 指定）、無ければ全件（ページング）
@@ -199,7 +202,7 @@ async function fetchRows(admin: Admin, table: string, select: string, order: str
 
 async function loadHub(admin: Admin, ids: string[] | null): Promise<Hub> {
   const companies = await fetchRows(admin, 'company',
-    'company_id,official_name,name_kana,corporate_number,representative_name,postal_code,prefecture,address_line,building,phone,fax,invoice_reg_number,invoice_status,capital_amount,remarks,last_trade_on,is_suspended', 'company_id', ids);
+    'company_id,official_name,name_kana,corporate_number,representative_name,postal_code,prefecture,address_line,building,phone,fax,invoice_reg_number,invoice_status,capital_amount,remarks,last_trade_on,is_suspended,registration_stage,credit_exempt', 'company_id', ids);
   const types = new Map<string, string[]>();
   for (const t of await fetchRows(admin, 'company_type', 'company_id,type_code', 'company_id', ids)) {
     const k = String(t.company_id); types.set(k, [...(types.get(k) || []), String(t.type_code)]);
@@ -212,9 +215,9 @@ async function loadHub(admin: Admin, ids: string[] | null): Promise<Hub> {
   for (const p of await fetchRows(admin, 'permit_license', 'company_id,permit_type,construction_types,permit_authority,permit_number', 'permit_id', ids)) {
     const k = String(p.company_id); permits.set(k, [...(permits.get(k) || []), p]);
   }
-  const credit = new Map<string, number>();
-  for (const c of await fetchRows(admin, 'credit_line', 'company_id,limit_amount', 'credit_id', ids)) {
-    if (c.limit_amount != null) credit.set(String(c.company_id), Number(c.limit_amount));
+  const credit = new Map<string, Record<string, unknown>>();
+  for (const c of await fetchRows(admin, 'credit_line', 'company_id,limit_amount,limit_type,valid_until,approved_on,used_amount', 'credit_id', ids)) {
+    credit.set(String(c.company_id), c); // 1社1行（複数あれば後の行）
   }
   return { companies, types, codes, permits, credit };
 }
@@ -230,13 +233,14 @@ function buildRecord(hub: Hub, c: Record<string, unknown>, keepIfEmpty: Set<stri
   const bld = String(c.building || '').trim();
   const wasteNo = waste ? String(waste.permit_number || '') : '';
   const licenses = cons ? convertPermit(cons.construction_types as string) : [];
+  const cr = hub.credit.get(cid);
   const rec: Record<string, unknown> = {
     HubCompanyId__c: cid,
     Name: c.official_name,
     Business_Partners_Code__c: codes.tera,
     BugyoPartnerCode__c: codes.obc_onpre,
     NameKana__c: c.name_kana,
-    CorporateNumber__c: c.corporate_number,
+    HubCorporateNumber__c: c.corporate_number,
     RepresentativeName__c: c.representative_name,
     InvoiceRegNo__c: c.invoice_reg_number,
     InvoiceStatus__c: c.invoice_status,
@@ -253,7 +257,13 @@ function buildRecord(hub: Hub, c: Record<string, unknown>, keepIfEmpty: Set<stri
     LastDealDate__c: c.last_trade_on,
     Capital__c: c.capital_amount,
     HubRemarks__c: c.remarks,
-    CreditLimit__c: hub.credit.get(cid),
+    CreditLimit__c: cr && cr.limit_amount != null ? Number(cr.limit_amount) : null,
+    CreditLimitType__c: creditType(cr ? (cr.limit_type as string) : null),
+    CreditExpiry__c: cr ? cr.valid_until : null,
+    CreditDecisionDate__c: cr ? cr.approved_on : null,
+    CreditUsedAmount__c: cr && cr.used_amount != null ? Number(cr.used_amount) : null,
+    CreditExempt__c: c.credit_exempt === true,
+    RegistrationStage__c: c.registration_stage === 'full' ? '本登録' : '仮登録',
     Licenses__c: licenses.join(';'),
     ConstructionPermitAuthority__c: cons ? cons.permit_authority : null,
     ConstructionPermitNo__c: cons ? cons.permit_number : null,
@@ -270,6 +280,14 @@ function buildRecord(hub: Hub, c: Record<string, unknown>, keepIfEmpty: Set<stri
     }
   }
   return rec;
+}
+
+// 与信限度の種類（ハブ credit_line.limit_type）→ SF の選択リスト（普通限度／臨時限度・規程第5条）。どちらでもなければ送らない（null）
+function creditType(v: string | null): string | null {
+  const s = String(v || '');
+  if (/臨時/.test(s)) return '臨時限度';
+  if (/普通|通常/.test(s)) return '普通限度';
+  return null;
 }
 
 // ---------------- Salesforce ----------------
