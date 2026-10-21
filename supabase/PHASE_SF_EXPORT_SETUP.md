@@ -147,3 +147,30 @@ sf-export の実行記録は**アプリ共通の監査ログ（audit_logs）で�
 - [ ] DRY 要決定 A〜H の回答を `buildRecord` の上書き規則に反映（社名保留31・住所上書き・電話FAXは空のみ・許可は空のみ 等）。「SF が空のときだけ埋める」項目は初回 export の `keep_if_empty` に列挙し、2回目以降は外す
 - [ ] 本番で `link` → `dry_run` → 塩田さん確認 → `export`
 - [ ] `--writeback` を有効化し、以後は日次スケジュール（pg_cron・sf-import と同型）
+
+## 複数の送り先（dev6＋dev7・sf-export 2026-10-21.3／sf-intake 2026-10-21.2）
+
+dev7 の UAT に向けて、配信を 2 つ以上の org へ同時に行える（坂本さん 2026-10-21）。トリガ・cron の呼び方は変えない（1 回の呼び出しで全部の送り先に順に配る）。
+
+### Secret `SF_EXPORT_TARGETS`（JSON の配列・Edge Functions → Secrets）
+
+```json
+[
+  {"name":"dev6","org_id":"00Dfd000002CDWc","instance_url":"https://besterra--dev6.sandbox.my.salesforce.com","client_id":"…","client_secret":"…","enabled":true},
+  {"name":"dev7","org_id":"00D…（dev7 の 15 桁）","instance_url":"https://besterra--dev7.sandbox.my.salesforce.com","client_id":"…","client_secret":"…","enabled":true}
+]
+```
+
+- この Secret があれば、従来の `SF_EXPORT_INSTANCE_URL / CLIENT_ID / CLIENT_SECRET` は使わない（残しておいてよい）。無ければ従来どおり 1 件。
+- `org_id` は接続先の確認用（違っていれば止まる）。`SF_EXPORT_ALLOWED_ORG_IDS` にも両方の org を入れる。
+- `enabled:false` で一時的に外せる。`body.target`（name）で 1 つに絞って手動実行できる（例: dev7 だけ全件配信）。
+- 応答は 1 件目の結果が先頭に（今までの読み方のまま）、`results` に全部。どれかが失敗すると HTTP 207。
+- `sf-intake` の書き戻し（取引先番号を SF へ）は、箱を送ってきた org（body.org_id）に一致する送り先へ行う。一致が無ければ書き戻さない（Apex が応答の番号を書く）。
+
+### dev7 を足すときの手順
+
+1. dev7 に接続アプリケーション（クライアント認証フロー・実行ユーザー＝連携用のユーザー）を作り、client_id と client_secret を控える（dev6 と同じ作り）。実行ユーザーに権限セット `Credit_Access`・`TorihikiHubKensho`（取引先の項目の参照・編集）を付ける。
+2. dev7 に与信・取引先番号の一式（AccountNumbering／HubIntake／取引先の新項目）を配備しておく（無い org へ向けると SOQL が落ちる）。
+3. `SF_EXPORT_TARGETS` に dev7 を足し、`SF_EXPORT_ALLOWED_ORG_IDS` に dev7 の org を足す → `sf-export`（2026-10-21.3）と `sf-intake`（2026-10-21.2）を貼り直す。
+4. `action=dry_run, target='dev7'` で確かめ → `action=link`（社名で突合）→ `action=export, mode=full, target='dev7'` で初回の全件配信。
+5. 以後は保存のたびの即時配信と夜間の全件配信が、dev6 と dev7 の両方へ届く。

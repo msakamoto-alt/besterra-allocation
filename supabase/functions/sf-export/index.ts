@@ -28,10 +28,12 @@
 //   company_ids … 会社マスタIDの配列で対象を絞る（試し流し・個別再送）
 //   limit   … 先頭 N 社だけ（試し流し用）
 //   writeback … true のとき upsert で返った Account Id を hub の system_code(system='salesforce') へ保存（既定 false）
+//   target  … 送り先の名前（SF_EXPORT_TARGETS の name）。省略＝有効な送り先すべてに順に配る（2026-10-21.3）
 //   rekey   … action の 1 つ（2026-10-21.1）。鍵の付け替え（parent_code_01_migrate.sql）のあと 1 回だけ：SF の HubCompanyId__c（旧の 8 桁）を
 //              新しい鍵（取引先番号・5 桁）に書き換え、AccountCode__c にも入れる。company.legacy_company_id を見る
 //
 // 必要な Secrets：
+//   SF_EXPORT_TARGETS（JSON の配列・複数の送り先＝dev6＋dev7。無ければ下の 3 つで 1 件）
 //   SF_EXPORT_INSTANCE_URL / SF_EXPORT_CLIENT_ID / SF_EXPORT_CLIENT_SECRET
 //   SF_EXPORT_ALLOWED_ORG_IDS … 書込を許す org ID（15桁・カンマ区切り）。本番 org を誤って向けても書かない安全弁
 //   SF_PROD_ORG_IDS … 本番 SF の org ID（15桁・カンマ区切り・sf-intake と共通）。ここにある org へは試験の会社（company.is_test）を配信しない。
@@ -58,7 +60,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-10-21.2'; // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに
+const VERSION = '2026-10-21.3'; // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -296,21 +298,52 @@ function creditType(v: string | null): string | null {
 }
 
 // ---------------- Salesforce ----------------
-type Sf = { base: string; token: string; orgId: string; isSandbox: boolean; orgName: string };
+// 送り先（2026-10-21.3・坂本さん「dev7 の UAT に向けて配信先を複数に」）:
+//   Secret SF_EXPORT_TARGETS ＝ JSON の配列 [{ "name":"dev6", "org_id":"00Dfd000002CDWc", "instance_url":"https://…", "client_id":"…", "client_secret":"…", "enabled":true }, …]
+//   があればその全部へ順に配る（body.target で名前を 1 つに絞れる）。無ければ従来の SF_EXPORT_INSTANCE_URL / CLIENT_ID / CLIENT_SECRET を 1 件（name='default'）。
+//   org_id を書いておくと、接続先が違ったときに止まる（Secrets の貼り間違いの安全弁）。SF_EXPORT_ALLOWED_ORG_IDS の検査は今までどおり全部に掛かる。
+type Target = { name: string; orgId: string; base: string; clientId: string; clientSecret: string };
+type Sf = { name: string; base: string; token: string; orgId: string; isSandbox: boolean; orgName: string };
 
-async function sfConnect(): Promise<Sf> {
-  const base = (Deno.env.get('SF_EXPORT_INSTANCE_URL') || '').replace(/\/+$/, '');
-  const clientId = Deno.env.get('SF_EXPORT_CLIENT_ID');
-  const clientSecret = Deno.env.get('SF_EXPORT_CLIENT_SECRET');
-  if (!base || !clientId || !clientSecret) throw new Error('SF_EXPORT_INSTANCE_URL / SF_EXPORT_CLIENT_ID / SF_EXPORT_CLIENT_SECRET のSecretsが未設定です');
-  const tokenRes = await fetch(base + '/services/oauth2/token', {
+function resolveTargets(wanted: unknown): Target[] {
+  const raw = (Deno.env.get('SF_EXPORT_TARGETS') || '').trim();
+  let list: Target[] = [];
+  if (raw) {
+    let arr: unknown;
+    try { arr = JSON.parse(raw); } catch (e) { throw new Error('SF_EXPORT_TARGETS が JSON として読めません: ' + String((e as Error)?.message || e)); }
+    if (!Array.isArray(arr)) throw new Error('SF_EXPORT_TARGETS は配列にしてください');
+    for (const x of arr as Record<string, unknown>[]) {
+      if (x.enabled === false) continue;
+      const tg: Target = { name: String(x.name || ''), orgId: String(x.org_id || '').slice(0, 15), base: String(x.instance_url || '').replace(/\/+$/, ''),
+        clientId: String(x.client_id || ''), clientSecret: String(x.client_secret || '') };
+      if (!tg.name || !tg.base || !tg.clientId || !tg.clientSecret) throw new Error('SF_EXPORT_TARGETS の項目が足りません（name / instance_url / client_id / client_secret）: ' + (tg.name || '(名前なし)'));
+      list.push(tg);
+    }
+  } else {
+    const base = (Deno.env.get('SF_EXPORT_INSTANCE_URL') || '').replace(/\/+$/, '');
+    const clientId = Deno.env.get('SF_EXPORT_CLIENT_ID') || '';
+    const clientSecret = Deno.env.get('SF_EXPORT_CLIENT_SECRET') || '';
+    if (!base || !clientId || !clientSecret) throw new Error('SF_EXPORT_TARGETS か、SF_EXPORT_INSTANCE_URL / SF_EXPORT_CLIENT_ID / SF_EXPORT_CLIENT_SECRET の Secrets が未設定です');
+    list = [{ name: 'default', orgId: '', base, clientId, clientSecret }];
+  }
+  if (wanted) {
+    const w = String(wanted);
+    list = list.filter((x) => x.name === w);
+    if (!list.length) throw new Error(`送り先 ${w} が SF_EXPORT_TARGETS にありません`);
+  }
+  if (!list.length) throw new Error('有効な送り先がありません（SF_EXPORT_TARGETS の enabled を確かめてください）');
+  return list;
+}
+
+async function sfConnect(tg: Target): Promise<Sf> {
+  const tokenRes = await fetch(tg.base + '/services/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }),
+    body: new URLSearchParams({ grant_type: 'client_credentials', client_id: tg.clientId, client_secret: tg.clientSecret }),
   });
   const tokenBody = await tokenRes.json();
-  if (!tokenRes.ok || !tokenBody.access_token) throw new Error('SFトークン取得失敗: ' + JSON.stringify(tokenBody).slice(0, 300));
-  const sf: Sf = { base, token: tokenBody.access_token, orgId: '', isSandbox: false, orgName: '' };
+  if (!tokenRes.ok || !tokenBody.access_token) throw new Error(`SFトークン取得失敗（${tg.name}）: ` + JSON.stringify(tokenBody).slice(0, 300));
+  const sf: Sf = { name: tg.name, base: tg.base, token: tokenBody.access_token, orgId: '', isSandbox: false, orgName: '' };
   const org = await sfQuery(sf, 'SELECT Id, Name, IsSandbox FROM Organization');
   sf.orgId = String(org[0]?.Id || '').slice(0, 15);
   sf.isSandbox = !!org[0]?.IsSandbox;
@@ -319,6 +352,7 @@ async function sfConnect(): Promise<Sf> {
   if (!allowed.includes(sf.orgId)) {
     throw new Error(`接続先 org ${sf.orgId}（${sf.orgName}・sandbox=${sf.isSandbox}）は SF_EXPORT_ALLOWED_ORG_IDS に含まれていません。安全のため中止しました`);
   }
+  if (tg.orgId && tg.orgId !== sf.orgId) throw new Error(`送り先 ${tg.name} の org_id（${tg.orgId}）と接続先（${sf.orgId}・${sf.orgName}）が違います。SF_EXPORT_TARGETS を確かめてください`);
   return sf;
 }
 
@@ -384,8 +418,8 @@ function resolveSource(caller: string, source: unknown) {
   return SOURCES[String(source || '')] || SOURCE_UNKNOWN;
 }
 function targetLabel(sf: Sf | null): string {
-  if (sf) return `${sf.orgName}（${sf.orgId}・${sf.isSandbox ? 'sandbox' : '本番'}）`;
-  return (Deno.env.get('SF_EXPORT_INSTANCE_URL') || '').replace(/^https?:\/\//, '');
+  if (sf) return (sf.name && sf.name !== 'default' ? sf.name + ': ' : '') + `${sf.orgName}（${sf.orgId}・${sf.isSandbox ? 'sandbox' : '本番'}）`;
+  return (Deno.env.get('SF_EXPORT_INSTANCE_URL') || '').replace(/^https?:\/\//, '') || 'SF_EXPORT_TARGETS';
 }
 // 記録の失敗は配信本体を巻き添えにしない（記録できたかは応答の log_written で可視化）
 async function logRun(admin: Admin, e: { kind: 'run' | 'error' | 'skip'; action: string; caller: string; source: unknown; sf: Sf | null;
@@ -478,170 +512,192 @@ Deno.serve(async (req) => {
       }
     }
 
-    // --- 接続（org ガード込み）・ハブ読取・SF 現状読取 ---
-    const sf = await sfConnect();
-    if (logCtx) logCtx.sf = sf;
+    // --- ハブ読取（送り先に依らない）---
     const hub = await loadHub(admin, onlyIds);
-    const targetCodes = onlyIds ? [...new Set(hub.companies.map((c) => (hub.codes.get(String(c.company_id)) || {}).tera).filter((x): x is string => !!x))] : [];
-    const sfAccounts = await loadSfAccounts(sf, onlyIds ? { ids: onlyIds, codes: targetCodes } : null);
-    const sfByHub = new Map<string, Record<string, unknown>>();
-    const sfByCode = new Map<string, Record<string, unknown>>();
-    for (const a of sfAccounts) {
-      if (a.HubCompanyId__c) sfByHub.set(String(a.HubCompanyId__c), a);
-      if (a.Business_Partners_Code__c) sfByCode.set(String(a.Business_Partners_Code__c), a);
-    }
-    const hubByNorm = new Map<string, string[]>();
-    for (const c of hub.companies) {
-      const k = normName(c.official_name as string); hubByNorm.set(k, [...(hubByNorm.get(k) || []), String(c.company_id)]);
-    }
 
-    // ===== link：会社マスタID無しの SF 取引先を社名で突合してキーを付ける（全件モードのみ） =====
-    if (action === 'link') {
-      if (onlyIds) return json({ error: 'link は全件モードで実行してください（company_ids／direct は不可）' }, 400);
-      const unlinked = sfAccounts.filter((a) => !a.HubCompanyId__c);
-      const seenHub = new Set<string>();
-      const updates: Record<string, unknown>[] = [];
-      const ambiguous: string[] = [];
-      const nomatch: string[] = [];
-      for (const a of unlinked) {
-        const cands = (hubByNorm.get(normName(a.Name as string)) || []).filter((cid) => !sfByHub.has(cid));
-        if (cands.length !== 1) { (cands.length ? ambiguous : nomatch).push(String(a.Name)); continue; }
-        const cid = cands[0];
-        if (seenHub.has(cid)) { ambiguous.push(String(a.Name)); continue; }
-        const tera = (hub.codes.get(cid) || {}).tera;
-        const codeHolder = tera ? sfByCode.get(tera) : undefined;
-        if (codeHolder && codeHolder.Id !== a.Id) { ambiguous.push(`${a.Name}（コード${tera}は別レコードに付与済み）`); continue; }
-        seenHub.add(cid);
-        const u: Record<string, unknown> = { Id: a.Id, HubCompanyId__c: cid };
-        if (tera && String(tera).length <= 4 && !a.Business_Partners_Code__c) u.Business_Partners_Code__c = tera;
-        updates.push(u);
+    // --- 送り先ごとに: 接続（org ガード込み）→ SF 現状読取 → 突合 → link／rekey／dry_run／export（2026-10-21.3）---
+    const runTarget = async (tg: Target): Promise<Record<string, unknown>> => {
+      // --- 接続（org ガード込み）・ハブ読取・SF 現状読取 ---
+      const sf = await sfConnect(tg);
+      if (logCtx) logCtx.sf = sf;
+      const targetCodes = onlyIds ? [...new Set(hub.companies.map((c) => (hub.codes.get(String(c.company_id)) || {}).tera).filter((x): x is string => !!x))] : [];
+      const sfAccounts = await loadSfAccounts(sf, onlyIds ? { ids: onlyIds, codes: targetCodes } : null);
+      const sfByHub = new Map<string, Record<string, unknown>>();
+      const sfByCode = new Map<string, Record<string, unknown>>();
+      for (const a of sfAccounts) {
+        if (a.HubCompanyId__c) sfByHub.set(String(a.HubCompanyId__c), a);
+        if (a.Business_Partners_Code__c) sfByCode.set(String(a.Business_Partners_Code__c), a);
       }
-      let ok = 0; const failed: { id: string; message: string }[] = [];
-      for (const c of chunks(updates, BATCH)) {
-        const res = await sfUpdateBatch(sf, c);
-        res.forEach((r, j) => { if (r.success) ok++; else failed.push({ id: String(c[j].Id), message: (r.errors || []).map((e) => e.message).join('; ').slice(0, 200) }); });
+      const hubByNorm = new Map<string, string[]>();
+      for (const c of hub.companies) {
+        const k = normName(c.official_name as string); hubByNorm.set(k, [...(hubByNorm.get(k) || []), String(c.company_id)]);
       }
-      const logged = await logRun(admin, { kind: 'run', action: 'link', caller, source: body.source, sf, t0,
-        counts: { linked: ok, failed: failed.length, unlinked_before: unlinked.length, ambiguous: ambiguous.length, nomatch: nomatch.length }, meta: { mode } });
-      return json({ ok: true, action, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
-        unlinked_before: unlinked.length, linked: ok, failed: failed.length, ambiguous: ambiguous.length, nomatch: nomatch.length,
-        failed_samples: failed.slice(0, 20), ambiguous_samples: ambiguous.slice(0, 20), log_written: logged, elapsed_ms: Date.now() - t0 });
-    }
 
-    // ===== rekey：鍵の付け替えのあと 1 回だけ。SF の HubCompanyId__c（旧の 8 桁）を新しい鍵に書き換え、AccountCode__c にも入れる =====
-    if (action === 'rekey') {
-      // 旧の鍵を持つ会社を全部読む（PostgREST は 1 回 1,000 行までなので 1,000 行ずつ。2026-10-21 の 1 回目は 1,000 件で止まった）
-      const byLegacy = new Map<string, string>();
-      for (let from = 0; ; from += 1000) {
-        const { data: lg, error: lgErr } = await admin.from('company').select('company_id,legacy_company_id').not('legacy_company_id', 'is', null).order('company_id', { ascending: true }).range(from, from + 999);
-        if (lgErr) throw new Error('company 読取失敗（legacy_company_id）: ' + lgErr.message);
-        for (const r of (lg || []) as { company_id: string; legacy_company_id: string }[]) byLegacy.set(String(r.legacy_company_id), String(r.company_id));
-        if (!lg || lg.length < 1000) break;
+      // ===== link：会社マスタID無しの SF 取引先を社名で突合してキーを付ける（全件モードのみ） =====
+      if (action === 'link') {
+        if (onlyIds) throw new Error('link は全件モードで実行してください（company_ids／direct は不可）');
+        const unlinked = sfAccounts.filter((a) => !a.HubCompanyId__c);
+        const seenHub = new Set<string>();
+        const updates: Record<string, unknown>[] = [];
+        const ambiguous: string[] = [];
+        const nomatch: string[] = [];
+        for (const a of unlinked) {
+          const cands = (hubByNorm.get(normName(a.Name as string)) || []).filter((cid) => !sfByHub.has(cid));
+          if (cands.length !== 1) { (cands.length ? ambiguous : nomatch).push(String(a.Name)); continue; }
+          const cid = cands[0];
+          if (seenHub.has(cid)) { ambiguous.push(String(a.Name)); continue; }
+          const tera = (hub.codes.get(cid) || {}).tera;
+          const codeHolder = tera ? sfByCode.get(tera) : undefined;
+          if (codeHolder && codeHolder.Id !== a.Id) { ambiguous.push(`${a.Name}（コード${tera}は別レコードに付与済み）`); continue; }
+          seenHub.add(cid);
+          const u: Record<string, unknown> = { Id: a.Id, HubCompanyId__c: cid };
+          if (tera && String(tera).length <= 4 && !a.Business_Partners_Code__c) u.Business_Partners_Code__c = tera;
+          updates.push(u);
+        }
+        let ok = 0; const failed: { id: string; message: string }[] = [];
+        for (const c of chunks(updates, BATCH)) {
+          const res = await sfUpdateBatch(sf, c);
+          res.forEach((r, j) => { if (r.success) ok++; else failed.push({ id: String(c[j].Id), message: (r.errors || []).map((e) => e.message).join('; ').slice(0, 200) }); });
+        }
+        const logged = await logRun(admin, { kind: 'run', action: 'link', caller, source: body.source, sf, t0,
+          counts: { linked: ok, failed: failed.length, unlinked_before: unlinked.length, ambiguous: ambiguous.length, nomatch: nomatch.length }, meta: { mode } });
+        return ({ ok: true, action, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
+          unlinked_before: unlinked.length, linked: ok, failed: failed.length, ambiguous: ambiguous.length, nomatch: nomatch.length,
+          failed_samples: failed.slice(0, 20), ambiguous_samples: ambiguous.slice(0, 20), log_written: logged, elapsed_ms: Date.now() - t0 });
       }
-      const updates: Record<string, unknown>[] = [];
-      for (const c of chunks([...byLegacy.keys()], 200)) {
-        for (const a of await sfQuery(sf, `SELECT Id, HubCompanyId__c FROM Account WHERE HubCompanyId__c IN (${soqlIn(c)})`)) {
-          const nid = byLegacy.get(String(a.HubCompanyId__c));
-          if (nid) updates.push({ Id: a.Id, HubCompanyId__c: nid, AccountCode__c: nid });
+
+      // ===== rekey：鍵の付け替えのあと 1 回だけ。SF の HubCompanyId__c（旧の 8 桁）を新しい鍵に書き換え、AccountCode__c にも入れる =====
+      if (action === 'rekey') {
+        // 旧の鍵を持つ会社を全部読む（PostgREST は 1 回 1,000 行までなので 1,000 行ずつ。2026-10-21 の 1 回目は 1,000 件で止まった）
+        const byLegacy = new Map<string, string>();
+        for (let from = 0; ; from += 1000) {
+          const { data: lg, error: lgErr } = await admin.from('company').select('company_id,legacy_company_id').not('legacy_company_id', 'is', null).order('company_id', { ascending: true }).range(from, from + 999);
+          if (lgErr) throw new Error('company 読取失敗（legacy_company_id）: ' + lgErr.message);
+          for (const r of (lg || []) as { company_id: string; legacy_company_id: string }[]) byLegacy.set(String(r.legacy_company_id), String(r.company_id));
+          if (!lg || lg.length < 1000) break;
+        }
+        const updates: Record<string, unknown>[] = [];
+        for (const c of chunks([...byLegacy.keys()], 200)) {
+          for (const a of await sfQuery(sf, `SELECT Id, HubCompanyId__c FROM Account WHERE HubCompanyId__c IN (${soqlIn(c)})`)) {
+            const nid = byLegacy.get(String(a.HubCompanyId__c));
+            if (nid) updates.push({ Id: a.Id, HubCompanyId__c: nid, AccountCode__c: nid });
+          }
+        }
+        let ok = 0; const failed: { id: string; message: string }[] = [];
+        for (const c of chunks(updates, BATCH)) {
+          const res = await sfUpdateBatch(sf, c);
+          res.forEach((r, j) => { if (r.success) ok++; else failed.push({ id: String(c[j].Id), message: (r.errors || []).map((e) => e.message).join('; ').slice(0, 200) }); });
+        }
+        const logged = await logRun(admin, { kind: 'run', action: 'rekey', caller, source: body.source, sf, t0,
+          counts: { legacy: byLegacy.size, matched: updates.length, updated: ok, failed: failed.length }, meta: { mode } });
+        return ({ ok: true, action, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
+          legacy: byLegacy.size, matched: updates.length, updated: ok, failed: failed.length, failed_samples: failed.slice(0, 20),
+          note: 'SF の AccountCode__c が別の値で埋まっている org（dev6 の試しの番号）は、先に clear_account_codes_dev6.apex で空にしてから流す',
+          log_written: logged, elapsed_ms: Date.now() - t0 });
+      }
+
+      // ===== dry_run / export：配信対象の組み立てと分類 =====
+      let targets = hub.companies;
+      if (scope === 'active') targets = targets.filter((c) => !c.is_suspended);
+      else targets = targets.filter((c) => !c.is_suspended || sfByHub.has(String(c.company_id))); // 欠番は既存があれば更新のみ
+      // 試験の会社（is_test＝試験の org から来た箱・帯 00001〜09999）は本番 SF（SF_PROD_ORG_IDS）には配信しない（2026-10-21 案 B）
+      const prodOrgs = (Deno.env.get('SF_PROD_ORG_IDS') || '').split(',').map((s) => s.trim().slice(0, 15)).filter(Boolean);
+      const isProdTarget = prodOrgs.includes(sf.orgId);
+      const nTest = targets.filter((c) => c.is_test === true).length;
+      if (isProdTarget) targets = targets.filter((c) => c.is_test !== true);
+      if (limit > 0) targets = targets.slice(0, limit);
+
+      const records: Record<string, unknown>[] = [];
+      const cls = { update: 0, create: 0, code_conflict: 0, skipped_suspended: 0, skipped_test: isProdTarget ? nTest : 0 };
+      const conflicts: { company_id: string; name: string; code: string; holder: string }[] = [];
+      const conflictIds = new Set<string>();
+      for (const c of targets) {
+        const rec = buildRecord(hub, c, keepIfEmpty);
+        const cid = String(c.company_id);
+        const tera = rec.Business_Partners_Code__c ? String(rec.Business_Partners_Code__c) : '';
+        const holder = tera ? sfByCode.get(tera) : undefined;
+        if (holder && String(holder.HubCompanyId__c || '') !== cid) {
+          cls.code_conflict++; conflictIds.add(cid); conflicts.push({ company_id: cid, name: String(c.official_name), code: tera, holder: String(holder.Name) });
+          continue;
+        }
+        if (sfByHub.has(cid)) cls.update++; else cls.create++;
+        records.push(rec);
+      }
+      if (onlyIds) cls.skipped_suspended = hub.companies.length - targets.length; // 欠番で SF に無い＝作らない
+      const fieldFill: Record<string, number> = {};
+      for (const r of records) for (const k of Object.keys(r)) if (r[k] !== null) fieldFill[k] = (fieldFill[k] || 0) + 1;
+
+      if (action === 'dry_run') {
+        const linkable = onlyIds ? null : sfAccounts.filter((a) => !a.HubCompanyId__c && (hubByNorm.get(normName(a.Name as string)) || []).length === 1).length;
+        return ({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
+          hub_companies: hub.companies.length, sf_accounts: sfAccounts.length, sf_linked: sfByHub.size,
+          targets: targets.length, will_update: cls.update, will_create: cls.create, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
+          conflict_samples: conflicts.slice(0, 20), field_fill: fieldFill, sample: records.slice(0, 2),
+          linkable_by_name: linkable,
+          note: '書込は行っていません。code_conflict は取引先コードが SF の別レコードに付いている会社＝先に action=link で解消してください。',
+          elapsed_ms: Date.now() - t0 });
+      }
+
+      // ===== export =====
+      // 送信内容（変わる項目だけ）を送る前に確定しておく＝連携ログの payload
+      const items: { company_id: string; name: string; action: 'create' | 'update'; fields: { f: string; l: string; old: unknown; new: unknown }[] }[] = [];
+      let totalChanged = 0;
+      for (const rec of records) {
+        const cid = String(rec.HubCompanyId__c);
+        const cur = sfByHub.get(cid) || null;
+        const fields = diffFields(rec, cur);
+        if (!fields.length) continue;
+        totalChanged++;
+        if (items.length < PAYLOAD_MAX_ITEMS) items.push({ company_id: cid, name: String(rec.Name || ''), action: cur ? 'update' : 'create', fields });
+      }
+      const payload = { items, total_changed: totalChanged, truncated: totalChanged > items.length };
+      let created = 0, updated = 0; const failed: { company_id: string; name: string; message: string }[] = [];
+      const idByCompany: Record<string, string> = {};
+      for (const chunk of chunks(records, BATCH)) {
+        const res = await sfUpsertBatch(sf, chunk);
+        res.forEach((r, j) => {
+          const cid = String(chunk[j].HubCompanyId__c);
+          if (r.success) { if (r.created) created++; else updated++; if (r.id) idByCompany[cid] = r.id; }
+          else failed.push({ company_id: cid, name: String(chunk[j].Name), message: (r.errors || []).map((e) => `${e.statusCode}: ${e.message}`).join('; ').slice(0, 200) });
+        });
+      }
+      let wroteBack = 0;
+      if (writeback) {
+        const rows = Object.entries(idByCompany).map(([company_id, code]) => ({ company_id, system: 'salesforce', code }));
+        for (const c of chunks(rows, 500)) {
+          const { error } = await admin.from('system_code').upsert(c, { onConflict: 'company_id,system' });
+          if (error) { failed.push({ company_id: '-', name: '(writeback)', message: 'system_code 書き戻し失敗: ' + error.message }); break; }
+          wroteBack += c.length;
         }
       }
-      let ok = 0; const failed: { id: string; message: string }[] = [];
-      for (const c of chunks(updates, BATCH)) {
-        const res = await sfUpdateBatch(sf, c);
-        res.forEach((r, j) => { if (r.success) ok++; else failed.push({ id: String(c[j].Id), message: (r.errors || []).map((e) => e.message).join('; ').slice(0, 200) }); });
-      }
-      const logged = await logRun(admin, { kind: 'run', action: 'rekey', caller, source: body.source, sf, t0,
-        counts: { legacy: byLegacy.size, matched: updates.length, updated: ok, failed: failed.length }, meta: { mode } });
-      return json({ ok: true, action, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
-        legacy: byLegacy.size, matched: updates.length, updated: ok, failed: failed.length, failed_samples: failed.slice(0, 20),
-        note: 'SF の AccountCode__c が別の値で埋まっている org（dev6 の試しの番号）は、先に clear_account_codes_dev6.apex で空にしてから流す',
+      const logged = await logRun(admin, { kind: 'run', action: 'export', caller, source: body.source, sf, t0,
+        counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, skipped_test: cls.skipped_test, changed: totalChanged },
+        companyIds: onlyIds, reason: body.reason, payload,
+        meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, prod_target: isProdTarget, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty], guard: guardNote } });
+      return ({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
+        targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
+        failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack, skipped_test: cls.skipped_test,
+        changed: totalChanged, changes_sample: items.slice(0, 5),
         log_written: logged, elapsed_ms: Date.now() - t0 });
-    }
+    };
 
-    // ===== dry_run / export：配信対象の組み立てと分類 =====
-    let targets = hub.companies;
-    if (scope === 'active') targets = targets.filter((c) => !c.is_suspended);
-    else targets = targets.filter((c) => !c.is_suspended || sfByHub.has(String(c.company_id))); // 欠番は既存があれば更新のみ
-    // 試験の会社（is_test＝試験の org から来た箱・帯 00001〜09999）は本番 SF（SF_PROD_ORG_IDS）には配信しない（2026-10-21 案 B）
-    const prodOrgs = (Deno.env.get('SF_PROD_ORG_IDS') || '').split(',').map((s) => s.trim().slice(0, 15)).filter(Boolean);
-    const isProdTarget = prodOrgs.includes(sf.orgId);
-    const nTest = targets.filter((c) => c.is_test === true).length;
-    if (isProdTarget) targets = targets.filter((c) => c.is_test !== true);
-    if (limit > 0) targets = targets.slice(0, limit);
-
-    const records: Record<string, unknown>[] = [];
-    const cls = { update: 0, create: 0, code_conflict: 0, skipped_suspended: 0, skipped_test: isProdTarget ? nTest : 0 };
-    const conflicts: { company_id: string; name: string; code: string; holder: string }[] = [];
-    const conflictIds = new Set<string>();
-    for (const c of targets) {
-      const rec = buildRecord(hub, c, keepIfEmpty);
-      const cid = String(c.company_id);
-      const tera = rec.Business_Partners_Code__c ? String(rec.Business_Partners_Code__c) : '';
-      const holder = tera ? sfByCode.get(tera) : undefined;
-      if (holder && String(holder.HubCompanyId__c || '') !== cid) {
-        cls.code_conflict++; conflictIds.add(cid); conflicts.push({ company_id: cid, name: String(c.official_name), code: tera, holder: String(holder.Name) });
-        continue;
+    const targetsCfg = resolveTargets(body.target);
+    const results: Record<string, unknown>[] = [];
+    for (const tg of targetsCfg) {
+      try {
+        results.push({ target: tg.name, ...(await runTarget(tg)) });
+      } catch (e) {
+        const msg = String((e as Error)?.message || e);
+        if (logCtx) await logRun(admin, { kind: 'error', action, caller, source: body.source, sf: logCtx.sf, t0, message: `送り先 ${tg.name}: ` + msg.slice(0, 480) });
+        results.push({ target: tg.name, ok: false, error: msg });
       }
-      if (sfByHub.has(cid)) cls.update++; else cls.create++;
-      records.push(rec);
-    }
-    if (onlyIds) cls.skipped_suspended = hub.companies.length - targets.length; // 欠番で SF に無い＝作らない
-    const fieldFill: Record<string, number> = {};
-    for (const r of records) for (const k of Object.keys(r)) if (r[k] !== null) fieldFill[k] = (fieldFill[k] || 0) + 1;
-
-    if (action === 'dry_run') {
-      const linkable = onlyIds ? null : sfAccounts.filter((a) => !a.HubCompanyId__c && (hubByNorm.get(normName(a.Name as string)) || []).length === 1).length;
-      return json({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
-        hub_companies: hub.companies.length, sf_accounts: sfAccounts.length, sf_linked: sfByHub.size,
-        targets: targets.length, will_update: cls.update, will_create: cls.create, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
-        conflict_samples: conflicts.slice(0, 20), field_fill: fieldFill, sample: records.slice(0, 2),
-        linkable_by_name: linkable,
-        note: '書込は行っていません。code_conflict は取引先コードが SF の別レコードに付いている会社＝先に action=link で解消してください。',
-        elapsed_ms: Date.now() - t0 });
-    }
-
-    // ===== export =====
-    // 送信内容（変わる項目だけ）を送る前に確定しておく＝連携ログの payload
-    const items: { company_id: string; name: string; action: 'create' | 'update'; fields: { f: string; l: string; old: unknown; new: unknown }[] }[] = [];
-    let totalChanged = 0;
-    for (const rec of records) {
-      const cid = String(rec.HubCompanyId__c);
-      const cur = sfByHub.get(cid) || null;
-      const fields = diffFields(rec, cur);
-      if (!fields.length) continue;
-      totalChanged++;
-      if (items.length < PAYLOAD_MAX_ITEMS) items.push({ company_id: cid, name: String(rec.Name || ''), action: cur ? 'update' : 'create', fields });
-    }
-    const payload = { items, total_changed: totalChanged, truncated: totalChanged > items.length };
-    let created = 0, updated = 0; const failed: { company_id: string; name: string; message: string }[] = [];
-    const idByCompany: Record<string, string> = {};
-    for (const chunk of chunks(records, BATCH)) {
-      const res = await sfUpsertBatch(sf, chunk);
-      res.forEach((r, j) => {
-        const cid = String(chunk[j].HubCompanyId__c);
-        if (r.success) { if (r.created) created++; else updated++; if (r.id) idByCompany[cid] = r.id; }
-        else failed.push({ company_id: cid, name: String(chunk[j].Name), message: (r.errors || []).map((e) => `${e.statusCode}: ${e.message}`).join('; ').slice(0, 200) });
-      });
-    }
-    let wroteBack = 0;
-    if (writeback) {
-      const rows = Object.entries(idByCompany).map(([company_id, code]) => ({ company_id, system: 'salesforce', code }));
-      for (const c of chunks(rows, 500)) {
-        const { error } = await admin.from('system_code').upsert(c, { onConflict: 'company_id,system' });
-        if (error) { failed.push({ company_id: '-', name: '(writeback)', message: 'system_code 書き戻し失敗: ' + error.message }); break; }
-        wroteBack += c.length;
-      }
+      if (logCtx) logCtx.sf = null;
     }
     if (heldLock) { await releaseLock(admin, heldLock); heldLock = null; }
-    const logged = await logRun(admin, { kind: 'run', action: 'export', caller, source: body.source, sf, t0,
-      counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, skipped_test: cls.skipped_test, changed: totalChanged },
-      companyIds: onlyIds, reason: body.reason, payload,
-      meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, prod_target: isProdTarget, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty], guard: guardNote } });
-    return json({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
-      targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
-      failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack, skipped_test: cls.skipped_test,
-      changed: totalChanged, changes_sample: items.slice(0, 5),
-      log_written: logged, elapsed_ms: Date.now() - t0 });
+    const first = results[0] || { ok: false, error: '送り先がありません' };
+    const allOk = results.every((r) => r.ok === true);
+    // 応答＝1 件目の結果を今までどおり先頭に（呼ぶ側の互換）＋ results に全部
+    return json({ ...first, ok: allOk, targets_run: results.map((r) => r.target), results, elapsed_ms: Date.now() - t0 }, allOk ? 200 : 207);
   } catch (e) {
     const msg = String((e as Error)?.message || e);
     if (heldLock && logCtx) { await releaseLock(logCtx.admin, heldLock); heldLock = null; }

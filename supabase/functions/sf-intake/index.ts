@@ -29,7 +29,7 @@
 // 応答：{ ok:true, version, band:'real'|'test', results:[{ account_id, company_id, status:'created'|'linked'|'exists'|'error', error }], writeback, log_written }
 //
 // 必要な Secrets：IMPORT_SECRET（sf-import／sf-export と共通）・SF_PROD_ORG_IDS（本物の帯を振る org・切り替えまでは空＝全部が試験）。
-//               書き戻しに SF_EXPORT_INSTANCE_URL / SF_EXPORT_CLIENT_ID / SF_EXPORT_CLIENT_SECRET（sf-export と共通・任意）
+//               書き戻しに SF_EXPORT_TARGETS（sf-export と共通・箱を送ってきた org へ）か、従来の SF_EXPORT_INSTANCE_URL / CLIENT_ID / CLIENT_SECRET（1 件・任意）
 //
 // 安全鉄則：
 //   - 箱を作るだけ。本登録（registration_stage='full'）にはしない。既存の会社の中身は書き換えない（SF の Id を結ぶだけ）
@@ -43,7 +43,7 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-import-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-const VERSION = '2026-10-21.1'; // .1: 番号はハブが振る（next_parent_code）・帯＝本物／試験・is_test・書き戻しに AccountCode__c
+const VERSION = '2026-10-21.2'; // .1: 番号はハブが振る（next_parent_code）・帯＝本物／試験・is_test・書き戻しに AccountCode__c／.2: 書き戻し先は箱を送ってきた org（SF_EXPORT_TARGETS）
 const LOG = 'integration_log';
 const API_VERSION = 'v61.0';
 const SYSTEM_REAL = 'salesforce';      // 本物の org の取引先 Id の札（sf-export の writeback と同じ）
@@ -90,11 +90,32 @@ async function logRun(admin: Admin, e: { kind: 'run' | 'error'; caller: string; 
   } catch (err) { console.error('連携ログ記録失敗:', String((err as Error)?.message || err)); return false; }
 }
 
-// ---- SF への書き戻し（鍵＝取引先番号を HubCompanyId__c と AccountCode__c に）。Secrets が無ければ何もしない ----
-async function writebackHubIds(pairs: { account_id: string; company_id: string }[]): Promise<string | null> {
+// ---- SF への書き戻し（鍵＝取引先番号を HubCompanyId__c と AccountCode__c に）。書き戻し先＝箱を送ってきた org ----
+// Secret SF_EXPORT_TARGETS（sf-export と共通・JSON の配列 [{name, org_id, instance_url, client_id, client_secret, enabled}]）があれば org_id が一致する送り先へ。
+// 一致する送り先が無ければ書き戻さない（Apex 側が応答の番号を書く）。SF_EXPORT_TARGETS が無ければ従来の SF_EXPORT_* の 1 件へ
+function writebackTargetFor(orgId: string): { base: string; clientId: string; clientSecret: string } | null {
+  const raw = env('SF_EXPORT_TARGETS');
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        for (const x of arr as Record<string, unknown>[]) {
+          if (x && x.enabled !== false && String(x.org_id || '').slice(0, 15) === orgId.slice(0, 15)) {
+            return { base: String(x.instance_url || '').replace(/\/+$/, ''), clientId: String(x.client_id || ''), clientSecret: String(x.client_secret || '') };
+          }
+        }
+      }
+    } catch (_) { /* 読めなければ書き戻さない */ }
+    return null;
+  }
   const base = env('SF_EXPORT_INSTANCE_URL').replace(/\/+$/, '');
   const clientId = env('SF_EXPORT_CLIENT_ID'); const clientSecret = env('SF_EXPORT_CLIENT_SECRET');
-  if (!base || !clientId || !clientSecret || !pairs.length) return null;
+  return base && clientId && clientSecret ? { base, clientId, clientSecret } : null;
+}
+async function writebackHubIds(pairs: { account_id: string; company_id: string }[], orgId: string): Promise<string | null> {
+  const tg = writebackTargetFor(orgId);
+  if (!tg || !pairs.length) return null;
+  const { base, clientId, clientSecret } = tg;
   const tokenRes = await fetch(base + '/services/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }) });
   const tokenBody = await tokenRes.json();
@@ -195,7 +216,7 @@ Deno.serve(async (req) => {
     }
 
     // 4) SF へ番号を書き戻す（即時配信より先に・任意）
-    const wb = await writebackHubIds(newPairs).catch((e) => String((e as Error)?.message || e));
+    const wb = await writebackHubIds(newPairs, String(body.org_id || '')).catch((e) => String((e as Error)?.message || e));
     const counts = { received: records.length, created: results.filter((x) => x.status === 'created').length, linked: results.filter((x) => x.status === 'linked').length,
       exists: results.filter((x) => x.status === 'exists').length, failed: results.filter((x) => x.status === 'error').length };
     const logged = await logRun(admin, { kind: counts.failed ? 'error' : 'run', caller, source, counts, companyIds: results.map((x) => x.company_id).filter((x): x is string => !!x), t0,
