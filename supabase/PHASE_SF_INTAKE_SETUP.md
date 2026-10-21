@@ -26,7 +26,7 @@
 2. 関数名 **`sf-intake`**（この名前でないと呼べない）
 3. エディタの中身を全部消し、`supabase/functions/sf-intake/index.ts` を貼り付け → **Deploy**
 4. **「Verify JWT」ON**（既定）のまま
-5. 続けて **sf-export** を開き、`supabase/functions/sf-export/index.ts`（**2026-10-20.2**＝親コードの読み返しつき・§6）を貼り直して **Deploy**。新しい Secret はまだ足さない（`SF_CODE_ISSUER_ORG_IDS` は切り替えのときに入れる）
+5. 続けて **sf-export** を開き、`supabase/functions/sf-export/index.ts`（**2026-10-21.1**・§6）を貼り直して **Deploy**。鍵の付け替え（`PHASE_PARENT_CODE_REKEY.md`）と同じ日に。新しい Secret `SF_PROD_ORG_IDS` は本番 SF へ切り替えるときに入れる
 
 > ⚠️ 貼る前に、ローカル（`C:\Users\sakamoto\besterra-allocation`）が最新か `git log -1` で確かめる。Box のコピーは2時間ごとのミラーで古いことがある。
 
@@ -78,31 +78,10 @@ Invoke-RestMethod -Method Post -Uri https://<project>.supabase.co/functions/v1/s
 | p.4 届かなかった分は SF の画面で送り直す | SF の `HubIntake.resend`（取引先の `HubIntakeError__c` に理由） |
 | p.5 枝番（口座×支払方法）・奉行 4 桁 | ハブ側の次の作業（bank_account に枝番・system_code obc の採番）＝塩田さんの回答待ち |
 
-## 6. 親コードの読み返し（sf-export 2026-10-20.2・坂本さん「B にしましょう」2026-10-20）
+## 6. 番号はハブが振る（案 B・2026-10-21 坂本さん決定）＝鍵の付け替え
 
-外注先のように**先にハブで登録される会社**は、配信で Salesforce に届いた時点で Salesforce が取引先番号の親コード（`Account.AccountCode__c`・5桁）を振る。
-ハブがその番号を知らないと PROCES.S のコード（例 `10002-F001`）を組めないので、sf-export が配信のあとに親コードを読み返し、
-`system_code(system='torihikisaki_code')` に控える。切り替えの一斉付与（既存の会社に Salesforce がまとめて振る）も、そのあとの全件配信で同じ道を通って戻る。
+10/20 夜の「配信のあとに SF の親コードを読み返す」仕組み（2026-10-20.2）は取り下げた。**取引先番号（親コード・5 桁）は会社マスタの鍵そのもので、振るのはハブ**（`next_parent_code`）。
+付け替えの SQL・当日の手順・帯の決まりは **`supabase/PHASE_PARENT_CODE_REKEY.md`**。受け口と配信は 2026-10-21.1。
 
-- **書くのは接続先 org が Secret `SF_CODE_ISSUER_ORG_IDS`（親コードを振る正の org・15桁・カンマ区切り）にあるときだけ**。
-  いまの配信先は dev6（試しの org）なので**空のまま**にする＝dev6 が試しに振った番号を本番のハブに書かない。切り替えのときに本番 SF の org ID を入れる。
-- 一度付いた番号は変えない。ハブに別の番号が付いていたら上書きせず「食い違い」、同じ番号が別の会社に付いていたら「衝突」として応答と連携ログに出す。
-- 書いた会社には `company_history` に 1 行（「Salesforce が振った番号を配信のあとに読み返した」）。
-- 応答の `parent_code`（mode・read・written・would_write・unchanged・mismatch・conflict・invalid・samples）と、連携ログの counts `parent_code_*`・meta `code_readback` で見える。
-- 読み返しが失敗しても配信の結果は返す（failed に「(親コードの読み返し)」として残る）。
-
-### 試しの org で書かずに確かめる（任意）
-
-```powershell
-$h = @{ 'Authorization' = "Bearer <anon>"; 'x-import-secret' = '<IMPORT_SECRET>'; 'Content-Type' = 'application/json' }
-$b = '{"action":"export","company_ids":["<会社マスタID>"],"code_readback":"preview","source":"script","reason":"親コードの読み返しの試し"}'
-Invoke-RestMethod -Method Post -Uri https://pajmsowweswaxowrbiwr.supabase.co/functions/v1/sf-export -Headers $h -Body $b
-#  → parent_code.mode が preview・would_write／unchanged などの件数と見本。ハブには書かない（配信そのものは普段どおり dev6 に届く）
-```
-
-### 切り替えのとき（本番 SF へ向けるとき）
-
-1. 本番 SF で既存の取引先に親コードを一斉付与する（SF repo `scripts/credit/assign_account_codes_*.apex`）。
-2. sf-export の連携ユーザー（クライアント認証の実行ユーザー）に、親コードの項目を読む権限（権限セット `Credit_Access`）を付ける。Metadata API で配備した項目は管理者にも自動では見えない。
-3. Secret `SF_CODE_ISSUER_ORG_IDS` に本番 SF の org ID（15桁）を入れる。
-4. 全件配信（`action=export`・`mode=full`）を 1 回流し、`parent_code.written` と `mismatch`／`conflict` が 0 かを見る。以後は即時配信のたびに新しい会社の番号が戻る。
+- `sf-intake`: 呼び出し元の org が Secret `SF_PROD_ORG_IDS` にあれば本物の帯（10001〜）、無ければ試験の帯（00001〜09999・is_test）。切り替えまでは Secret は空＝全部が試験。
+- `sf-export`: AccountCode__c（＝鍵）を送る。試験の会社は `SF_PROD_ORG_IDS` の org には送らない。`action=rekey` は付け替えのあと 1 回。

@@ -100,7 +100,7 @@ const TorihikisakiView = {
 
   SYSTEM_BY_NO: { 60: 'tera', 61: 'obc_onpre', 62: 'obc_cloud', 63: 'salesforce', 64: 'new_erp', 128: 'bakuraku', 129: 'bill_one' },
   SYSTEM_LABEL: { tera: 'teraServation', obc_onpre: '勘定奉行(オンプレ)', obc_cloud: '勘定奉行クラウド', salesforce: 'Salesforce', new_erp: '新ERP', bakuraku: 'バクラク', bill_one: 'Bill One',
-    torihikisaki_code: '取引先番号（親コード・Salesforce が採番）' }, // 2026-10-20 与信設計書 第4版: sf-intake が system_code に入れる 5 桁（枝番はハブが本登録のときに付ける＝次の作業）
+    salesforce_test: 'Salesforce（試験の org の取引先 Id）' }, // 2026-10-21 案 B: 取引先番号（親コード・5 桁）は会社マスタの鍵（company_id）そのもの。試験の org（dev6・dev7）の Id は本物の札と混ぜない
   // システム連携状況。
   // 🔴実態＝自動連携しているシステムは現時点で一つも無い（2026-08-26 坂本さん指摘で訂正）。
   //   tera と 勘定奉行(オンプレ) は同じ取引先コードを共有しているが、各システムへの登録は人が手で転記している。
@@ -733,6 +733,9 @@ const TorihikisakiView = {
   },
 
   matches(r, q) {
+    // 試験の会社（is_test＝dev6・dev7 などから来た箱・帯 00001〜09999）は「テストのみ」「すべて」のときだけ出す（2026-10-21）
+    if (this.stateFilter === 'test') { if (!r.is_test) return false; }
+    else if (this.stateFilter !== 'all' && r.is_test) return false;
     if (this.stateFilter === 'active' && r.is_suspended) return false;
     if (this.stateFilter === 'suspended' && !r.is_suspended) return false;
     if (this.stateFilter === 'temp' && (r.registration_stage !== 'temp' || r.is_suspended)) return false;
@@ -777,13 +780,14 @@ const TorihikisakiView = {
 
     const sortMark = no => this.sortNo === no ? (this.sortDir > 0 ? ' ▲' : ' ▼') : '';
     const thCls = no => 'sortable' + (this.sortNo === no ? ' sorted' : '');
-    let html = `<div class="sub">棚卸で洗い出した <b>${this.rows.length.toLocaleString()}社</b>を全件収載（50社/ページ）。表示列は「表示列」で自由に選択。列見出しをクリックすると並べ替え（昇順→降順→解除）。取引先マスタ番号＝通し番号（1〜）、コード＝teraServation／勘定奉行／Bill One 共通のシステムコード（マスタ番号とは別物）。</div>
+    let html = `<div class="sub">棚卸で洗い出した <b>${this.rows.length.toLocaleString()}社</b>を全件収載（50社/ページ）。表示列は「表示列」で自由に選択。列見出しをクリックすると並べ替え（昇順→降順→解除）。取引先番号＝親コード（5 桁・10001〜。先頭が 0 は試験の会社＝「テストのみ」で表示）、コード＝teraServation／勘定奉行／Bill One 共通のシステムコード（取引先番号とは別物）。</div>
     <div class="tool">
       <button class="btn" id="tmk-colbtn">▤ 表示列（${cols.length}）</button>
       <select class="inp" id="tmk-state" title="状態で絞り込み">
         <option value="active"${this.stateFilter === 'active' ? ' selected' : ''}>有効のみ</option>
         <option value="suspended"${this.stateFilter === 'suspended' ? ' selected' : ''}>欠番のみ</option>
         <option value="temp"${this.stateFilter === 'temp' ? ' selected' : ''}>申請中のみ</option>
+        <option value="test"${this.stateFilter === 'test' ? ' selected' : ''}>テストのみ</option>
         <option value="all"${this.stateFilter === 'all' ? ' selected' : ''}>すべて</option>
       </select>
       <select class="inp" id="tmk-type" title="種別で絞り込み">
@@ -793,11 +797,12 @@ const TorihikisakiView = {
       <span class="count">${a.length.toLocaleString()} 社</span>
       <div class="pop ${this.colPopOpen ? 'on' : ''}" id="tmk-colpop"></div>
     </div>
-    <div class="tblwrap"><table class="tbl"><thead><tr><th class="${thCls(1)}" data-sort="1" title="クリックで並べ替え">取引先マスタ番号${sortMark(1)}</th>${cols.map(f => `<th class="${thCls(f.no)}" data-sort="${f.no}" title="クリックで並べ替え">${this.esc(f.name)}${sortMark(f.no)}</th>`).join('')}</tr></thead><tbody>`;
+    <div class="tblwrap"><table class="tbl"><thead><tr><th class="${thCls(1)}" data-sort="1" title="クリックで並べ替え">取引先番号${sortMark(1)}</th>${cols.map(f => `<th class="${thCls(f.no)}" data-sort="${f.no}" title="クリックで並べ替え">${this.esc(f.name)}${sortMark(f.no)}</th>`).join('')}</tr></thead><tbody>`;
     a.slice(this.page * this.PER, (this.page + 1) * this.PER).forEach(r => {
-      const stateB = r.is_suspended ? '<span class="badge b-red" style="margin-left:5px">欠番</span>'
-        : r.registration_stage === 'temp' ? '<span class="draftb">申請中</span>' : '';
-      html += `<tr data-cid="${this.esc(r.company_id)}"><td class="num">${+r.company_id}</td>` +
+      const stateB = (r.is_test ? '<span class="badge b-slate" style="margin-left:5px" title="試験の org（dev6・dev7）から来た箱。本番 SF・PROCES.S には出ない">テスト</span>' : '')
+        + (r.is_suspended ? '<span class="badge b-red" style="margin-left:5px">欠番</span>'
+        : r.registration_stage === 'temp' ? '<span class="draftb">申請中</span>' : '');
+      html += `<tr data-cid="${this.esc(r.company_id)}"><td class="num">${this.esc(r.company_id)}</td>` +
         cols.map((f, i) => {
           const v = this.getListVal(r, f);
           const nm = i === 0 || f.no === 2 ? 'nm' : '';
@@ -1001,7 +1006,7 @@ const TorihikisakiView = {
     const dt = (dtype || '').toUpperCase();
     let t = String(s == null ? '' : s).trim();
     if (t === '') return null;
-    if (norm === 'cid' && /^\d{1,8}$/.test(t)) t = t.padStart(8, '0');   // マスタ番号は8桁ゼロ埋めで保持
+    if (norm === 'cid' && /^\d{1,5}$/.test(t)) t = t.padStart(5, '0');   // 取引先番号は 5 桁ゼロ埋め（試験の帯は先頭 0）
     if (dt.startsWith('BOOLEAN')) return t === 'true' || t === 'はい';
     if (/^(BIGINT|INTEGER|SMALLINT)/.test(dt)) {
       const n = Number(t.replace(/,/g, ''));
@@ -1061,7 +1066,7 @@ const TorihikisakiView = {
       '<span><span class="src edit">手入力</span> 画面・CSVで人が入力</span>' +
       '<span><span class="src pleasanter">Pleasanter</span> 新規取引会社一覧（Pleasanter）から取込</span>' +
       '<span><span class="src api">国税庁API・gBizINFO API</span> 外部API（登記情報）から取得（人が採用）</span>' +
-      '<span><span class="src code">コード</span> 会社マスタIDの採番・各システム側のコード</span>' +
+      '<span><span class="src code">コード</span> 取引先番号（親コード）の採番・各システム側のコード</span>' +
       '<span class="mf">🔒＝承認が必要な項目（右の口座カードから申請）</span></div>';
   },
 
@@ -1659,11 +1664,11 @@ const TorihikisakiView = {
     const code = ((d.system_code || []).find(r => r.system === 'tera') || {}).code || '';
     const me = this.whoAmI();
 
-    const stateB = c.is_suspended
+    const stateB = (c.is_test ? '<span class="badge b-slate" style="margin-left:8px;vertical-align:middle" title="試験の org（dev6・dev7）から来た箱。本番 SF・PROCES.S には出ない">テスト</span>' : '') + (c.is_suspended
       ? `<span class="badge b-red" style="margin-left:8px;vertical-align:middle">欠番${c.suspend_reason ? '：' + this.esc(c.suspend_reason) : ''}</span>`
       : c.registration_stage === 'temp'
       ? '<span class="badge b-amber" style="margin-left:8px;vertical-align:middle">申請中（承認待ち）</span>'
-      : '<span class="badge b-green" style="margin-left:8px;vertical-align:middle">有効</span>';
+      : '<span class="badge b-green" style="margin-left:8px;vertical-align:middle">有効</span>');
     const approveBtn = c.registration_stage === 'temp'
       ? ((c.created_by || null) !== me
         ? '<button class="btn btn-success btn-sm" id="tmk-approve-reg" style="margin-left:10px">✓ 登録を承認</button>'
@@ -3809,12 +3814,6 @@ const TorihikisakiView = {
     });
   },
 
-  nextCompanyId() {
-    let max = 2563;
-    (this.rows || []).forEach(r => { if (/^\d+$/.test(r.company_id)) max = Math.max(max, +r.company_id); });
-    return max + 1;
-  },
-
   async saveNew() {
     if (this.busy || !this.isNew) return;
     const errs = [];
@@ -3845,7 +3844,7 @@ const TorihikisakiView = {
       const dup = (this.rows || []).find(r => r.corporate_number === coVals.corporate_number);
       if (dup) { alert(`この法人番号は登録済みです：${dup.official_name}\n二重登録はできません。`); return; }
     }
-    if (!confirm(`「${coVals.official_name}」を申請中として登録します。\n\n会社マスタIDが採番され、本人以外の admin/accounting の承認で正式登録になります。よろしいですか？`)) return;
+    if (!confirm(`「${coVals.official_name}」を申請中として登録します。\n\n取引先番号（親コード・5 桁）がハブで採番され、本人以外の admin/accounting の承認で正式登録になります。よろしいですか？`)) return;
     this.busy = true;
     const btn = this.el('tmk-nsave');
     if (btn) { btn.disabled = true; btn.textContent = '登録中…'; }
@@ -3860,9 +3859,11 @@ const TorihikisakiView = {
     const sb = this.getClient();
     const typeCodes = typeLabels.map(l => Object.keys(TM_META.TYPE_CODES).find(c => TM_META.TYPE_CODES[c] === l)).filter(Boolean);
     let cid = null;
-    const n = this.nextCompanyId();
     for (let attempt = 0; attempt < 5; attempt++) {
-      const tryId = String(n + attempt).padStart(8, '0');
+      // 取引先番号（親コード）は DB が振る（本物の帯 10001〜・順序＝重複しない）。試験の帯は SF の受け口（sf-intake）だけが使う（2026-10-21 案 B）
+      const rpc = await sb.rpc('next_parent_code', { p_band: 'real' });
+      if (rpc.error) { alert('取引先番号の採番に失敗しました: ' + rpc.error.message); return null; }
+      const tryId = String(rpc.data);
       const res = await sb.from('company').insert(Object.assign({
         company_id: tryId, registration_stage: 'temp', data_source: method,
         created_by: who, updated_by: who,
@@ -3932,7 +3933,7 @@ const TorihikisakiView = {
     this.newVals = {};
     this.autoNew = {};
     this.newTypes = [];
-    this.toast(`登録しました（会社マスタID ${+cid}・申請中）`);
+    this.toast(`登録しました（取引先番号 ${cid}・申請中）`);
     await this.openDetail(cid);
     return cid;
   },
