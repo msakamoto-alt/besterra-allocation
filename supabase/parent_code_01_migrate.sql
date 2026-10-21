@@ -53,6 +53,7 @@ drop table if exists company_id_map;
 create table company_id_map (old_id varchar(8) primary key, new_id varchar(8) not null unique, mapped_at timestamptz not null default now());
 insert into company_id_map (old_id, new_id)
 select company_id, (10000 + row_number() over (order by company_id))::text from company;
+alter table company_id_map enable row level security;  -- 画面からは読ませない（読むのは SQL Editor と関数だけ）
 
 -- 3) 列を足す（試験の印・旧の鍵）
 alter table company add column if not exists is_test boolean not null default false;
