@@ -58,7 +58,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-10-21.1'; // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）
+const VERSION = '2026-10-21.2'; // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -530,10 +530,14 @@ Deno.serve(async (req) => {
 
     // ===== rekey：鍵の付け替えのあと 1 回だけ。SF の HubCompanyId__c（旧の 8 桁）を新しい鍵に書き換え、AccountCode__c にも入れる =====
     if (action === 'rekey') {
-      const { data: lg, error: lgErr } = await admin.from('company').select('company_id,legacy_company_id').not('legacy_company_id', 'is', null);
-      if (lgErr) throw new Error('company 読取失敗（legacy_company_id）: ' + lgErr.message);
+      // 旧の鍵を持つ会社を全部読む（PostgREST は 1 回 1,000 行までなので 1,000 行ずつ。2026-10-21 の 1 回目は 1,000 件で止まった）
       const byLegacy = new Map<string, string>();
-      for (const r of (lg || []) as { company_id: string; legacy_company_id: string }[]) byLegacy.set(String(r.legacy_company_id), String(r.company_id));
+      for (let from = 0; ; from += 1000) {
+        const { data: lg, error: lgErr } = await admin.from('company').select('company_id,legacy_company_id').not('legacy_company_id', 'is', null).order('company_id', { ascending: true }).range(from, from + 999);
+        if (lgErr) throw new Error('company 読取失敗（legacy_company_id）: ' + lgErr.message);
+        for (const r of (lg || []) as { company_id: string; legacy_company_id: string }[]) byLegacy.set(String(r.legacy_company_id), String(r.company_id));
+        if (!lg || lg.length < 1000) break;
+      }
       const updates: Record<string, unknown>[] = [];
       for (const c of chunks([...byLegacy.keys()], 200)) {
         for (const a of await sfQuery(sf, `SELECT Id, HubCompanyId__c FROM Account WHERE HubCompanyId__c IN (${soqlIn(c)})`)) {
