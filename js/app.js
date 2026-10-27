@@ -195,7 +195,7 @@ const App = {
         }
         await this.proceedAfterAuth();
       } catch (err) {
-        errorEl.textContent = '× ' + (err.message || 'ログインに失敗しました');
+        errorEl.textContent = '× ' + Sync.loginErrorMessage(err);
         errorEl.classList.remove('hidden');
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'ログイン'; }

@@ -14,6 +14,17 @@ Object.assign(Sync, {
     return !!(data && data.session);
   },
 
+  // ログイン失敗の文言。ブラウザから Supabase へ届かなかった（Failed to fetch 等）ときは
+  // サーバーの不具合ではなく、開きっぱなしのブラウザの古い接続が原因のことが多い（2026-10-27 実測）ので、
+  // 利用者が自分で直せる手順を日本語で返す。それ以外は Supabase の文言をそのまま。
+  loginErrorMessage(err) {
+    const msg = (err && err.message) || '';
+    if (/Failed to fetch|NetworkError|Load failed|ERR_TIMED_OUT|ERR_NETWORK|AuthRetryableFetchError/i.test(msg)) {
+      return '通信が届きませんでした。ブラウザをいったん閉じて開き直してから、もう一度お試しください（サーバーの不具合ではありません）';
+    }
+    return msg || 'ログインに失敗しました';
+  },
+
   async logout() {
     try { await this.getSupabase().auth.signOut(); } catch (e) { /* noop */ }
     this.role = null;
