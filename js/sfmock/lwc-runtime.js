@@ -594,6 +594,22 @@ window.SfMockLwc = (function () {
         };
     }
 
+    /** lightning-file-upload＝共有版では「ファイルを付ける」の札だけ（Salesforce の外なので付けられない） */
+    function buildFileUpload(host) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'sfm-btn sfm-btn-neutral';
+        b.title = '共有モックアップではファイルは付けられません（dev6 で試してください）';
+        host.appendChild(b);
+        return {
+            host: host,
+            update: function (p) {
+                b.textContent = txt(p.label) || 'ファイルをアップロード';
+                b.disabled = true;
+            }
+        };
+    }
+
     function buildButtonIcon(host) {
         const b = document.createElement('button');
         b.type = 'button';
@@ -820,6 +836,7 @@ window.SfMockLwc = (function () {
         const kind = tag.slice('lightning-'.length);
         if (kind === 'input') return buildInput(host);
         if (kind === 'textarea') return buildTextarea(host);
+        if (kind === 'file-upload') return buildFileUpload(host); // 添付（recordFiles が 2026-10-27 から使う・共有版では押せない札だけ）
         if (kind === 'combobox') return buildCombobox(host);
         if (kind === 'button') return buildButton(host);
         if (kind === 'button-icon') return buildButtonIcon(host);
