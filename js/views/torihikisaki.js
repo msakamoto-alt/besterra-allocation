@@ -637,11 +637,14 @@ const TorihikisakiView = {
       const wrap = this.el('tmk-wrap');
       if (wrap) wrap.innerHTML = '<p class="mf" style="padding:20px">取引先マスタを読み込み中…</p>';
       try {
-        const [companies, types, codes] = await Promise.all([
+        const [companies, types, codes, credits] = await Promise.all([
           this.fetchAll('company', '*', 'company_id'),
           this.fetchAll('company_type', 'company_id,type_code'),
           this.fetchAll('system_code', 'company_id,system,code'),
+          this.fetchAll('credit_line', 'company_id,limit_amount,valid_until'), // 与信の期限のアラート（2026-10-28 坂本さん）
         ]);
+        this.creditByCid = {};
+        credits.forEach(c => { this.creditByCid[c.company_id] = c; }); // 1社1行（複数あれば後の行）
         this.typesByCid = {};
         types.forEach(t => (this.typesByCid[t.company_id] = this.typesByCid[t.company_id] || []).push(t.type_code));
         this.codesByCid = {};
@@ -735,7 +738,8 @@ const TorihikisakiView = {
   matches(r, q) {
     // 試験の会社（is_test＝dev6・dev7 などから来た箱・帯 00001〜09999）は「テストのみ」「すべて」のときだけ出す（2026-10-21）
     if (this.stateFilter === 'test') { if (!r.is_test) return false; }
-    else if (this.stateFilter !== 'all' && r.is_test) return false;
+    else if (this.stateFilter !== 'all' && this.stateFilter !== 'credit' && r.is_test) return false;
+    if (this.stateFilter === 'credit' && !this.creditAlert(r.company_id)) return false; // 与信期限切れ・間近（2026-10-28）
     if (this.stateFilter === 'active' && r.is_suspended) return false;
     if (this.stateFilter === 'suspended' && !r.is_suspended) return false;
     if (this.stateFilter === 'temp' && (r.registration_stage !== 'temp' || r.is_suspended)) return false;
@@ -767,6 +771,17 @@ const TorihikisakiView = {
     return a;
   },
 
+  /** 一覧の上の与信アラートの札＝期限切れ n 社・30 日以内 m 社（押すと絞り込み・もう一度で戻す）。無ければ出さない */
+  creditAlertSummary() {
+    let over = 0, soon = 0;
+    (this.rows || []).forEach(r => { const a = this.creditAlert(r.company_id); if (!a) return; if (a.days < 0) over++; else soon++; });
+    if (!over && !soon) return '';
+    const parts = [];
+    if (over) parts.push(`<span class="badge b-red">与信期限切れ ${over}</span>`);
+    if (soon) parts.push(`<span class="badge b-amber">${this.CREDIT_WARN_DAYS}日以内 ${soon}</span>`);
+    return `<button class="btn btn-sm" id="tmk-credit-alert" title="与信の有効期限が切れた・切れそうな会社だけに絞る（もう一度押すと戻す）">⚠ ${parts.join(' ')}</button>`;
+  },
+
   // ===== 会社一覧 =====
   renderList() {
     const wrap = this.el('tmk-wrap');
@@ -788,6 +803,7 @@ const TorihikisakiView = {
         <option value="suspended"${this.stateFilter === 'suspended' ? ' selected' : ''}>欠番のみ</option>
         <option value="temp"${this.stateFilter === 'temp' ? ' selected' : ''}>申請中のみ</option>
         <option value="test"${this.stateFilter === 'test' ? ' selected' : ''}>テストのみ</option>
+        <option value="credit"${this.stateFilter === 'credit' ? ' selected' : ''}>与信期限切れ・間近</option>
         <option value="all"${this.stateFilter === 'all' ? ' selected' : ''}>すべて</option>
       </select>
       <select class="inp" id="tmk-type" title="種別で絞り込み">
@@ -795,13 +811,15 @@ const TorihikisakiView = {
         ${Object.keys(TM_META.TYPE_CODES).map(c => `<option value="${c}"${this.typeFilter === c ? ' selected' : ''}>${this.esc(TM_META.TYPE_CODES[c])}</option>`).join('')}
       </select>
       <span class="count">${a.length.toLocaleString()} 社</span>
+      ${this.creditAlertSummary()}
       <div class="pop ${this.colPopOpen ? 'on' : ''}" id="tmk-colpop"></div>
     </div>
     <div class="tblwrap"><table class="tbl"><thead><tr><th class="${thCls(1)}" data-sort="1" title="クリックで並べ替え">取引先番号${sortMark(1)}</th>${cols.map(f => `<th class="${thCls(f.no)}" data-sort="${f.no}" title="クリックで並べ替え">${this.esc(f.name)}${sortMark(f.no)}</th>`).join('')}</tr></thead><tbody>`;
     a.slice(this.page * this.PER, (this.page + 1) * this.PER).forEach(r => {
       const stateB = (r.is_test ? '<span class="badge b-slate" style="margin-left:5px" title="試験の org（dev6・dev7）から来た箱。本番 SF・PROCES.S には出ない">テスト</span>' : '')
         + (r.is_suspended ? '<span class="badge b-red" style="margin-left:5px">欠番</span>'
-        : r.registration_stage === 'temp' ? '<span class="draftb">申請中</span>' : '');
+        : r.registration_stage === 'temp' ? '<span class="draftb">申請中</span>' : '')
+        + this.creditBadge(r.company_id);
       html += `<tr data-cid="${this.esc(r.company_id)}"><td class="num">${this.esc(r.company_id)}</td>` +
         cols.map((f, i) => {
           const v = this.getListVal(r, f);
@@ -816,6 +834,8 @@ const TorihikisakiView = {
     this.el('tmk-colbtn').onclick = e => { e.stopPropagation(); this.colPopOpen = !this.colPopOpen; this.renderList(); };
     if (this.colPopOpen) this.renderColPop();
     this.el('tmk-state').onchange = e => { this.stateFilter = e.target.value; this.page = 0; this.renderList(); };
+    const crBtn = this.el('tmk-credit-alert');
+    if (crBtn) crBtn.onclick = () => { this.stateFilter = this.stateFilter === 'credit' ? 'all' : 'credit'; this.page = 0; this.renderList(); };
     this.el('tmk-type').onchange = e => { this.typeFilter = e.target.value; this.page = 0; this.renderList(); };
     wrap.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
       const no = +th.dataset.sort;
@@ -1668,7 +1688,8 @@ const TorihikisakiView = {
       ? `<span class="badge b-red" style="margin-left:8px;vertical-align:middle">欠番${c.suspend_reason ? '：' + this.esc(c.suspend_reason) : ''}</span>`
       : c.registration_stage === 'temp'
       ? '<span class="badge b-amber" style="margin-left:8px;vertical-align:middle">申請中（承認待ち）</span>'
-      : '<span class="badge b-green" style="margin-left:8px;vertical-align:middle">有効</span>');
+      : '<span class="badge b-green" style="margin-left:8px;vertical-align:middle">有効</span>')
+      + this.creditBadge(c.company_id, 'margin-left:8px;vertical-align:middle');
     const approveBtn = c.registration_stage === 'temp'
       ? ((c.created_by || null) !== me
         ? '<button class="btn btn-success btn-sm" id="tmk-approve-reg" style="margin-left:10px">✓ 登録を承認</button>'
@@ -3163,6 +3184,22 @@ const TorihikisakiView = {
     const res = await q;
     if (res.error) throw new Error(res.error.message);
     return res.data || [];
+  },
+  /** 与信の有効期限のアラート（2026-10-28 坂本さん「期限が切れていることのアラートを」）: 限度額があって期限が今日より前＝期限切れ（赤）・30 日以内＝間近（黄）・それ以外＝null。
+   *  期限が切れると SF の取引先は「期限切れ」になり、見積の承認申請が止まる＝経理がここで気づいて延長の稟議を促す */
+  CREDIT_WARN_DAYS: 30,
+  creditAlert(cid, cr) {
+    cr = cr || (this.creditByCid || {})[cid];
+    if (!cr || !(cr.limit_amount > 0) || !cr.valid_until) return null;
+    const today = this.jstToday();
+    const days = Math.round((Date.parse(cr.valid_until) - Date.parse(today)) / 86400000);
+    if (days < 0) return { cls: 'b-red', text: '与信期限切れ', title: `与信の有効期限 ${cr.valid_until}（${-days} 日前）。SF では「期限切れ」＝見積の承認申請が止まる。延長なら与信の稟議を出し直して、新しい期限をここに入れる`, days };
+    if (days <= this.CREDIT_WARN_DAYS) return { cls: 'b-amber', text: days === 0 ? '与信期限 今日' : `与信期限 あと${days}日`, title: `与信の有効期限 ${cr.valid_until}。切れると SF の見積の承認申請が止まる`, days };
+    return null;
+  },
+  creditBadge(cid, style) {
+    const a = this.creditAlert(cid);
+    return a ? `<span class="badge ${a.cls}" style="${style || 'margin-left:5px'}" title="${this.esc(a.title)}">${this.esc(a.text)}</span>` : '';
   },
   jstToday() {
     return new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
