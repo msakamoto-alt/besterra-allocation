@@ -102,6 +102,7 @@ const App = {
     this.showMain();
     this.updateRoleUI();
     this.applyTabVisibility();
+    this.startIntegrationHealthWatch();
     await this.loadData();
     this.applyRoleLanding();
   },
@@ -231,6 +232,35 @@ const App = {
     if (accBtn) accBtn.classList.toggle('hidden', !adminOnly);
     const auditBtn = document.getElementById('audit-toggle');
     if (auditBtn) auditBtn.classList.toggle('hidden', !adminOnly);
+  },
+
+  // 連携の異常の帯（2026-10-29：配置の取込が 11 日間失敗していたのに気づけなかった件から）。
+  // admin・accounting だけ。integration_health()（supabase/integration_health.sql）の ok=false を並べる。
+  // 関数がまだ無い・読めないときは帯を出さない（画面の本体を巻き込まない）。30 分おきに見直す。
+  startIntegrationHealthWatch() {
+    if (!(Sync.role === 'admin' || Sync.role === 'accounting')) return;
+    this.checkIntegrationHealth();
+    if (!this._healthTimer) this._healthTimer = setInterval(() => this.checkIntegrationHealth(), 30 * 60 * 1000);
+  },
+
+  async checkIntegrationHealth() {
+    const box = document.getElementById('integration-alert');
+    if (!box) return;
+    try {
+      const { data, error } = await Sync.getSupabase().rpc('integration_health');
+      if (error) throw error;
+      const bad = (data || []).filter(r => r.ok === false);
+      if (!bad.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      const when = (t) => t ? new Date(t).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'なし';
+      box.innerHTML = bad.map(r =>
+        `<div class="py-0.5"><span class="font-semibold">⚠ 連携の異常：${Util.esc(r.label)}</span>　${Util.esc(r.detail || '')}` +
+        `<span class="text-red-700/80">（最後の成功 ${Util.esc(when(r.last_success))}）</span></div>`
+      ).join('');
+      box.classList.remove('hidden');
+    } catch (e) {
+      console.warn('[integration_health]', e && (e.message || e));
+      box.classList.add('hidden');
+    }
   },
 
   showMain() {

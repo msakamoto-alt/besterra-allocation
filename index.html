@@ -109,6 +109,9 @@
       </div>
     </header>
 
+    <!-- 連携の異常の帯（admin・accounting のみ。中身は App.checkIntegrationHealth が integration_health() から描く） -->
+    <div id="integration-alert" class="hidden bg-red-50 border-b border-red-300 text-red-800 text-sm px-4 sm:px-6 py-2"></div>
+
     <!-- タブナビ（スマホでは横スクロール） -->
     <nav class="bg-slate-100 border-b border-slate-300 px-3 sm:px-6 overflow-x-auto">
       <div class="flex space-x-1 w-max">
@@ -944,7 +947,7 @@
   <script src="js/config.js?v=202607061100" onerror="console.info('config.js未設定（モックデータで動作）')"></script>
   <!-- 開発用の上書き（.gitignore済み・無くても動く） -->
   <script src="js/config.local.js?v=202608251900" onerror="console.info('config.local.js なし（本番構成で動作）')"></script>
-  <script src="js/app.js?v=202610271800"></script>
+  <script src="js/app.js?v=202610291600"></script>
   <!-- 統合管理ツールのペット「ピー」（多人数対応・ログイン済みadminのみ表示＝パイロット） -->
   <script src="js/pet-embed.js?v=202607160900"></script>
 </body>
