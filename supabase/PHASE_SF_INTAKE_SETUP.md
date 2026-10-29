@@ -77,6 +77,7 @@ Invoke-RestMethod -Method Post -Uri https://<project>.supabase.co/functions/v1/s
 | p.2 ⑥ 本登録（登録を承認）→ PROCES.S | 既存の「登録を承認」。sf-export は `RegistrationStage__c=本登録` を送る。PROCES.S 連携（IF-01）は別途（本登録のものだけ） |
 | p.4 届かなかった分は SF の画面で送り直す | SF の `HubIntake.resend`（取引先の `HubIntakeError__c` に理由） |
 | p.5 枝番（口座×支払方法）・奉行 4 桁 | ハブ側の次の作業（bank_account に枝番・system_code obc の採番）＝塩田さんの回答待ち |
+| 試験の会社の出どころ（設計書に無い・2026-10-29） | sf-intake 2026-10-29.1 が `source_org_id`／`source_org_label` を入れる（SQL `company_source_org.sql`）。sf-export 2026-10-29.1 は試験の会社をその org にだけ配る＝dev6 と dev7 の試験の会社が混ざらない |
 
 ## 6. 番号はハブが振る（案 B・2026-10-21 坂本さん決定）＝鍵の付け替え
 

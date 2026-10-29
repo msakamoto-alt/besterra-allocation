@@ -166,6 +166,7 @@ dev7 の UAT に向けて、配信を 2 つ以上の org へ同時に行える�
 - `enabled:false` で一時的に外せる。`body.target`（name）で 1 つに絞って手動実行できる（例: dev7 だけ全件配信）。
 - 応答は 1 件目の結果が先頭に（今までの読み方のまま）、`results` に全部。どれかが失敗すると HTTP 207。
 - `sf-intake` の書き戻し（取引先番号を SF へ）は、箱を送ってきた org（body.org_id）に一致する送り先へ行う。一致が無ければ書き戻さない（Apex が応答の番号を書く）。
+- **試験の会社は「作った org」にだけ配る（2026-10-29.1・坂本さん「私が混乱しそうなので実装」）**: `company.source_org_id`（sf-intake 2026-10-29.1 が箱を作るとき body.org_id を入れる・呼び名 `source_org_label`＝この Secret の name）。sf-export は is_test の会社を source_org_id の org にだけ配り、link の候補からも外す。出どころが空の試験の会社（10/29 より前の箱）は従来どおり本番以外の全部へ。本物の会社の配信は変えない。SQL＝`company_source_org.sql`（列 2 つ・既存の 17 件は dev6 を入れる）。画面の「テスト」の印に呼び名が付く（テスト（dev6））。
 
 ### dev7 を足すときの手順
 

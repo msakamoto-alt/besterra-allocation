@@ -816,7 +816,7 @@ const TorihikisakiView = {
     </div>
     <div class="tblwrap"><table class="tbl"><thead><tr><th class="${thCls(1)}" data-sort="1" title="クリックで並べ替え">取引先番号${sortMark(1)}</th>${cols.map(f => `<th class="${thCls(f.no)}" data-sort="${f.no}" title="クリックで並べ替え">${this.esc(f.name)}${sortMark(f.no)}</th>`).join('')}</tr></thead><tbody>`;
     a.slice(this.page * this.PER, (this.page + 1) * this.PER).forEach(r => {
-      const stateB = (r.is_test ? '<span class="badge b-slate" style="margin-left:5px" title="試験の org（dev6・dev7）から来た箱。本番 SF・PROCES.S には出ない">テスト</span>' : '')
+      const stateB = (r.is_test ? '<span class="badge b-slate" style="margin-left:5px" title="試験の org（dev6・dev7）から来た箱。作った org にだけ配り、本番 SF・PROCES.S には出ない">テスト' + (r.source_org_label ? '（' + this.esc(r.source_org_label) + '）' : '') + '</span>' : '')
         + (r.is_suspended ? '<span class="badge b-red" style="margin-left:5px">欠番</span>'
         : r.registration_stage === 'temp' ? '<span class="draftb">申請中</span>' : '')
         + this.creditBadge(r.company_id);
@@ -1684,7 +1684,7 @@ const TorihikisakiView = {
     const code = ((d.system_code || []).find(r => r.system === 'tera') || {}).code || '';
     const me = this.whoAmI();
 
-    const stateB = (c.is_test ? '<span class="badge b-slate" style="margin-left:8px;vertical-align:middle" title="試験の org（dev6・dev7）から来た箱。本番 SF・PROCES.S には出ない">テスト</span>' : '') + (c.is_suspended
+    const stateB = (c.is_test ? '<span class="badge b-slate" style="margin-left:8px;vertical-align:middle" title="試験の org（dev6・dev7）から来た箱。作った org にだけ配り、本番 SF・PROCES.S には出ない">テスト' + (c.source_org_label ? '（' + this.esc(c.source_org_label) + '）' : '') + '</span>' : '') + (c.is_suspended
       ? `<span class="badge b-red" style="margin-left:8px;vertical-align:middle">欠番${c.suspend_reason ? '：' + this.esc(c.suspend_reason) : ''}</span>`
       : c.registration_stage === 'temp'
       ? '<span class="badge b-amber" style="margin-left:8px;vertical-align:middle">申請中（承認待ち）</span>'

@@ -14,7 +14,8 @@
 // 流れ（1社ごと）：
 //   1) system_code(system=<帯の札>, code=<Account Id>) が既にある → その会社を返す（status=exists）。札＝本物 'salesforce'／試験 'salesforce_test'
 //   2) 法人番号の候補があり、同じ帯（本物／試験）に同じ法人番号の会社がある → その会社に結ぶ（status=linked）。試験の箱が本物の会社に結ぶことはない
-//   3) それ以外 → 会社を新規（temp・is_test）＋system_code（札）＋company_history（status=created）
+//   3) それ以外 → 会社を新規（temp・is_test・source_org_id／source_org_label＝箱を送ってきた org と呼び名・2026-10-29.1）＋system_code（札）＋company_history（status=created）
+//      sf-export は試験の会社を source_org_id の org にだけ配る（dev6 の試験の会社が dev7 に混ざらない）
 //   4) SF_EXPORT_* の Secrets があれば、SF の Account に番号を書き戻す（HubCompanyId__c と AccountCode__c）
 //      ＝company の INSERT で即時配信トリガ（sf-export direct）が走るとき、SF 側に鍵が無いと新しい Account を作ってしまう（二重）ため、
 //        3秒の待ちの間に先に書く。Apex 側も応答の company_id を書く（冪等）。
@@ -43,7 +44,7 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-import-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-const VERSION = '2026-10-21.2'; // .1: 番号はハブが振る（next_parent_code）・帯＝本物／試験・is_test・書き戻しに AccountCode__c／.2: 書き戻し先は箱を送ってきた org（SF_EXPORT_TARGETS）
+const VERSION = '2026-10-29.1'; // .1（10/29）: 会社に出どころの org（source_org_id／source_org_label）を持たせる＝sf-export が試験の会社をその org にだけ配る／2026-10-21.2: // .1: 番号はハブが振る（next_parent_code）・帯＝本物／試験・is_test・書き戻しに AccountCode__c／.2: 書き戻し先は箱を送ってきた org（SF_EXPORT_TARGETS）
 const LOG = 'integration_log';
 const API_VERSION = 'v61.0';
 const SYSTEM_REAL = 'salesforce';      // 本物の org の取引先 Id の札（sf-export の writeback と同じ）
@@ -112,6 +113,20 @@ function writebackTargetFor(orgId: string): { base: string; clientId: string; cl
   const clientId = env('SF_EXPORT_CLIENT_ID'); const clientSecret = env('SF_EXPORT_CLIENT_SECRET');
   return base && clientId && clientSecret ? { base, clientId, clientSecret } : null;
 }
+// 出どころの org の呼び名（Secret SF_EXPORT_TARGETS の name＝dev6・dev7）。無ければ org の 15 桁（2026-10-29.1）
+function orgLabelFor(orgId: string): string {
+  const id = orgId.slice(0, 15);
+  try {
+    const arr = JSON.parse(env('SF_EXPORT_TARGETS') || '[]');
+    if (Array.isArray(arr)) {
+      for (const x of arr as Record<string, unknown>[]) {
+        if (x && String(x.org_id || '').slice(0, 15) === id && x.name) return String(x.name).slice(0, 40);
+      }
+    }
+  } catch (_) { /* 読めなければ org の 15 桁 */ }
+  return id;
+}
+
 async function writebackHubIds(pairs: { account_id: string; company_id: string }[], orgId: string): Promise<string | null> {
   const tg = writebackTargetFor(orgId);
   if (!tg || !pairs.length) return null;
@@ -188,6 +203,7 @@ Deno.serve(async (req) => {
               company_id: tryId, is_test: isTest, official_name: name, name_kana: clean(r.name_kana, 200), corporate_number: corp.length === 13 ? corp : null,
               postal_code: digits(r.postal_code).length === 7 ? digits(r.postal_code) : null, prefecture: clean(r.prefecture, 20), address_line: clean(r.address, 200),
               phone: clean(r.phone, 20), credit_exempt: r.credit_exempt === true, registration_stage: 'temp', data_source: isTest ? 'salesforce_test' : 'salesforce',
+              source_org_id: String(body.org_id || '').slice(0, 15) || null, source_org_label: orgLabelFor(String(body.org_id || '')) || null, // 出どころ（2026-10-29.1）
               remarks: (isTest ? '【試験】' : '') + `Salesforce の案件管理で相手を選んだときにできた仮登録（箱）。作った人: ${clean(r.created_by, 40) || '不明'}。本登録は取引開始申請の承認後に経理が行う`,
               created_by: who, updated_by: who,
             };

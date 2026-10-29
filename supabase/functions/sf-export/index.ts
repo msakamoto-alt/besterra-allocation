@@ -37,7 +37,9 @@
 //   SF_EXPORT_INSTANCE_URL / SF_EXPORT_CLIENT_ID / SF_EXPORT_CLIENT_SECRET
 //   SF_EXPORT_ALLOWED_ORG_IDS … 書込を許す org ID（15桁・カンマ区切り）。本番 org を誤って向けても書かない安全弁
 //   SF_PROD_ORG_IDS … 本番 SF の org ID（15桁・カンマ区切り・sf-intake と共通）。ここにある org へは試験の会社（company.is_test）を配信しない。
-//              切り替えまでは空＝どの org にも試験の会社まで配信する（dev6・dev7 で試験の会社を見るため）
+//              切り替えまでは空＝本番以外の org に試験の会社まで配信する（dev6・dev7 で試験の会社を見るため）
+//              試験の会社は「作った org」（company.source_org_id・sf-intake 2026-10-29.1 が入れる）にだけ配る（2026-10-29.1）＝dev6 の試験の会社は dev7 に出ない。
+//              出どころが空の試験の会社（10/29 より前の箱）は従来どおり本番以外の全部へ。link の候補からも同じ基準で外す
 //   IMPORT_SECRET（sf-import と共通）
 //
 // 安全鉄則：
@@ -60,7 +62,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-10-21.3'; // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
+const VERSION = '2026-10-29.1'; // 2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -208,7 +210,7 @@ async function fetchRows(admin: Admin, table: string, select: string, order: str
 
 async function loadHub(admin: Admin, ids: string[] | null): Promise<Hub> {
   const companies = await fetchRows(admin, 'company',
-    'company_id,official_name,name_kana,corporate_number,representative_name,postal_code,prefecture,address_line,building,phone,fax,invoice_reg_number,invoice_status,capital_amount,remarks,last_trade_on,is_suspended,registration_stage,credit_exempt,is_test,legacy_company_id', 'company_id', ids);
+    'company_id,official_name,name_kana,corporate_number,representative_name,postal_code,prefecture,address_line,building,phone,fax,invoice_reg_number,invoice_status,capital_amount,remarks,last_trade_on,is_suspended,registration_stage,credit_exempt,is_test,legacy_company_id,source_org_id', 'company_id', ids);
   const types = new Map<string, string[]>();
   for (const t of await fetchRows(admin, 'company_type', 'company_id,type_code', 'company_id', ids)) {
     const k = String(t.company_id); types.set(k, [...(types.get(k) || []), String(t.type_code)]);
@@ -534,6 +536,14 @@ Deno.serve(async (req) => {
       }
 
       // ===== link：会社マスタID無しの SF 取引先を社名で突合してキーを付ける（全件モードのみ） =====
+      // 試験の会社（is_test）の見せ方（2026-10-29.1）: 本番の org には出さない（2026-10-21 案 B）。本番以外へは「作った org」（company.source_org_id＝sf-intake が入れる）にだけ。
+      // 出どころが空の試験の会社（2026-10-29 より前の箱）は従来どおり本番以外の全部へ。link の候補と dry_run／export の対象の両方から外す
+      const prodOrgs = (Deno.env.get('SF_PROD_ORG_IDS') || '').split(',').map((s) => s.trim().slice(0, 15)).filter(Boolean);
+      const isProdTarget = prodOrgs.includes(sf.orgId);
+      const hiddenTest = new Set<string>(hub.companies
+        .filter((c) => c.is_test === true && (isProdTarget || (c.source_org_id && String(c.source_org_id).slice(0, 15) !== sf.orgId)))
+        .map((c) => String(c.company_id)));
+
       if (action === 'link') {
         if (onlyIds) throw new Error('link は全件モードで実行してください（company_ids／direct は不可）');
         const unlinked = sfAccounts.filter((a) => !a.HubCompanyId__c);
@@ -542,7 +552,7 @@ Deno.serve(async (req) => {
         const ambiguous: string[] = [];
         const nomatch: string[] = [];
         for (const a of unlinked) {
-          const cands = (hubByNorm.get(normName(a.Name as string)) || []).filter((cid) => !sfByHub.has(cid));
+          const cands = (hubByNorm.get(normName(a.Name as string)) || []).filter((cid) => !sfByHub.has(cid) && !hiddenTest.has(cid));
           if (cands.length !== 1) { (cands.length ? ambiguous : nomatch).push(String(a.Name)); continue; }
           const cid = cands[0];
           if (seenHub.has(cid)) { ambiguous.push(String(a.Name)); continue; }
@@ -600,15 +610,14 @@ Deno.serve(async (req) => {
       let targets = hub.companies;
       if (scope === 'active') targets = targets.filter((c) => !c.is_suspended);
       else targets = targets.filter((c) => !c.is_suspended || sfByHub.has(String(c.company_id))); // 欠番は既存があれば更新のみ
-      // 試験の会社（is_test＝試験の org から来た箱・帯 00001〜09999）は本番 SF（SF_PROD_ORG_IDS）には配信しない（2026-10-21 案 B）
-      const prodOrgs = (Deno.env.get('SF_PROD_ORG_IDS') || '').split(',').map((s) => s.trim().slice(0, 15)).filter(Boolean);
-      const isProdTarget = prodOrgs.includes(sf.orgId);
+      // 試験の会社（is_test）は本番には出さず、本番以外へは作った org にだけ（hiddenTest＝上で組んだ・2026-10-29.1）
       const nTest = targets.filter((c) => c.is_test === true).length;
-      if (isProdTarget) targets = targets.filter((c) => c.is_test !== true);
+      targets = targets.filter((c) => !hiddenTest.has(String(c.company_id)));
+      const nTestSkipped = nTest - targets.filter((c) => c.is_test === true).length;
       if (limit > 0) targets = targets.slice(0, limit);
 
       const records: Record<string, unknown>[] = [];
-      const cls = { update: 0, create: 0, code_conflict: 0, skipped_suspended: 0, skipped_test: isProdTarget ? nTest : 0 };
+      const cls = { update: 0, create: 0, code_conflict: 0, skipped_suspended: 0, skipped_test: nTestSkipped };
       const conflicts: { company_id: string; name: string; code: string; holder: string }[] = [];
       const conflictIds = new Set<string>();
       for (const c of targets) {
