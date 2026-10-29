@@ -62,7 +62,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-10-29.1'; // 2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
+const VERSION = '2026-10-29.2'; // 2026-10-29.2: 個別配信で、出どころの違う試験の会社を「欠番」にも数えていた（連携ログの数だけ・配信は正しい）を直した／2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -632,7 +632,7 @@ Deno.serve(async (req) => {
         if (sfByHub.has(cid)) cls.update++; else cls.create++;
         records.push(rec);
       }
-      if (onlyIds) cls.skipped_suspended = hub.companies.length - targets.length; // 欠番で SF に無い＝作らない
+      if (onlyIds) cls.skipped_suspended = hub.companies.length - targets.length - nTestSkipped; // 欠番で SF に無い＝作らない（試験の会社で外した分は skipped_test に数える・2026-10-29.2）
       const fieldFill: Record<string, number> = {};
       for (const r of records) for (const k of Object.keys(r)) if (r[k] !== null) fieldFill[k] = (fieldFill[k] || 0) + 1;
 
