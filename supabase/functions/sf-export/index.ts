@@ -62,7 +62,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-10-29.2'; // 2026-10-29.2: 個別配信で、出どころの違う試験の会社を「欠番」にも数えていた（連携ログの数だけ・配信は正しい）を直した／2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
+const VERSION = '2026-10-30.1'; // 2026-10-30.1: 試験の与信（credit_line_test）＝sandbox の稟議の結果はその org にだけ配り、本物の credit_line に上書きしない（坂本さん 10/30「UAT をすると確実にまた起きる」・会社 10487 の件）／2026-10-29.2: 個別配信で、出どころの違う試験の会社を「欠番」にも数えていた（連携ログの数だけ・配信は正しい）を直した／2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -187,6 +187,9 @@ type Hub = {
   codes: Map<string, Record<string, string>>;
   permits: Map<string, Record<string, unknown>[]>;
   credit: Map<string, Record<string, unknown>>; // credit_line の行（limit_amount / limit_type / valid_until / approved_on / used_amount）
+  // 試験の与信（credit_line_test・2026-10-30.1）: org_id（15 桁）→ 会社 → 行。sandbox の稟議の結果を入れる所＝その org にだけ、本物の credit_line の上にかぶせて配る
+  testCredit: Map<string, Map<string, Record<string, unknown>>>;
+  testCreditNote: string | null; // 表が未作成などで読めなかったとき（配信は止めず、本物の値だけで配る）
 };
 
 // ハブ読取。ids を渡すとその会社だけ（queue／company_ids 指定）、無ければ全件（ページング）
@@ -227,11 +230,25 @@ async function loadHub(admin: Admin, ids: string[] | null): Promise<Hub> {
   for (const c of await fetchRows(admin, 'credit_line', 'company_id,limit_amount,limit_type,valid_until,approved_on,used_amount', 'credit_id', ids)) {
     credit.set(String(c.company_id), c); // 1社1行（複数あれば後の行）
   }
-  return { companies, types, codes, permits, credit };
+  const testCredit = new Map<string, Map<string, Record<string, unknown>>>();
+  let testCreditNote: string | null = null;
+  try {
+    for (const r of await fetchRows(admin, 'credit_line_test', 'company_id,org_id,org_label,application_no,limit_amount,limit_type,valid_until,approved_on', 'id', ids)) {
+      const org = String(r.org_id || '').slice(0, 15);
+      if (!org) continue;
+      const m = testCredit.get(org) || new Map<string, Record<string, unknown>>();
+      m.set(String(r.company_id), r);
+      testCredit.set(org, m);
+    }
+  } catch (e) {
+    testCreditNote = String((e as Error)?.message || e).slice(0, 200); // credit_line_test.sql 未実行など
+  }
+  return { companies, types, codes, permits, credit, testCredit, testCreditNote };
 }
 
 // ハブ1社 → Account upsert レコード。ハブが空の項目は null（SF を空にする）。keepIfEmpty の項目だけ送らない
-function buildRecord(hub: Hub, c: Record<string, unknown>, keepIfEmpty: Set<string>): Record<string, unknown> {
+// testCr: 送り先が sandbox で、その org の試験の与信（credit_line_test）があるとき、その行。与信の 5 項目だけ本物の credit_line の代わりに使う（2026-10-30.1）
+function buildRecord(hub: Hub, c: Record<string, unknown>, keepIfEmpty: Set<string>, testCr?: Record<string, unknown>): Record<string, unknown> {
   const cid = String(c.company_id);
   const codes = hub.codes.get(cid) || {};
   const permits = hub.permits.get(cid) || [];
@@ -241,7 +258,9 @@ function buildRecord(hub: Hub, c: Record<string, unknown>, keepIfEmpty: Set<stri
   const bld = String(c.building || '').trim();
   const wasteNo = waste ? String(waste.permit_number || '') : '';
   const licenses = cons ? convertPermit(cons.construction_types as string) : [];
-  const cr = hub.credit.get(cid);
+  const real = hub.credit.get(cid);
+  // 使用額は会計の実績＝試験の与信でも本物の値のまま
+  const cr = testCr ? { ...testCr, used_amount: real ? real.used_amount : null } : real;
   const rec: Record<string, unknown> = {
     HubCompanyId__c: cid,
     AccountCode__c: cid, // 取引先番号（親コード）＝会社マスタの鍵（2026-10-21 案 B）
@@ -617,12 +636,15 @@ Deno.serve(async (req) => {
       if (limit > 0) targets = targets.slice(0, limit);
 
       const records: Record<string, unknown>[] = [];
-      const cls = { update: 0, create: 0, code_conflict: 0, skipped_suspended: 0, skipped_test: nTestSkipped };
+      const cls = { update: 0, create: 0, code_conflict: 0, skipped_suspended: 0, skipped_test: nTestSkipped, test_credit: 0 };
+      // 試験の与信（2026-10-30.1）: 本番の org には使わない。sandbox へはその org の行だけ
+      const orgTestCredit = isProdTarget ? undefined : hub.testCredit.get(sf.orgId);
       const conflicts: { company_id: string; name: string; code: string; holder: string }[] = [];
       const conflictIds = new Set<string>();
       for (const c of targets) {
-        const rec = buildRecord(hub, c, keepIfEmpty);
         const cid = String(c.company_id);
+        const testCr = orgTestCredit ? orgTestCredit.get(cid) : undefined;
+        const rec = buildRecord(hub, c, keepIfEmpty, testCr);
         const tera = rec.Business_Partners_Code__c ? String(rec.Business_Partners_Code__c) : '';
         const holder = tera ? sfByCode.get(tera) : undefined;
         if (holder && String(holder.HubCompanyId__c || '') !== cid) {
@@ -630,6 +652,7 @@ Deno.serve(async (req) => {
           continue;
         }
         if (sfByHub.has(cid)) cls.update++; else cls.create++;
+        if (testCr) cls.test_credit++;
         records.push(rec);
       }
       if (onlyIds) cls.skipped_suspended = hub.companies.length - targets.length - nTestSkipped; // 欠番で SF に無い＝作らない（試験の会社で外した分は skipped_test に数える・2026-10-29.2）
@@ -640,7 +663,7 @@ Deno.serve(async (req) => {
         const linkable = onlyIds ? null : sfAccounts.filter((a) => !a.HubCompanyId__c && (hubByNorm.get(normName(a.Name as string)) || []).length === 1).length;
         return ({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
           hub_companies: hub.companies.length, sf_accounts: sfAccounts.length, sf_linked: sfByHub.size,
-          targets: targets.length, will_update: cls.update, will_create: cls.create, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
+          targets: targets.length, will_update: cls.update, will_create: cls.create, test_credit: cls.test_credit, test_credit_note: hub.testCreditNote, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
           conflict_samples: conflicts.slice(0, 20), field_fill: fieldFill, sample: records.slice(0, 2),
           linkable_by_name: linkable,
           note: '書込は行っていません。code_conflict は取引先コードが SF の別レコードに付いている会社＝先に action=link で解消してください。',
@@ -680,11 +703,11 @@ Deno.serve(async (req) => {
         }
       }
       const logged = await logRun(admin, { kind: 'run', action: 'export', caller, source: body.source, sf, t0,
-        counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, skipped_test: cls.skipped_test, changed: totalChanged },
+        counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, skipped_test: cls.skipped_test, test_credit: cls.test_credit, changed: totalChanged },
         companyIds: onlyIds, reason: body.reason, payload,
-        meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, prod_target: isProdTarget, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty], guard: guardNote } });
+        meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, prod_target: isProdTarget, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty], guard: guardNote, test_credit_note: hub.testCreditNote } });
       return ({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
-        targets: targets.length, sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
+        targets: targets.length, sent: records.length, test_credit: cls.test_credit, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
         failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack, skipped_test: cls.skipped_test,
         changed: totalChanged, changes_sample: items.slice(0, 5),
         log_written: logged, elapsed_ms: Date.now() - t0 });
