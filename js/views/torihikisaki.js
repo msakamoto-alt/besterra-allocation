@@ -656,6 +656,7 @@ const TorihikisakiView = {
           return na !== nb ? na - nb : String(ca).localeCompare(String(cb));
         });
         this.rows = companies;
+        await this.loadNotices(); // 承認の知らせ・試験の与信（2026-10-30・表が無ければ出さない）
         const fc = this.el('tmk-foot-count');
         if (fc) fc.textContent = companies.length.toLocaleString();
         // 接続先の表示は固定文にしない（本番サイトで「学習用DB」と出ていた・2026-09-09）
@@ -738,7 +739,8 @@ const TorihikisakiView = {
   matches(r, q) {
     // 試験の会社（is_test＝dev6・dev7 などから来た箱・帯 00001〜09999）は「テストのみ」「すべて」のときだけ出す（2026-10-21）
     if (this.stateFilter === 'test') { if (!r.is_test) return false; }
-    else if (this.stateFilter !== 'all' && this.stateFilter !== 'credit' && r.is_test) return false;
+    else if (this.stateFilter !== 'all' && this.stateFilter !== 'credit' && this.stateFilter !== 'notice' && r.is_test) return false;
+    if (this.stateFilter === 'notice' && !this.noticeFor(r.company_id)) return false; // 承認の知らせが届いている（2026-10-30）
     if (this.stateFilter === 'credit' && !this.creditAlert(r.company_id)) return false; // 与信期限切れ・間近（2026-10-28）
     if (this.stateFilter === 'active' && r.is_suspended) return false;
     if (this.stateFilter === 'suspended' && !r.is_suspended) return false;
@@ -804,6 +806,7 @@ const TorihikisakiView = {
         <option value="temp"${this.stateFilter === 'temp' ? ' selected' : ''}>申請中のみ</option>
         <option value="test"${this.stateFilter === 'test' ? ' selected' : ''}>テストのみ</option>
         <option value="credit"${this.stateFilter === 'credit' ? ' selected' : ''}>与信期限切れ・間近</option>
+        <option value="notice"${this.stateFilter === 'notice' ? ' selected' : ''}>承認の知らせあり</option>
         <option value="all"${this.stateFilter === 'all' ? ' selected' : ''}>すべて</option>
       </select>
       <select class="inp" id="tmk-type" title="種別で絞り込み">
@@ -811,15 +814,16 @@ const TorihikisakiView = {
         ${Object.keys(TM_META.TYPE_CODES).map(c => `<option value="${c}"${this.typeFilter === c ? ' selected' : ''}>${this.esc(TM_META.TYPE_CODES[c])}</option>`).join('')}
       </select>
       <span class="count">${a.length.toLocaleString()} 社</span>
-      ${this.creditAlertSummary()}
+      ${this.creditAlertSummary()}${this.noticeSummary()}
       <div class="pop ${this.colPopOpen ? 'on' : ''}" id="tmk-colpop"></div>
     </div>
+    ${this.noticePanelHtml()}
     <div class="tblwrap"><table class="tbl"><thead><tr><th class="${thCls(1)}" data-sort="1" title="クリックで並べ替え">取引先番号${sortMark(1)}</th>${cols.map(f => `<th class="${thCls(f.no)}" data-sort="${f.no}" title="クリックで並べ替え">${this.esc(f.name)}${sortMark(f.no)}</th>`).join('')}</tr></thead><tbody>`;
     a.slice(this.page * this.PER, (this.page + 1) * this.PER).forEach(r => {
       const stateB = (r.is_test ? '<span class="badge b-slate" style="margin-left:5px" title="試験の org（dev6・dev7）から来た箱。作った org にだけ配り、本番 SF・PROCES.S には出ない">テスト' + (r.source_org_label ? '（' + this.esc(r.source_org_label) + '）' : '') + '</span>' : '')
         + (r.is_suspended ? '<span class="badge b-red" style="margin-left:5px">欠番</span>'
         : r.registration_stage === 'temp' ? '<span class="draftb">申請中</span>' : '')
-        + this.creditBadge(r.company_id);
+        + this.creditBadge(r.company_id) + this.noticeBadge(r.company_id);
       html += `<tr data-cid="${this.esc(r.company_id)}"><td class="num">${this.esc(r.company_id)}</td>` +
         cols.map((f, i) => {
           const v = this.getListVal(r, f);
@@ -836,6 +840,11 @@ const TorihikisakiView = {
     this.el('tmk-state').onchange = e => { this.stateFilter = e.target.value; this.page = 0; this.renderList(); };
     const crBtn = this.el('tmk-credit-alert');
     if (crBtn) crBtn.onclick = () => { this.stateFilter = this.stateFilter === 'credit' ? 'all' : 'credit'; this.page = 0; this.renderList(); };
+    const ntBtn = this.el('tmk-notice-filter');
+    if (ntBtn) ntBtn.onclick = () => { this.stateFilter = this.stateFilter === 'notice' ? 'active' : 'notice'; this.page = 0; this.renderList(); };
+    wrap.querySelectorAll('[data-nopen]').forEach(b => b.onclick = e => { e.stopPropagation(); this.openNotice(+b.dataset.nopen); });
+    const bulk = this.el('tmk-tc-bulk');
+    if (bulk) bulk.onchange = e => { const v = e.target.value; e.target.value = ''; if (v) this.bulkDeleteTestCredit(v); };
     this.el('tmk-type').onchange = e => { this.typeFilter = e.target.value; this.page = 0; this.renderList(); };
     wrap.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
       const no = +th.dataset.sort;
@@ -904,6 +913,13 @@ const TorihikisakiView = {
         payment_term: pt.data || [], company_name_history: nh.data || [],
         document: dc.data || [], compliance_survey: cs.data || [],
       };
+      // 試験の与信・届いている承認の知らせ（2026-10-30）。表が無い（credit_notice.sql 未実行）なら null＝出さない
+      const [tc, nt] = await Promise.all([
+        sb.from('credit_line_test').select('*').eq('company_id', cid).order('org_id'),
+        sb.from('credit_notice').select('*').eq('company_id', cid).is('done_at', null).order('received_at'),
+      ]);
+      this.detail.credit_line_test = tc.error ? null : (tc.data || []);
+      this.detail.notices = nt.error ? null : (nt.data || []);
       this.sel = cid;
       this.dtab = 'basic';
       this.fmtFocus = 0;
@@ -917,6 +933,7 @@ const TorihikisakiView = {
       this.markNav();
       this.applyAutoJudgeDetail();
       this.renderDetail();
+      if ((this.detail.notices || []).length) this.showNoticeWindow(this.detail.notices[0]); // 会社を開いたら知らせの窓
       const scroller = document.scrollingElement || document.documentElement;
       scroller.scrollTop = 0;
     } catch (e) {
@@ -1361,10 +1378,10 @@ const TorihikisakiView = {
     if (this.fmt === '単票フォーム' || this.fmt === '2カラム') {
       const grid = this.fmt === '2カラム' ? 'fgrid2' : 'fgrid1';
       blocks.forEach(b => {
-        html += `<div class="blkh">${this.esc(b)}</div><div class="${grid}">` + fields.filter(f => f.block === b).map(ff).join('') + '</div>';
+        html += `<div class="blkh">${this.esc(b)}</div><div class="${grid}">` + fields.filter(f => f.block === b).map(ff).join('') + '</div>' + (b === '与信' ? this.creditExtraHtml(host) : '');
       });
     } else if (this.fmt === 'カード') {
-      html += '<div class="cards">' + blocks.map(b => `<div class="fcard"><h4>${this.esc(b)}</h4>` + fields.filter(f => f.block === b).map(ff).join('') + '</div>').join('') + '</div>';
+      html += '<div class="cards">' + blocks.map(b => `<div class="fcard"><h4>${this.esc(b)}</h4>` + fields.filter(f => f.block === b).map(ff).join('') + (b === '与信' ? this.creditExtraHtml(host) : '') + '</div>').join('') + '</div>';
     } else if (this.fmt === 'Excel風グリッド') {
       html += '<div class="tblwrap"><table class="xl"><thead><tr><th>項目</th><th>値</th><th style="width:74px;text-align:center">出所</th></tr></thead><tbody>' +
         fields.map(f => {
@@ -1385,6 +1402,7 @@ const TorihikisakiView = {
     }
     host.innerHTML = html;
     this.wireFieldInputs(host, fields, api);
+    this.wireCreditExtra(host);
     if (this.fmt === 'フォーカス') {
       const fi = host.querySelector('[data-path]');
       if (fi) fi.focus();
@@ -1884,16 +1902,18 @@ const TorihikisakiView = {
     const note = auto === n ? `自動判定で入れた${auto}件です。保存すると確定します（違っていれば選び直してください）`
       : auto ? `うち自動判定 ${auto}件。変わった項目だけが変更履歴に記録されます`
         : '変わった項目だけが変更履歴に記録されます';
-    bar.innerHTML = `<div class="savebar"><span>未保存の変更 <b>${n}件</b>（${note}）</span><span style="flex:1"></span>` +
+    bar.innerHTML = `<div class="savebar"><span>未保存の変更 <b>${n}件</b>（${note}）</span>${this.basisInputHtml()}<span style="flex:1"></span>` +
       `<button class="btn" id="tmk-discard" ${this.busy ? 'disabled' : ''}>破棄</button>` +
       `<button class="btn btn-primary" id="tmk-save" ${this.busy ? 'disabled' : ''}>${this.busy ? '保存中…' : '💾 保存'}</button></div>`;
     this.el('tmk-discard').onclick = () => {
       if (!confirm('未保存の変更を破棄しますか？')) return;
-      this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {};
+      this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {}; this.basisDraft = '';
       this.renderDbody();
       this.refreshAiSide();
     };
     this.el('tmk-save').onclick = () => this.savePending();
+    const bi = this.el('tmk-basis');
+    if (bi) bi.oninput = e => { this.basisDraft = e.target.value; };
   },
 
   // 保存: 変更履歴を先に書き、本体更新が失敗したらその分の履歴を取り消す（段階Aの確定パターン）
@@ -1941,6 +1961,16 @@ const TorihikisakiView = {
       errs.push('・反社チェック: 先に「反社チェック実施日」を入れてください（実施日がないと記録を作れません）');
     }
     if (errs.length) { alert('入力を確認してください。\n\n' + errs.join('\n')); return; }
+    // ②' 与信の根拠（2026-10-30・会社 10487 の件）: 今の欄で与信の判断の欄を変える＝稟議によらない与信（棚卸など）。根拠は必須・YS- は断る
+    //   （Salesforce の稟議の結果は「承認の知らせ」の窓から入れる＝どの Salesforce の稟議かをツールが知らせで決める）。試験の会社は聞かない
+    const crCh = changes.filter(c => c.p.table === 'credit_line' && !c.p.keyVal && !c.p.jsonKey && this.CREDIT_GUARD_COLS.includes(c.p.column));
+    if (crCh.length && !d.company.is_test) {
+      const basis = String(this.basisDraft || '').trim();
+      if (!basis) { alert('与信を変えるときは、保存の帯の「根拠」を入れてください（例: 棚卸 2026-11）。'); return; }
+      if (/^\s*YS[-‐－\s]?\d/i.test(basis)) { alert('YS- の番号は Salesforce の稟議です。稟議の結果は、一覧の「届いている承認の知らせ」から入れてください（どの Salesforce の稟議かで、入れる先が決まります）。'); return; }
+      const cur = ((d.credit_line || [])[0] || {}).basis || null;
+      if (cur !== basis) changes.push({ path: 'credit_line.basis', p: { table: 'credit_line', column: 'basis' }, f: null, label: '与信の根拠', oldV: cur, newV: basis.slice(0, 60) });
+    }
     if (!changes.length && !typeChange) { this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {}; this.renderSavebar(); return; }
 
     const clearing = changes.filter(c => c.newV === null && this.isRequired(c.f, types));
@@ -2090,9 +2120,290 @@ const TorihikisakiView = {
     if (typeChange && this.typesByCid) this.typesByCid[cid] = typeChange.next.slice();
     const n = changes.length + (typeChange ? 1 : 0);
     this.busy = false;
-    this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {};
+    this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {}; this.basisDraft = '';
     this.toast(`保存しました（${n}項目・変更履歴に記録）`);
     await this.openDetail(cid);
+  },
+
+  // ===== 承認の知らせ・試験の与信（2026-10-30 坂本さん・会社 10487 の件）=====
+  // Salesforce で与信の稟議・取引開始申請が承認されると、sf-intake が credit_notice に 1 件入れる（決裁額は来ない）。
+  // 一覧の「届いている承認の知らせ」と、会社を開いたときの窓で、経理が限度額・種類・期限・決裁者を入れる。
+  // 入れる先はツールが知らせの org で決める＝本番の Salesforce → 本物の credit_line／dev6・dev7 → 試験の与信 credit_line_test（その org にだけ配る）。
+  // 稟議によらない与信（棚卸など）は今の欄から入れる・直す（保存の帯の「根拠」必須・YS- は断る）。
+  CREDIT_GUARD_COLS: ['limit_amount', 'limit_type', 'valid_until', 'approved_on', 'decided_by'],
+  CREDIT_TYPES: ['普通', '臨時'],
+  notices: null,       // 届いている（済みでない）承認の知らせ。null＝表が無い
+  testCredits: null,   // 試験の与信の一覧（company_id・org_id・org_label）。null＝表が無い
+  basisDraft: '',
+
+  async loadNotices() {
+    try {
+      const sb = this.getClient();
+      const [n, tc] = await Promise.all([
+        sb.from('credit_notice').select('*').is('done_at', null).order('received_at'),
+        sb.from('credit_line_test').select('company_id,org_id,org_label'),
+      ]);
+      this.notices = n.error ? null : (n.data || []);
+      this.testCredits = tc.error ? null : (tc.data || []);
+    } catch (e) {
+      this.notices = null; this.testCredits = null;
+    }
+  },
+  noticeFor(cid) { return (this.notices || []).find(n => n.company_id === cid) || null; },
+  noticeBadge(cid) {
+    return this.noticeFor(cid) ? '<span class="badge b-amber" style="margin-left:5px">承認の知らせ</span>' : '';
+  },
+  noticeSummary() {
+    const n = (this.notices || []).length;
+    return n ? `<button class="btn" id="tmk-notice-filter" title="承認の知らせが届いている会社だけに絞る（もう一度押すと戻す）"><span class="badge b-amber">承認の知らせ ${n}</span></button>` : '';
+  },
+  orgBadge(label, isProd) {
+    return `<span class="badge ${isProd ? 'b-green' : 'b-slate'}">${this.esc(isProd ? (label || '本番') : (label || '試験'))}</span>`;
+  },
+  noticePanelHtml() {
+    const ns = this.notices || [];
+    const tcs = this.testCredits || [];
+    if (!ns.length && !tcs.length) return '';
+    const orgs = {};
+    tcs.forEach(r => { const k = r.org_id; orgs[k] = orgs[k] || { label: r.org_label || k, n: 0 }; orgs[k].n++; });
+    const bulk = Object.keys(orgs).length
+      ? `<select class="inp" id="tmk-tc-bulk" style="margin-left:auto" title="試験の与信を環境ごとに消す（消すとその環境には本物の値が配り直されます）"><option value="">試験の与信を環境ごとに消す</option>` +
+        Object.keys(orgs).map(k => `<option value="${this.esc(k)}">${this.esc(orgs[k].label)} の試験の与信を消す（${orgs[k].n} 社）</option>`).join('') + '</select>'
+      : '';
+    const fmt = v => v == null ? '—' : Number(v).toLocaleString();
+    const name = n => { const r = (this.rows || []).find(x => x.company_id === n.company_id); return r ? r.official_name : (n.account_name || '（会社を選ぶ）'); };
+    const rows = ns.map(n => `<tr><td>${this.orgBadge(n.org_label, n.is_prod)}</td><td>${this.esc(n.kind === '取引開始' ? '取引開始' : '与信')}</td><td>${this.esc(n.application_no)}</td>
+      <td><b>${this.esc(name(n))}</b>${n.company_id ? '' : ' <span class="badge b-red">会社が未特定</span>'}</td><td class="mf">${this.esc(n.applicant || '')}</td>
+      <td class="mf">承認 ${this.esc(n.approved_on || '—')}</td><td class="r">${n.kind === '取引開始' ? '' : '希望 ' + fmt(n.requested_limit)}</td>
+      <td><button class="btn btn-sm btn-primary" data-nopen="${n.id}">開く</button></td></tr>`).join('');
+    return `<div class="ntc-panel"><h4>届いている承認の知らせ ${ns.length ? `<span class="badge b-amber">${ns.length}</span>` : ''}${bulk}</h4>
+      ${ns.length ? `<table><tbody>${rows}</tbody></table>` : '<div class="mf" style="font-size:11px">ありません</div>'}</div>`;
+  },
+
+  /** 一覧の［開く］: 会社が分かれば詳細へ（窓が出る）。分からなければ会社を選ぶ窓 */
+  async openNotice(id) {
+    const n = (this.notices || []).find(x => x.id === id);
+    if (!n) return;
+    if (n.company_id) { await this.openDetail(n.company_id); return; }
+    this.showCompanyPicker(n);
+  },
+  closeNoticeWindow() {
+    const ov = this.el('tmk-ntc-ov');
+    if (ov) ov.remove();
+  },
+  noticeOverlay(inner) {
+    this.closeNoticeWindow();
+    const root = this.el('tab-torihikisaki') || document.body;
+    const ov = document.createElement('div');
+    ov.className = 'ov on';
+    ov.id = 'tmk-ntc-ov';
+    ov.innerHTML = `<div class="dialog" style="max-width:540px">${inner}</div>`;
+    root.appendChild(ov);
+    const x = ov.querySelector('[data-ntc-close]');
+    if (x) x.onclick = () => this.closeNoticeWindow();
+    return ov;
+  },
+  noticeFixHtml(n) {
+    const fmt = v => v == null ? '—' : Number(v).toLocaleString();
+    return `<div class="ntc-fix">
+      <span class="k">Salesforce</span><span>${this.orgBadge(n.org_label, n.is_prod)}</span>
+      <span class="k">稟議番号</span><span>${this.esc(n.application_no)}</span>
+      <span class="k">申請者</span><span>${this.esc(n.applicant || '—')}</span>
+      <span class="k">承認日</span><span class="tnum">${this.esc(n.approved_on || '—')}</span>
+      ${n.kind === '取引開始' ? '' : `<span class="k">希望額（参考）</span><span class="tnum">${fmt(n.requested_limit)}</span>`}
+      ${n.project_no ? `<span class="k">案件番号</span><span>${this.esc(n.project_no)}</span>` : ''}
+    </div>`;
+  },
+
+  /** 会社が引けなかった知らせ: 社名の近い会社から選ぶ */
+  showCompanyPicker(n) {
+    const norm = s => String(s || '').normalize('NFKC').replace(/[\s　]/g, '').replace(/㈱|\(株\)|株式会社/g, '');
+    const key = norm(n.account_name);
+    const cands = key ? (this.rows || []).filter(r => !r.is_suspended && (norm(r.official_name).includes(key) || key.includes(norm(r.official_name)))).slice(0, 20) : [];
+    const ov = this.noticeOverlay(`<div class="dhd"><h3>会社を選んでください</h3><button class="x" data-ntc-close>✕</button></div>
+      <div class="dbody">${this.noticeFixHtml(n)}
+        <div class="ff"><label>Salesforce の取引先名</label><div class="row"><input value="${this.esc(n.account_name || '')}" disabled></div></div>
+        <div class="ff"><label>会社<span class="req">*</span></label><div class="row"><select id="tmk-ntc-pick"><option value="">（選ぶ）</option>
+          ${cands.map(r => `<option value="${this.esc(r.company_id)}">${this.esc(r.company_id)} ${this.esc(r.official_name)}</option>`).join('')}</select></div>
+          <div class="row" style="margin-top:6px"><input id="tmk-ntc-code" placeholder="候補に無ければ取引先番号（5 桁）"></div></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-ntc-close2>あとで</button><button class="btn btn-primary" id="tmk-ntc-pickok">この会社で開く</button></div>
+      </div>`);
+    ov.querySelector('[data-ntc-close2]').onclick = () => this.closeNoticeWindow();
+    ov.querySelector('#tmk-ntc-pickok').onclick = async () => {
+      const cid = String(ov.querySelector('#tmk-ntc-code').value || '').trim() || ov.querySelector('#tmk-ntc-pick').value;
+      const r = (this.rows || []).find(x => x.company_id === cid);
+      if (!r) { alert('会社を選ぶか、ある取引先番号を入れてください。'); return; }
+      const res = await this.getClient().from('credit_notice').update({ company_id: cid }).eq('id', n.id);
+      if (res.error) { alert('結べませんでした: ' + res.error.message); return; }
+      n.company_id = cid;
+      this.closeNoticeWindow();
+      await this.openDetail(cid);
+    };
+  },
+
+  /** 会社を開いたときの窓（与信＝限度額などを入れる／取引開始＝本登録の番） */
+  showNoticeWindow(n) {
+    if (!n) return;
+    const c = this.detail && this.detail.company;
+    if (!c || c.company_id !== n.company_id) return;
+    const where = n.is_prod ? '本物の与信に入ります。' : `${this.esc(n.org_label || n.org_id)} の試験の与信に入ります。`;
+    if (n.kind === '取引開始') {
+      const temp = c.registration_stage === 'temp';
+      const ov = this.noticeOverlay(`<div class="dhd"><h3>取引開始申請が承認されました（本登録の番）</h3><button class="x" data-ntc-close>✕</button></div>
+        <div class="dbody">${this.noticeFixHtml(n)}
+          <div class="mf" style="font-size:12px;margin-bottom:10px">${temp ? '登録を承認すると本登録になります。' : 'この会社は本登録済みです。'}</div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
+            <button class="btn btn-sm" id="tmk-ntc-dismiss" style="margin-right:auto">入れずに済みにする</button>
+            <button class="btn" data-ntc-close2>あとで</button>
+            ${temp ? '<button class="btn btn-success" id="tmk-ntc-reg">✓ 登録を承認</button>' : '<button class="btn btn-primary" id="tmk-ntc-done">済みにする</button>'}
+          </div></div>`);
+      ov.querySelector('[data-ntc-close2]').onclick = () => this.closeNoticeWindow();
+      ov.querySelector('#tmk-ntc-dismiss').onclick = () => this.finishNotice(n, '入れずに済み');
+      const reg = ov.querySelector('#tmk-ntc-reg');
+      if (reg) reg.onclick = async () => {
+        this.closeNoticeWindow();
+        await this.approveRegistration();
+        if (this.detail && this.detail.company.registration_stage === 'full') await this.finishNotice(n, '本登録した');
+      };
+      const dn = ov.querySelector('#tmk-ntc-done');
+      if (dn) dn.onclick = () => this.finishNotice(n, '本登録済みを確かめた');
+      return;
+    }
+    const ov = this.noticeOverlay(`<div class="dhd"><h3>与信の稟議が承認されました</h3><button class="x" data-ntc-close>✕</button></div>
+      <div class="dbody">${this.noticeFixHtml(n)}
+        <div class="ff"><label>与信限度額<span class="req">*</span></label><div class="row"><input class="amt" id="tmk-ntc-lim" inputmode="numeric"></div></div>
+        <div class="ff"><label>与信種類(普通/臨時)<span class="req">*</span></label><div class="row"><select id="tmk-ntc-type"><option value="">（選ぶ）</option>${this.CREDIT_TYPES.map(x => `<option>${x}</option>`).join('')}</select></div></div>
+        <div class="ff"><label>与信有効期限(1年)<span class="req">*</span></label><div class="row"><input type="date" id="tmk-ntc-until"></div></div>
+        <div class="ff"><label>決裁者<span class="req">*</span></label><div class="row"><input id="tmk-ntc-who" maxlength="40"></div></div>
+        <div class="mf" style="font-size:11px;margin-bottom:10px">${where}</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
+          <button class="btn btn-sm" id="tmk-ntc-dismiss" style="margin-right:auto">入れずに済みにする</button>
+          <button class="btn" data-ntc-close2>あとで</button><button class="btn btn-primary" id="tmk-ntc-save">保存</button>
+        </div></div>`);
+    const lim = ov.querySelector('#tmk-ntc-lim');
+    lim.onblur = () => { lim.value = this.amtFmt(lim.value); };
+    ov.querySelector('[data-ntc-close2]').onclick = () => this.closeNoticeWindow();
+    ov.querySelector('#tmk-ntc-dismiss').onclick = () => this.finishNotice(n, '入れずに済み');
+    ov.querySelector('#tmk-ntc-save').onclick = () => this.saveNoticeCredit(n, {
+      limit_amount: this.amtRaw(lim.value), limit_type: ov.querySelector('#tmk-ntc-type').value,
+      valid_until: ov.querySelector('#tmk-ntc-until').value, decided_by: String(ov.querySelector('#tmk-ntc-who').value || '').trim(),
+    });
+  },
+
+  async saveNoticeCredit(n, v) {
+    if (this.busy) return;
+    const errs = [];
+    if (!(Number(v.limit_amount) > 0)) errs.push('・与信限度額');
+    if (!v.limit_type) errs.push('・与信種類');
+    if (!v.valid_until) errs.push('・与信有効期限');
+    if (!v.decided_by) errs.push('・決裁者');
+    if (errs.length) { alert('入れてください。\n\n' + errs.join('\n')); return; }
+    const sb = this.getClient();
+    const cid = n.company_id;
+    const who = this.whoAmI();
+    const row = { limit_amount: Number(v.limit_amount), limit_type: v.limit_type, valid_until: v.valid_until, approved_on: n.approved_on || null, decided_by: v.decided_by.slice(0, 40) };
+    this.busy = true;
+    try {
+      let table, old;
+      if (n.is_prod) {
+        // 本番の Salesforce の稟議＝本物の与信（1 社 1 行・無ければ作る）
+        table = 'credit_line';
+        old = (this.detail.credit_line || [])[0] || null;
+        const patch = Object.assign({}, row, { basis: String(n.application_no).slice(0, 60) });
+        const res = old ? await sb.from('credit_line').update(patch).eq('company_id', cid) : await sb.from('credit_line').insert(Object.assign({ company_id: cid }, patch));
+        if (res.error) throw new Error(res.error.message);
+      } else {
+        // dev6・dev7 の稟議＝試験の与信（その org にだけ配る）
+        table = 'credit_line_test';
+        old = (this.detail.credit_line_test || []).find(r => r.org_id === n.org_id) || null;
+        const up = Object.assign({ company_id: cid, org_id: n.org_id, org_label: n.org_label, application_no: n.application_no, notice_id: n.id,
+          updated_by: who, updated_at: new Date().toISOString() }, row, old ? {} : { created_by: who });
+        const res = await sb.from('credit_line_test').upsert(up, { onConflict: 'company_id,org_id' });
+        if (res.error) throw new Error(res.error.message);
+      }
+      const hist = this.CREDIT_GUARD_COLS.filter(k => String(old ? old[k] ?? '' : '') !== String(row[k] ?? '')).map(k => ({
+        company_id: cid, table_name: table, column_name: k, old_value: old && old[k] != null ? String(old[k]) : null,
+        new_value: row[k] == null ? null : String(row[k]), changed_by: `${who}(${n.org_label || n.org_id} ${n.application_no})`.slice(0, 40),
+      }));
+      if (hist.length) await sb.from('company_history').insert(hist); // 履歴の失敗で与信は戻さない
+    } catch (e) {
+      this.busy = false;
+      alert('与信を保存できませんでした。\n\n' + (e.message || e));
+      return;
+    }
+    this.busy = false;
+    await this.finishNotice(n, n.is_prod ? '本物の与信に入れた' : `${n.org_label || n.org_id} の試験の与信に入れた`, true);
+  },
+
+  /** 知らせを済みにする（与信を入れた・本登録した・入れずに閉じた） */
+  async finishNotice(n, note, saved) {
+    if (!saved && note === '入れずに済み' && !confirm(`${n.application_no} の知らせを、入れずに済みにしますか？`)) return;
+    const res = await this.getClient().from('credit_notice').update({ done_at: new Date().toISOString(), done_by: this.whoAmI(), done_note: String(note).slice(0, 200) }).eq('id', n.id);
+    if (res.error) alert('知らせを済みにできませんでした: ' + res.error.message);
+    this.closeNoticeWindow();
+    await this.loadNotices();
+    this.toast(saved ? `保存しました（${note}）` : `済みにしました（${n.application_no}）`);
+    if (this.detail && this.detail.company.company_id === n.company_id) await this.openDetail(n.company_id);
+  },
+
+  /** 与信の段の下: 試験の与信の札と［消す］・届いている知らせ */
+  creditExtraHtml(host) {
+    if (!host || host.id !== 'tmk-fields' || this.view !== 'detail' || !this.detail) return '';
+    const tcs = this.detail.credit_line_test || [];
+    const ns = (this.detail.notices || []);
+    if (!tcs.length && !ns.length) return '';
+    const fmt = v => v == null ? '—' : Number(v).toLocaleString();
+    return '<div class="ntc-test">' +
+      ns.map(n => `<div class="slink"><span class="nm2"><span class="badge b-amber">承認の知らせ（${this.esc(n.org_label || n.org_id)}・${this.esc(n.application_no)}）</span></span><button class="btn btn-sm btn-primary" data-nwin="${n.id}">窓を開く</button></div>`).join('') +
+      tcs.map(r => `<div class="slink"><span class="nm2"><span class="badge b-slate">試験の与信（${this.esc(r.org_label || r.org_id)}・${this.esc(r.application_no)}）</span></span>
+        <b class="tnum">${fmt(r.limit_amount)}</b><span class="mf">${this.esc(r.limit_type || '')}・期限 ${this.esc(r.valid_until || '—')}</span>
+        <button class="btn btn-sm" data-tcdel="${this.esc(r.org_id)}">消す</button></div>`).join('') + '</div>';
+  },
+  wireCreditExtra(host) {
+    if (!host) return;
+    host.querySelectorAll('[data-tcdel]').forEach(b => b.onclick = () => this.deleteTestCredit(b.dataset.tcdel));
+    host.querySelectorAll('[data-nwin]').forEach(b => b.onclick = () => this.showNoticeWindow((this.detail.notices || []).find(n => n.id === +b.dataset.nwin)));
+  },
+  async deleteTestCredit(orgId) {
+    const cid = this.detail.company.company_id;
+    const r = (this.detail.credit_line_test || []).find(x => x.org_id === orgId);
+    if (!r || this.busy) return;
+    if (!confirm(`試験の与信（${r.org_label || orgId}・${r.application_no}）を消します。${r.org_label || orgId} には本物の与信の値が配り直されます。`)) return;
+    const sb = this.getClient();
+    const del = await sb.from('credit_line_test').delete().eq('company_id', cid).eq('org_id', orgId);
+    if (del.error) { alert('消せませんでした: ' + del.error.message); return; }
+    await sb.from('company_history').insert({ company_id: cid, table_name: 'credit_line_test', column_name: '(削除)',
+      old_value: `${r.org_label || orgId} ${r.application_no} 限度 ${r.limit_amount ?? ''}`, new_value: null, changed_by: this.whoAmI() });
+    await this.loadNotices();
+    this.toast('試験の与信を消しました');
+    await this.openDetail(cid);
+  },
+  /** 環境ごとにまとめて消す（UAT の終わり・sandbox の作り直し） */
+  async bulkDeleteTestCredit(orgId) {
+    const rows = (this.testCredits || []).filter(r => r.org_id === orgId);
+    if (!rows.length) return;
+    const label = rows[0].org_label || orgId;
+    if (!confirm(`${label} の試験の与信 ${rows.length} 社分をすべて消します。${label} には本物の与信の値が配り直されます。よろしいですか？`)) return;
+    const sb = this.getClient();
+    const del = await sb.from('credit_line_test').delete().eq('org_id', orgId);
+    if (del.error) { alert('消せませんでした: ' + del.error.message); return; }
+    const who = this.whoAmI();
+    await sb.from('company_history').insert(rows.map(r => ({ company_id: r.company_id, table_name: 'credit_line_test', column_name: '(削除)',
+      old_value: `${label} の試験の与信（まとめて消す）`, new_value: null, changed_by: who })));
+    await this.loadNotices();
+    this.toast(`${label} の試験の与信を消しました（${rows.length} 社）`);
+    this.renderList();
+  },
+  /** 保存の帯の「根拠」（今の欄で与信の判断の欄を変えたときだけ・試験の会社は出さない） */
+  basisInputHtml() {
+    if (!this.detail || this.detail.company.is_test) return '';
+    const need = Object.keys(this.pending || {}).some(k => {
+      const p = this.parsePath(k);
+      return p && p.table === 'credit_line' && !p.keyVal && !p.jsonKey && this.CREDIT_GUARD_COLS.includes(p.column);
+    });
+    if (!need) return '';
+    return `<span class="ff" style="margin:0 0 0 10px;display:flex;gap:6px;align-items:center"><label style="margin:0;white-space:nowrap">根拠<span class="req">*</span></label>` +
+      `<input id="tmk-basis" style="width:160px" maxlength="60" placeholder="棚卸 2026-11" value="${this.esc(this.basisDraft || '')}"></span>`;
   },
 
   // ===== 取引履歴タブ（基幹からの参照＝未接続の案内＋わかる範囲） =====
@@ -3876,6 +4187,10 @@ const TorihikisakiView = {
       else (subTables[p.table] = subTables[p.table] || {})[p.column] = v;
     });
     if (errs.length) { alert('入力を確認してください。\n\n' + errs.join('\n')); return; }
+    if (subTables.credit_line && this.CREDIT_GUARD_COLS.some(k => subTables.credit_line[k] != null)) {
+      alert('与信（限度額・種類・期限・決裁日・決裁者）は、会社を作ってから詳細の画面で入れてください（根拠を入れるため）。');
+      return;
+    }
     if (!coVals.official_name) { alert('正式社名は必須です。'); return; }
     if (coVals.corporate_number) {
       const dup = (this.rows || []).find(r => r.corporate_number === coVals.corporate_number);

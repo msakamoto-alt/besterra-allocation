@@ -276,3 +276,14 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki .zipassist .btn{margin:1px 2px;font-size:11px;padding:1px 8px}
 /* 金額欄（BIGINT: 資本金・売上高・与信限度額・与信使用状況）＝右寄せ・等幅数字（値は数字だけ・表示だけ3桁カンマ） 2026-09-11 */
 #tab-torihikisaki .ff input.amt{text-align:right;font-variant-numeric:tabular-nums;}
+
+/* 承認の知らせ・試験の与信（2026-10-30・会社 10487 の件） */
+#tab-torihikisaki .ntc-panel{background:var(--card);border:1.5px solid var(--amber);border-radius:var(--radius-lg);padding:10px 14px;margin-bottom:12px;}
+#tab-torihikisaki .ntc-panel h4{margin:0 0 6px;font-size:12.5px;font-weight:800;display:flex;align-items:center;gap:8px;}
+#tab-torihikisaki .ntc-panel table{width:100%;border-collapse:collapse;font-size:12px;}
+#tab-torihikisaki .ntc-panel td{padding:5px 6px;border-top:1px solid var(--muted);white-space:nowrap;}
+#tab-torihikisaki .ntc-panel td.r{text-align:right;font-variant-numeric:tabular-nums;}
+#tab-torihikisaki .ntc-fix{display:grid;grid-template-columns:104px 1fr;gap:4px 10px;font-size:12px;background:var(--muted);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;margin-bottom:12px;}
+#tab-torihikisaki .ntc-fix .k{color:var(--mf);font-size:11px;font-weight:700;}
+#tab-torihikisaki .ntc-test{border:1px dashed var(--input);border-radius:var(--radius);padding:6px 10px;margin:2px 0 10px;background:var(--muted);}
+#tab-torihikisaki .ntc-test .slink{border-bottom-color:var(--border);}

@@ -44,7 +44,7 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-import-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-const VERSION = '2026-10-29.1'; // .1（10/29）: 会社に出どころの org（source_org_id／source_org_label）を持たせる＝sf-export が試験の会社をその org にだけ配る／2026-10-21.2: // .1: 番号はハブが振る（next_parent_code）・帯＝本物／試験・is_test・書き戻しに AccountCode__c／.2: 書き戻し先は箱を送ってきた org（SF_EXPORT_TARGETS）
+const VERSION = '2026-10-30.1'; // .1（10/30）: action=credit_notice＝SF の与信の稟議・取引開始申請の承認の知らせを credit_notice に 1 件（org・稟議番号で一意・決裁額は来ない）。会社は取引先番号→SF の取引先 Id の札の順で引く（引けなければ空＝画面の窓で選ぶ）／2026-10-29.1: .1（10/29）: 会社に出どころの org（source_org_id／source_org_label）を持たせる＝sf-export が試験の会社をその org にだけ配る／2026-10-21.2: // .1: 番号はハブが振る（next_parent_code）・帯＝本物／試験・is_test・書き戻しに AccountCode__c／.2: 書き戻し先は箱を送ってきた org（SF_EXPORT_TARGETS）
 const LOG = 'integration_log';
 const API_VERSION = 'v61.0';
 const SYSTEM_REAL = 'salesforce';      // 本物の org の取引先 Id の札（sf-export の writeback と同じ）
@@ -145,6 +145,66 @@ async function writebackHubIds(pairs: { account_id: string; company_id: string }
   return bad.length ? 'SF 書き戻し失敗 ' + bad.length + ' 件: ' + (bad[0].errors || []).map((e) => e.message).join('; ').slice(0, 200) : null;
 }
 
+// ---- 承認の知らせ（2026-10-30.1・坂本さん「承認の知らせが届いた会社について、ツールで窓を出す」）----
+// body: { action:'credit_notice', org_id, notices:[{ application_no, application_id, kind, account_id, account_name, company_id, applicant, approved_on, requested_limit, project_no }] }
+// 決裁額は来ない（限度額は経理が窓で入れる）。同じ org・稟議番号は 1 件（二度目は何もしない＝済みの印も消さない）。
+type NoticeIn = { application_no?: string; application_id?: string; kind?: string; account_id?: string; account_name?: string; company_id?: string;
+  applicant?: string; approved_on?: string; requested_limit?: number | string; project_no?: string };
+async function creditNotice(admin: Admin, body: Record<string, unknown>, caller: string, t0: number): Promise<Response> {
+  const notices: NoticeIn[] = Array.isArray(body.notices) ? body.notices as NoticeIn[] : [];
+  if (!notices.length) return json({ ok: false, error: 'notices が空です' }, 400);
+  if (notices.length > 50) return json({ ok: false, error: 'notices は 50 件までです' }, 400);
+  const orgId = String(body.org_id || '').slice(0, 15);
+  if (!/^00D[0-9A-Za-z]{12}$/.test(orgId)) return json({ ok: false, error: 'org_id がありません' }, 400);
+  const isProd = bandOf(orgId) === 'real';
+  const label = orgLabelFor(orgId);
+  const out: { application_no: string; company_id: string | null; status: 'created' | 'exists' | 'error'; error?: string }[] = [];
+  for (const n of notices) {
+    const no = clean(n.application_no, 40);
+    if (!no) { out.push({ application_no: '', company_id: null, status: 'error', error: 'application_no がありません' }); continue; }
+    try {
+      // 会社: 取引先番号（5 桁）があってツールにあればそれ。無ければ SF の取引先 Id の札（帯ごと）で引く。引けなければ空＝窓で選ぶ
+      let cid: string | null = null;
+      const code = digits(n.company_id);
+      if (code.length === 5) {
+        const { data: co } = await admin.from('company').select('company_id').eq('company_id', code).maybeSingle();
+        if (co?.company_id) cid = String(co.company_id);
+      }
+      const acc = clean(n.account_id, 18);
+      if (!cid && acc) {
+        const { data: sc } = await admin.from('system_code').select('company_id').in('system', [SYSTEM_REAL, SYSTEM_TEST]).eq('code', acc).limit(1);
+        if (sc && sc.length) cid = String((sc[0] as { company_id: string }).company_id);
+      }
+      const kind = clean(n.kind, 10) === '取引開始' ? '取引開始' : '与信';
+      const lim = Number(String(n.requested_limit ?? '').replace(/[^\d.]/g, ''));
+      const row = {
+        org_id: orgId, org_label: label, is_prod: isProd, kind, application_no: no, application_id: clean(n.application_id, 18),
+        sf_account_id: acc, account_name: clean(n.account_name, 200), company_id: cid, applicant: clean(n.applicant, 80),
+        approved_on: /^\d{4}-\d{2}-\d{2}$/.test(String(n.approved_on || '')) ? String(n.approved_on) : null,
+        requested_limit: Number.isFinite(lim) && lim > 0 ? Math.round(lim) : null, project_no: clean(n.project_no, 20),
+      };
+      const { data: ins, error } = await admin.from('credit_notice').upsert(row, { onConflict: 'org_id,application_no', ignoreDuplicates: true }).select('id');
+      if (error) throw new Error('credit_notice 登録失敗: ' + error.message);
+      out.push({ application_no: no, company_id: cid, status: ins && ins.length ? 'created' : 'exists' });
+    } catch (err) {
+      out.push({ application_no: no, company_id: null, status: 'error', error: String((err as Error)?.message || err).slice(0, 200) });
+    }
+  }
+  const failed = out.filter((x) => x.status === 'error');
+  try {
+    await admin.from(LOG).insert({
+      system: isProd ? SYSTEM_REAL : SYSTEM_TEST, target: 'SF→ハブ（承認の知らせ）', kind: failed.length ? 'error' : 'run', action: 'credit_notice',
+      trigger: '自動（SF で稟議が承認されたとき）', actor: caller === 'secret' ? 'sf-intake（Salesforce）' : caller,
+      counts: { received: notices.length, created: out.filter((x) => x.status === 'created').length, exists: out.filter((x) => x.status === 'exists').length, failed: failed.length },
+      company_ids: out.map((x) => x.company_id).filter((x): x is string => !!x),
+      message: failed.length ? failed.map((x) => `${x.application_no}: ${x.error}`).join(' / ').slice(0, 1000) : null,
+      meta: { version: VERSION, org_id: orgId, org_label: label, is_prod: isProd }, payload: out, duration_ms: Date.now() - t0,
+    });
+  } catch (e) { console.error('連携ログ記録失敗:', String((e as Error)?.message || e)); }
+  if (failed.length) return json({ ok: false, version: VERSION, error: failed.map((x) => `${x.application_no}: ${x.error}`).join(' / ').slice(0, 500), results: out }, 500);
+  return json({ ok: true, version: VERSION, results: out, elapsed_ms: Date.now() - t0 });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const t0 = Date.now();
@@ -166,6 +226,7 @@ Deno.serve(async (req) => {
     }
     const body = await req.json().catch(() => ({}));
     source = body.source ?? null;
+    if (body.action === 'credit_notice') return await creditNotice(admin, body, caller, t0); // 承認の知らせ（2026-10-30.1）
     const records: Rec[] = Array.isArray(body.records) ? body.records : [];
     if (!records.length) return json({ ok: false, error: 'records が空です' }, 400);
     if (records.length > 50) return json({ ok: false, error: 'records は 50 件までです' }, 400);
