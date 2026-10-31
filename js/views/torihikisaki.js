@@ -882,8 +882,12 @@ const TorihikisakiView = {
   },
 
   // ===== 詳細（ページ遷移型） =====
-  async openDetail(cid) {
-    if (!this.guardUnsaved()) return;
+  // opt.keepPending: 承認の知らせの窓・試験の与信の［消す］のあとに同じ会社を開き直す＝会社の画面の未保存の変更（自動判定の分を含む）は
+  //   窓の保存と別物なので混ぜずに残し、「破棄しますか」も出さない。知らせの窓も自動では出し直さない（2026-10-31 坂本さん）
+  async openDetail(cid, opt) {
+    const keep = !!(opt && opt.keepPending && this.detail && this.detail.company && this.detail.company.company_id === cid);
+    if (!keep && !this.guardUnsaved()) return;
+    const kept = keep ? { pending: this.pending, autoPaths: this.autoPaths, autoWhy: this.autoWhy, apiPaths: this.apiPaths, basisDraft: this.basisDraft } : null;
     const wrap = this.el('tmk-wrap');
     if (wrap) wrap.innerHTML = '<p class="mf" style="padding:20px">読み込み中…</p>';
     try {
@@ -924,6 +928,7 @@ const TorihikisakiView = {
       this.dtab = 'basic';
       this.fmtFocus = 0;
       this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {};
+      if (kept) Object.assign(this, kept); // 窓のあと＝会社の画面の未保存の変更をそのまま
       this.bankEdit = null;
       this.rowEdit = null;
       this.branchEdit = null;
@@ -933,7 +938,7 @@ const TorihikisakiView = {
       this.markNav();
       this.applyAutoJudgeDetail();
       this.renderDetail();
-      if ((this.detail.notices || []).length) this.showNoticeWindow(this.detail.notices[0]); // 会社を開いたら知らせの窓
+      if (!keep && (this.detail.notices || []).length) this.showNoticeWindow(this.detail.notices[0]); // 会社を開いたら知らせの窓
       const scroller = document.scrollingElement || document.documentElement;
       scroller.scrollTop = 0;
     } catch (e) {
@@ -2262,7 +2267,7 @@ const TorihikisakiView = {
       const reg = ov.querySelector('#tmk-ntc-reg');
       if (reg) reg.onclick = async () => {
         this.closeNoticeWindow();
-        await this.approveRegistration();
+        await this.approveRegistration({ keepPending: true });
         if (this.detail && this.detail.company.registration_stage === 'full') await this.finishNotice(n, '本登録した');
       };
       const dn = ov.querySelector('#tmk-ntc-done');
@@ -2343,7 +2348,7 @@ const TorihikisakiView = {
     this.closeNoticeWindow();
     await this.loadNotices();
     this.toast(saved ? `保存しました（${note}）` : `済みにしました（${n.application_no}）`);
-    if (this.detail && this.detail.company.company_id === n.company_id) await this.openDetail(n.company_id);
+    if (this.detail && this.detail.company.company_id === n.company_id) await this.openDetail(n.company_id, { keepPending: true });
   },
 
   /** 与信の段の下: 試験の与信の札と［消す］・届いている知らせ */
@@ -2376,7 +2381,7 @@ const TorihikisakiView = {
       old_value: `${r.org_label || orgId} ${r.application_no} 限度 ${r.limit_amount ?? ''}`, new_value: null, changed_by: this.whoAmI() });
     await this.loadNotices();
     this.toast('試験の与信を消しました');
-    await this.openDetail(cid);
+    await this.openDetail(cid, { keepPending: true });
   },
   /** 環境ごとにまとめて消す（UAT の終わり・sandbox の作り直し） */
   async bulkDeleteTestCredit(orgId) {
@@ -3167,7 +3172,7 @@ const TorihikisakiView = {
   },
 
   // temp→full の承認（作成者本人以外。承認までは各システムへ配布しない）
-  async approveRegistration() {
+  async approveRegistration(opt) {
     if (!this.detail || this.busy) return;
     const c = this.detail.company;
     const me = this.whoAmI();
@@ -3186,7 +3191,7 @@ const TorihikisakiView = {
     const row = (this.rows || []).find(r => r.company_id === c.company_id);
     if (row) row.registration_stage = 'full';
     this.toast('登録を承認しました');
-    await this.openDetail(c.company_id);
+    await this.openDetail(c.company_id, opt);
   },
 
   // ===== API更新チェック =====
