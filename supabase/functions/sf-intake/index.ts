@@ -44,7 +44,7 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-import-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-const VERSION = '2026-10-30.1'; // .1（10/30）: action=credit_notice＝SF の与信の稟議・取引開始申請の承認の知らせを credit_notice に 1 件（org・稟議番号で一意・決裁額は来ない）。会社は取引先番号→SF の取引先 Id の札の順で引く（引けなければ空＝画面の窓で選ぶ）／2026-10-29.1: .1（10/29）: 会社に出どころの org（source_org_id／source_org_label）を持たせる＝sf-export が試験の会社をその org にだけ配る／2026-10-21.2: // .1: 番号はハブが振る（next_parent_code）・帯＝本物／試験・is_test・書き戻しに AccountCode__c／.2: 書き戻し先は箱を送ってきた org（SF_EXPORT_TARGETS）
+const VERSION = '2026-10-31.1'; // .1（10/31）: 与信の稟議の知らせを状態ごとに（申請中・承認・差し戻し・取り下げ）＝審査中の下書きを承認で自動反映・取り下げで閉じる・古い状態は無視・状態の履歴 credit_notice_event／2026-10-30.1: .1（10/30）: action=credit_notice＝SF の与信の稟議・取引開始申請の承認の知らせを credit_notice に 1 件（org・稟議番号で一意・決裁額は来ない）。会社は取引先番号→SF の取引先 Id の札の順で引く（引けなければ空＝画面の窓で選ぶ）／2026-10-29.1: .1（10/29）: 会社に出どころの org（source_org_id／source_org_label）を持たせる＝sf-export が試験の会社をその org にだけ配る／2026-10-21.2: // .1: 番号はハブが振る（next_parent_code）・帯＝本物／試験・is_test・書き戻しに AccountCode__c／.2: 書き戻し先は箱を送ってきた org（SF_EXPORT_TARGETS）
 const LOG = 'integration_log';
 const API_VERSION = 'v61.0';
 const SYSTEM_REAL = 'salesforce';      // 本物の org の取引先 Id の札（sf-export の writeback と同じ）
@@ -145,11 +145,52 @@ async function writebackHubIds(pairs: { account_id: string; company_id: string }
   return bad.length ? 'SF 書き戻し失敗 ' + bad.length + ' 件: ' + (bad[0].errors || []).map((e) => e.message).join('; ').slice(0, 200) : null;
 }
 
-// ---- 承認の知らせ（2026-10-30.1・坂本さん「承認の知らせが届いた会社について、ツールで窓を出す」）----
-// body: { action:'credit_notice', org_id, notices:[{ application_no, application_id, kind, account_id, account_name, company_id, applicant, approved_on, requested_limit, project_no }] }
-// 決裁額は来ない（限度額は経理が窓で入れる）。同じ org・稟議番号は 1 件（二度目は何もしない＝済みの印も消さない）。
-type NoticeIn = { application_no?: string; application_id?: string; kind?: string; account_id?: string; account_name?: string; company_id?: string;
-  applicant?: string; approved_on?: string; requested_limit?: number | string; project_no?: string };
+// ---- 与信の稟議の知らせ（2026-10-30.1 承認の知らせ → 2026-10-31.1 状態ごと）----
+// 坂本さん 10/31: 知らせは申請した時点で飛ばす・経理は審査中に窓で下書き（SF に配らない）・最終の承認の時点で下書きを自動で反映。
+// body: { action:'credit_notice', org_id, notices:[{ application_no, application_id, kind, stage, stage_at, account_id, account_name, company_id, applicant, approved_on, requested_limit, project_no }] }
+//   stage＝申請中／承認／差し戻し／取り下げ（無ければ承認＝10/30 の SF の版）。同じ org・稟議番号は 1 件を上書きし、状態の履歴は credit_notice_event に。
+//   SF の時刻（stage_at）がいま持っている状態より古い知らせは無視する（非同期で順が入れ替わったとき）。
+//   承認: 与信で下書きがそろい会社が分かっていれば反映して閉じる（本番の org → credit_line・根拠＝稟議番号／sandbox → credit_line_test）。
+//         取引開始は、会社がもう本登録なら閉じる。そうでなければ「本登録の番」として開いたまま（ツールの［登録を承認］で閉じる）。
+//   差し戻し: 開いたまま（画面の一覧からは外す・下書きは残す）。申請中: 開き直す。取り下げ: 閉じる（下書きは配らない）。
+type NoticeIn = { application_no?: string; application_id?: string; kind?: string; stage?: string; stage_at?: string; account_id?: string; account_name?: string;
+  company_id?: string; applicant?: string; approved_on?: string; requested_limit?: number | string; project_no?: string };
+const STAGES = ['申請中', '承認', '差し戻し', '取り下げ'];
+const NOTICE_WHO = 'sf-intake（承認で下書きを反映）';
+
+// 承認で下書きを反映する（与信だけ）。反映した先を返す（反映しなければ null と理由）
+async function applyDraft(admin: Admin, n: Record<string, unknown>): Promise<{ to: string | null; note: string }> {
+  const cid = n.company_id ? String(n.company_id) : '';
+  if (!cid) return { to: null, note: '会社が未特定＝窓で会社を選んで反映' };
+  if (!(Number(n.draft_limit_amount) > 0 && n.draft_limit_type && n.draft_valid_until && n.draft_decided_by)) return { to: null, note: '下書きが無い＝承認済み・入力待ち' };
+  const row = { limit_amount: Number(n.draft_limit_amount), limit_type: String(n.draft_limit_type), valid_until: String(n.draft_valid_until),
+    approved_on: n.approved_on ? String(n.approved_on) : null, decided_by: String(n.draft_decided_by).slice(0, 40) };
+  let table: string;
+  let old: Record<string, unknown> | null = null;
+  if (n.is_prod === true) {
+    table = 'credit_line';
+    const { data: ex } = await admin.from('credit_line').select('*').eq('company_id', cid).limit(1);
+    old = ex && ex.length ? ex[0] as Record<string, unknown> : null;
+    const patch = { ...row, basis: String(n.application_no).slice(0, 60) };
+    const res = old ? await admin.from('credit_line').update(patch).eq('company_id', cid) : await admin.from('credit_line').insert({ company_id: cid, ...patch });
+    if (res.error) throw new Error('credit_line 反映失敗: ' + res.error.message);
+  } else {
+    table = 'credit_line_test';
+    const { data: ex } = await admin.from('credit_line_test').select('*').eq('company_id', cid).eq('org_id', String(n.org_id)).limit(1);
+    old = ex && ex.length ? ex[0] as Record<string, unknown> : null;
+    const up = { company_id: cid, org_id: String(n.org_id), org_label: n.org_label ?? null, application_no: String(n.application_no), notice_id: n.id,
+      ...row, updated_by: NOTICE_WHO, updated_at: new Date().toISOString(), ...(old ? {} : { created_by: NOTICE_WHO }) };
+    const res = await admin.from('credit_line_test').upsert(up, { onConflict: 'company_id,org_id' });
+    if (res.error) throw new Error('credit_line_test 反映失敗: ' + res.error.message);
+  }
+  const hist = (Object.keys(row) as (keyof typeof row)[]).filter((k) => String(old ? old[k] ?? '' : '') !== String(row[k] ?? '')).map((k) => ({
+    company_id: cid, table_name: table, column_name: k, old_value: old && old[k] != null ? String(old[k]) : null, new_value: row[k] == null ? null : String(row[k]),
+    changed_by: `承認で反映(${n.org_label || n.org_id} ${n.application_no})`.slice(0, 40), approved_by: n.draft_by ? String(n.draft_by).slice(0, 40) : null,
+  }));
+  if (hist.length) await admin.from('company_history').insert(hist);
+  return { to: table, note: table === 'credit_line' ? '承認で下書きを本物の与信に反映' : `承認で下書きを ${n.org_label || n.org_id} の試験の与信に反映` };
+}
+
 async function creditNotice(admin: Admin, body: Record<string, unknown>, caller: string, t0: number): Promise<Response> {
   const notices: NoticeIn[] = Array.isArray(body.notices) ? body.notices as NoticeIn[] : [];
   if (!notices.length) return json({ ok: false, error: 'notices が空です' }, 400);
@@ -158,15 +199,25 @@ async function creditNotice(admin: Admin, body: Record<string, unknown>, caller:
   if (!/^00D[0-9A-Za-z]{12}$/.test(orgId)) return json({ ok: false, error: 'org_id がありません' }, 400);
   const isProd = bandOf(orgId) === 'real';
   const label = orgLabelFor(orgId);
-  const out: { application_no: string; company_id: string | null; status: 'created' | 'exists' | 'error'; error?: string }[] = [];
+  const out: { application_no: string; stage: string; company_id: string | null; status: string; error?: string }[] = [];
   for (const n of notices) {
     const no = clean(n.application_no, 40);
-    if (!no) { out.push({ application_no: '', company_id: null, status: 'error', error: 'application_no がありません' }); continue; }
+    if (!no) { out.push({ application_no: '', stage: '', company_id: null, status: 'error', error: 'application_no がありません' }); continue; }
+    const stage = STAGES.includes(String(n.stage || '')) ? String(n.stage) : '承認';
+    const stageAt = n.stage_at && !isNaN(Date.parse(String(n.stage_at))) ? new Date(String(n.stage_at)).toISOString() : new Date().toISOString();
     try {
-      // 会社: 取引先番号（5 桁）があってツールにあればそれ。無ければ SF の取引先 Id の札（帯ごと）で引く。引けなければ空＝窓で選ぶ
-      let cid: string | null = null;
+      const { data: exRows, error: exErr } = await admin.from('credit_notice').select('*').eq('org_id', orgId).eq('application_no', no).limit(1);
+      if (exErr) throw new Error('credit_notice 読取失敗: ' + exErr.message);
+      const ex = exRows && exRows.length ? exRows[0] as Record<string, unknown> : null;
+      // 古い状態（SF の時刻が今の状態より前）は履歴にだけ残して無視
+      if (ex && ex.stage_at && Date.parse(String(ex.stage_at)) > Date.parse(stageAt)) {
+        await admin.from('credit_notice_event').insert({ notice_id: ex.id, stage, stage_at: stageAt, note: '古い状態なので無視' });
+        out.push({ application_no: no, stage, company_id: ex.company_id ? String(ex.company_id) : null, status: 'ignored_old' }); continue;
+      }
+      // 会社: いま結んである会社 → 取引先番号（5 桁）→ SF の取引先 Id の札。引けなければ空＝窓で選ぶ
+      let cid: string | null = ex && ex.company_id ? String(ex.company_id) : null;
       const code = digits(n.company_id);
-      if (code.length === 5) {
+      if (!cid && code.length === 5) {
         const { data: co } = await admin.from('company').select('company_id').eq('company_id', code).maybeSingle();
         if (co?.company_id) cid = String(co.company_id);
       }
@@ -177,25 +228,59 @@ async function creditNotice(admin: Admin, body: Record<string, unknown>, caller:
       }
       const kind = clean(n.kind, 10) === '取引開始' ? '取引開始' : '与信';
       const lim = Number(String(n.requested_limit ?? '').replace(/[^\d.]/g, ''));
-      const row = {
+      const base: Record<string, unknown> = {
         org_id: orgId, org_label: label, is_prod: isProd, kind, application_no: no, application_id: clean(n.application_id, 18),
         sf_account_id: acc, account_name: clean(n.account_name, 200), company_id: cid, applicant: clean(n.applicant, 80),
-        approved_on: /^\d{4}-\d{2}-\d{2}$/.test(String(n.approved_on || '')) ? String(n.approved_on) : null,
         requested_limit: Number.isFinite(lim) && lim > 0 ? Math.round(lim) : null, project_no: clean(n.project_no, 20),
+        stage, stage_at: stageAt,
       };
-      const { data: ins, error } = await admin.from('credit_notice').upsert(row, { onConflict: 'org_id,application_no', ignoreDuplicates: true }).select('id');
-      if (error) throw new Error('credit_notice 登録失敗: ' + error.message);
-      out.push({ application_no: no, company_id: cid, status: ins && ins.length ? 'created' : 'exists' });
+      if (stage === '承認') base.approved_on = /^\d{4}-\d{2}-\d{2}$/.test(String(n.approved_on || '')) ? String(n.approved_on) : stageAt.slice(0, 10);
+      // 開く・閉じる（反映済みの知らせは開き直さない）
+      if (ex && ex.applied_at) { /* 反映済み＝閉じたまま */ }
+      else if (stage === '取り下げ') { base.done_at = new Date().toISOString(); base.done_by = 'sf-intake'; base.done_note = '取り下げ'; }
+      else { base.done_at = null; base.done_by = null; base.done_note = null; }
+      let rec: Record<string, unknown>;
+      if (ex) {
+        const { data: upd, error } = await admin.from('credit_notice').update(base).eq('id', ex.id).select('*');
+        if (error) throw new Error('credit_notice 更新失敗: ' + error.message);
+        rec = (upd && upd[0]) as Record<string, unknown> || { ...ex, ...base };
+      } else {
+        const { data: ins, error } = await admin.from('credit_notice').insert(base).select('*');
+        if (error) throw new Error('credit_notice 登録失敗: ' + error.message);
+        rec = (ins && ins[0]) as Record<string, unknown>;
+      }
+      let note = ex ? (ex.stage === stage ? '同じ状態（上書き）' : `${ex.stage || '—'} → ${stage}`) : `新規（${stage}）`;
+      let status = ex ? 'updated' : 'created';
+      if (stage === '承認' && !rec.applied_at && !rec.done_at) {
+        if (kind === '与信') {
+          const r = await applyDraft(admin, rec);
+          note += '・' + r.note;
+          if (r.to) {
+            const now = new Date().toISOString();
+            await admin.from('credit_notice').update({ applied_at: now, applied_to: r.to, done_at: now, done_by: 'sf-intake', done_note: r.note }).eq('id', rec.id);
+            status = 'applied';
+          }
+        } else if (cid) {
+          const { data: co } = await admin.from('company').select('registration_stage').eq('company_id', cid).maybeSingle();
+          if (co && (co as { registration_stage?: string }).registration_stage === 'full') {
+            await admin.from('credit_notice').update({ done_at: new Date().toISOString(), done_by: 'sf-intake', done_note: '本登録済み' }).eq('id', rec.id);
+            note += '・本登録済みなので閉じた';
+          } else note += '・本登録の番';
+        }
+      }
+      await admin.from('credit_notice_event').insert({ notice_id: rec.id, stage, stage_at: stageAt, note: note.slice(0, 200) });
+      out.push({ application_no: no, stage, company_id: cid, status });
     } catch (err) {
-      out.push({ application_no: no, company_id: null, status: 'error', error: String((err as Error)?.message || err).slice(0, 200) });
+      out.push({ application_no: no, stage, company_id: null, status: 'error', error: String((err as Error)?.message || err).slice(0, 200) });
     }
   }
   const failed = out.filter((x) => x.status === 'error');
   try {
     await admin.from(LOG).insert({
-      system: isProd ? SYSTEM_REAL : SYSTEM_TEST, target: 'SF→ハブ（承認の知らせ）', kind: failed.length ? 'error' : 'run', action: 'credit_notice',
-      trigger: '自動（SF で稟議が承認されたとき）', actor: caller === 'secret' ? 'sf-intake（Salesforce）' : caller,
-      counts: { received: notices.length, created: out.filter((x) => x.status === 'created').length, exists: out.filter((x) => x.status === 'exists').length, failed: failed.length },
+      system: isProd ? SYSTEM_REAL : SYSTEM_TEST, target: 'SF→ハブ（与信の稟議の知らせ）', kind: failed.length ? 'error' : 'run', action: 'credit_notice',
+      trigger: '自動（SF で稟議の状態が変わったとき）', actor: caller === 'secret' ? 'sf-intake（Salesforce）' : caller,
+      counts: { received: notices.length, created: out.filter((x) => x.status === 'created').length, updated: out.filter((x) => x.status === 'updated').length,
+        applied: out.filter((x) => x.status === 'applied').length, ignored_old: out.filter((x) => x.status === 'ignored_old').length, failed: failed.length },
       company_ids: out.map((x) => x.company_id).filter((x): x is string => !!x),
       message: failed.length ? failed.map((x) => `${x.application_no}: ${x.error}`).join(' / ').slice(0, 1000) : null,
       meta: { version: VERSION, org_id: orgId, org_label: label, is_prod: isProd }, payload: out, duration_ms: Date.now() - t0,
@@ -226,7 +311,8 @@ Deno.serve(async (req) => {
     }
     const body = await req.json().catch(() => ({}));
     source = body.source ?? null;
-    if (body.action === 'credit_notice') return await creditNotice(admin, body, caller, t0); // 承認の知らせ（2026-10-30.1）
+    // 与信の稟議の知らせ: credit_notice_v2＝状態つき（SF 2026-10-31〜）／credit_notice＝10/30 の SF（承認だけ）
+    if (body.action === 'credit_notice' || body.action === 'credit_notice_v2') return await creditNotice(admin, body, caller, t0);
     const records: Rec[] = Array.isArray(body.records) ? body.records : [];
     if (!records.length) return json({ ok: false, error: 'records が空です' }, 400);
     if (records.length > 50) return json({ ok: false, error: 'records は 50 件までです' }, 400);

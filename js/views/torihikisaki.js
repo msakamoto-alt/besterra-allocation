@@ -806,7 +806,7 @@ const TorihikisakiView = {
         <option value="temp"${this.stateFilter === 'temp' ? ' selected' : ''}>申請中のみ</option>
         <option value="test"${this.stateFilter === 'test' ? ' selected' : ''}>テストのみ</option>
         <option value="credit"${this.stateFilter === 'credit' ? ' selected' : ''}>与信期限切れ・間近</option>
-        <option value="notice"${this.stateFilter === 'notice' ? ' selected' : ''}>承認の知らせあり</option>
+        <option value="notice"${this.stateFilter === 'notice' ? ' selected' : ''}>与信の稟議あり</option>
         <option value="all"${this.stateFilter === 'all' ? ' selected' : ''}>すべて</option>
       </select>
       <select class="inp" id="tmk-type" title="種別で絞り込み">
@@ -843,8 +843,6 @@ const TorihikisakiView = {
     const ntBtn = this.el('tmk-notice-filter');
     if (ntBtn) ntBtn.onclick = () => { this.stateFilter = this.stateFilter === 'notice' ? 'active' : 'notice'; this.page = 0; this.renderList(); };
     wrap.querySelectorAll('[data-nopen]').forEach(b => b.onclick = e => { e.stopPropagation(); this.openNotice(+b.dataset.nopen); });
-    const bulk = this.el('tmk-tc-bulk');
-    if (bulk) bulk.onchange = e => { const v = e.target.value; e.target.value = ''; if (v) this.bulkDeleteTestCredit(v); };
     this.el('tmk-type').onchange = e => { this.typeFilter = e.target.value; this.page = 0; this.renderList(); };
     wrap.querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
       const no = +th.dataset.sort;
@@ -938,7 +936,8 @@ const TorihikisakiView = {
       this.markNav();
       this.applyAutoJudgeDetail();
       this.renderDetail();
-      if (!keep && (this.detail.notices || []).length) this.showNoticeWindow(this.detail.notices[0]); // 会社を開いたら知らせの窓
+      const firstOpen = (this.detail.notices || []).find(n => this.noticeActive(n));
+      if (!keep && firstOpen) this.showNoticeWindow(firstOpen); // 会社を開いたら稟議の窓（審査中・承認済み。差し戻し中は与信の段に 1 行だけ）
       const scroller = document.scrollingElement || document.documentElement;
       scroller.scrollTop = 0;
     } catch (e) {
@@ -2130,14 +2129,18 @@ const TorihikisakiView = {
     await this.openDetail(cid);
   },
 
-  // ===== 承認の知らせ・試験の与信（2026-10-30 坂本さん・会社 10487 の件）=====
-  // Salesforce で与信の稟議・取引開始申請が承認されると、sf-intake が credit_notice に 1 件入れる（決裁額は来ない）。
-  // 一覧の「届いている承認の知らせ」と、会社を開いたときの窓で、経理が限度額・種類・期限・決裁者を入れる。
-  // 入れる先はツールが知らせの org で決める＝本番の Salesforce → 本物の credit_line／dev6・dev7 → 試験の与信 credit_line_test（その org にだけ配る）。
+  // ===== 与信の稟議の知らせ・試験の与信（2026-10-30〜31 坂本さん・会社 10487 の件）=====
+  // Salesforce で与信の稟議・取引開始申請の状態が変わるたびに（申請中・承認・差し戻し・取り下げ）、sf-intake が credit_notice を上書きする。
+  //   審査中（申請中）: 経理が窓で限度額・種類・期限・決裁者を下書きする（Salesforce には配らない）。
+  //   承認: 下書きがそろっていれば sf-intake が自動で反映して閉じる。無ければ「承認済み・入力待ち」＝窓の［保存して反映］で反映。
+  //   差し戻し: 一覧から外す（下書きは残し、再申請で審査中に戻る）。取り下げ: sf-intake が閉じる。
+  //   入れる先は知らせの org で決まる＝本番の Salesforce → 本物の credit_line／dev6・dev7 → 試験の与信 credit_line_test（その org にだけ配る）。
+  //   取引開始は「本登録の準備」→ 承認で［登録を承認］が押せる → 本登録になったら自動で閉じる。
+  //   ［入れずに済みにする］は置かない（実務上ありえない操作は作らない・10/31）。試験の与信の片付けは管理者の SQL（credit_test_cleanup.sql）。
   // 稟議によらない与信（棚卸など）は今の欄から入れる・直す（保存の帯の「根拠」必須・YS- は断る）。
   CREDIT_GUARD_COLS: ['limit_amount', 'limit_type', 'valid_until', 'approved_on', 'decided_by'],
   CREDIT_TYPES: ['普通', '臨時'],
-  notices: null,       // 届いている（済みでない）承認の知らせ。null＝表が無い
+  notices: null,       // 開いている稟議の知らせ（審査中・承認済み 入力待ち・差し戻し中）。null＝表が無い
   testCredits: null,   // 試験の与信の一覧（company_id・org_id・org_label）。null＝表が無い
   basisDraft: '',
 
@@ -2154,35 +2157,39 @@ const TorihikisakiView = {
       this.notices = null; this.testCredits = null;
     }
   },
-  noticeFor(cid) { return (this.notices || []).find(n => n.company_id === cid) || null; },
+  /** 一覧・窓に出す知らせ＝審査中と承認済み（差し戻し中は出さない） */
+  noticeActive(n) { return n && !n.done_at && (n.stage === '申請中' || n.stage === '承認' || !n.stage); },
+  noticeFor(cid) { return (this.notices || []).find(n => n.company_id === cid && this.noticeActive(n)) || null; },
+  draftReady(n) { return !!(n && n.draft_limit_amount > 0 && n.draft_limit_type && n.draft_valid_until && n.draft_decided_by); },
+  /** 状態の札（審査中／承認済み・入力待ち／本登録の番） */
+  stageBadge(n) {
+    if (n.stage === '申請中') return '<span class="badge b-slate">審査中</span>' + (n.kind !== '取引開始' && this.draftReady(n) ? ' <span class="mf">下書きあり</span>' : '');
+    if (n.kind === '取引開始') return '<span class="badge b-amber">承認済み・本登録の番</span>';
+    return '<span class="badge b-amber">承認済み・入力待ち</span>';
+  },
   noticeBadge(cid) {
-    return this.noticeFor(cid) ? '<span class="badge b-amber" style="margin-left:5px">承認の知らせ</span>' : '';
+    const n = this.noticeFor(cid);
+    if (!n) return '';
+    return n.stage === '申請中' ? '<span class="badge b-slate" style="margin-left:5px">与信の稟議 審査中</span>'
+      : '<span class="badge b-amber" style="margin-left:5px">与信の稟議 承認済み</span>';
   },
   noticeSummary() {
-    const n = (this.notices || []).length;
-    return n ? `<button class="btn" id="tmk-notice-filter" title="承認の知らせが届いている会社だけに絞る（もう一度押すと戻す）"><span class="badge b-amber">承認の知らせ ${n}</span></button>` : '';
+    const n = (this.notices || []).filter(x => this.noticeActive(x)).length;
+    return n ? `<button class="btn" id="tmk-notice-filter" title="与信の稟議が届いている会社だけに絞る（もう一度押すと戻す）"><span class="badge b-amber">与信の稟議 ${n}</span></button>` : '';
   },
   orgBadge(label, isProd) {
     return `<span class="badge ${isProd ? 'b-green' : 'b-slate'}">${this.esc(isProd ? (label || '本番') : (label || '試験'))}</span>`;
   },
   noticePanelHtml() {
-    const ns = this.notices || [];
-    const tcs = this.testCredits || [];
-    if (!ns.length && !tcs.length) return '';
-    const orgs = {};
-    tcs.forEach(r => { const k = r.org_id; orgs[k] = orgs[k] || { label: r.org_label || k, n: 0 }; orgs[k].n++; });
-    const bulk = Object.keys(orgs).length
-      ? `<select class="inp" id="tmk-tc-bulk" style="margin-left:auto" title="試験の与信を環境ごとに消す（消すとその環境には本物の値が配り直されます）"><option value="">試験の与信を環境ごとに消す</option>` +
-        Object.keys(orgs).map(k => `<option value="${this.esc(k)}">${this.esc(orgs[k].label)} の試験の与信を消す（${orgs[k].n} 社）</option>`).join('') + '</select>'
-      : '';
+    const ns = (this.notices || []).filter(x => this.noticeActive(x));
+    if (!ns.length) return '';
     const fmt = v => v == null ? '—' : Number(v).toLocaleString();
     const name = n => { const r = (this.rows || []).find(x => x.company_id === n.company_id); return r ? r.official_name : (n.account_name || '（会社を選ぶ）'); };
     const rows = ns.map(n => `<tr><td>${this.orgBadge(n.org_label, n.is_prod)}</td><td>${this.esc(n.kind === '取引開始' ? '取引開始' : '与信')}</td><td>${this.esc(n.application_no)}</td>
       <td><b>${this.esc(name(n))}</b>${n.company_id ? '' : ' <span class="badge b-red">会社が未特定</span>'}</td><td class="mf">${this.esc(n.applicant || '')}</td>
-      <td class="mf">承認 ${this.esc(n.approved_on || '—')}</td><td class="r">${n.kind === '取引開始' ? '' : '希望 ' + fmt(n.requested_limit)}</td>
+      <td>${this.stageBadge(n)}</td><td class="r">${n.kind === '取引開始' ? '' : '希望 ' + fmt(n.requested_limit)}</td>
       <td><button class="btn btn-sm btn-primary" data-nopen="${n.id}">開く</button></td></tr>`).join('');
-    return `<div class="ntc-panel"><h4>届いている承認の知らせ ${ns.length ? `<span class="badge b-amber">${ns.length}</span>` : ''}${bulk}</h4>
-      ${ns.length ? `<table><tbody>${rows}</tbody></table>` : '<div class="mf" style="font-size:11px">ありません</div>'}</div>`;
+    return `<div class="ntc-panel"><h4>届いている与信の稟議 <span class="badge b-amber">${ns.length}</span></h4><table><tbody>${rows}</tbody></table></div>`;
   },
 
   /** 一覧の［開く］: 会社が分かれば詳細へ（窓が出る）。分からなければ会社を選ぶ窓 */
@@ -2204,8 +2211,7 @@ const TorihikisakiView = {
     ov.id = 'tmk-ntc-ov';
     ov.innerHTML = `<div class="dialog" style="max-width:540px">${inner}</div>`;
     root.appendChild(ov);
-    const x = ov.querySelector('[data-ntc-close]');
-    if (x) x.onclick = () => this.closeNoticeWindow();
+    ov.querySelectorAll('[data-ntc-close]').forEach(x => { x.onclick = () => this.closeNoticeWindow(); });
     return ov;
   },
   noticeFixHtml(n) {
@@ -2213,14 +2219,15 @@ const TorihikisakiView = {
     return `<div class="ntc-fix">
       <span class="k">Salesforce</span><span>${this.orgBadge(n.org_label, n.is_prod)}</span>
       <span class="k">稟議番号</span><span>${this.esc(n.application_no)}</span>
+      <span class="k">状態</span><span>${this.stageBadge(n)}</span>
       <span class="k">申請者</span><span>${this.esc(n.applicant || '—')}</span>
-      <span class="k">承認日</span><span class="tnum">${this.esc(n.approved_on || '—')}</span>
+      ${n.stage === '承認' ? `<span class="k">承認日</span><span class="tnum">${this.esc(n.approved_on || '—')}</span>` : ''}
       ${n.kind === '取引開始' ? '' : `<span class="k">希望額（参考）</span><span class="tnum">${fmt(n.requested_limit)}</span>`}
       ${n.project_no ? `<span class="k">案件番号</span><span>${this.esc(n.project_no)}</span>` : ''}
     </div>`;
   },
 
-  /** 会社が引けなかった知らせ: 社名の近い会社から選ぶ */
+  /** 会社が引けなかった知らせ: 社名の近い会社から選ぶ（［入れずに済み］は置かない） */
   showCompanyPicker(n) {
     const norm = s => String(s || '').normalize('NFKC').replace(/[\s　]/g, '').replace(/㈱|\(株\)|株式会社/g, '');
     const key = norm(n.account_name);
@@ -2231,10 +2238,8 @@ const TorihikisakiView = {
         <div class="ff"><label>会社<span class="req">*</span></label><div class="row"><select id="tmk-ntc-pick"><option value="">（選ぶ）</option>
           ${cands.map(r => `<option value="${this.esc(r.company_id)}">${this.esc(r.company_id)} ${this.esc(r.official_name)}</option>`).join('')}</select></div>
           <div class="row" style="margin-top:6px"><input id="tmk-ntc-code" placeholder="候補に無ければ取引先番号（5 桁）"></div></div>
-        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-sm" id="tmk-ntc-dismiss" style="margin-right:auto">入れずに済みにする</button><button class="btn" data-ntc-close2>あとで</button><button class="btn btn-primary" id="tmk-ntc-pickok">この会社で開く</button></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-ntc-close>閉じる</button><button class="btn btn-primary" id="tmk-ntc-pickok">この会社で開く</button></div>
       </div>`);
-    ov.querySelector('[data-ntc-close2]').onclick = () => this.closeNoticeWindow();
-    ov.querySelector('#tmk-ntc-dismiss').onclick = () => this.finishNotice(n, '入れずに済み');
     ov.querySelector('#tmk-ntc-pickok').onclick = async () => {
       const cid = String(ov.querySelector('#tmk-ntc-code').value || '').trim() || ov.querySelector('#tmk-ntc-pick').value;
       const r = (this.rows || []).find(x => x.company_id === cid);
@@ -2247,79 +2252,101 @@ const TorihikisakiView = {
     };
   },
 
-  /** 会社を開いたときの窓（与信＝限度額などを入れる／取引開始＝本登録の番） */
+  /** 会社を開いたときの窓（与信＝審査中は下書き・承認済みは保存して反映／取引開始＝本登録の準備・本登録の番） */
   showNoticeWindow(n) {
-    if (!n) return;
+    if (!n || !this.noticeActive(n)) return;
     const c = this.detail && this.detail.company;
     if (!c || c.company_id !== n.company_id) return;
-    const where = n.is_prod ? '本物の与信に入ります。' : `${this.esc(n.org_label || n.org_id)} の試験の与信に入ります。`;
+    const approved = n.stage === '承認' || !n.stage;
+    const org = this.esc(n.org_label || n.org_id);
     if (n.kind === '取引開始') {
       const temp = c.registration_stage === 'temp';
-      const ov = this.noticeOverlay(`<div class="dhd"><h3>取引開始申請が承認されました（本登録の番）</h3><button class="x" data-ntc-close>✕</button></div>
+      const can = approved && temp;
+      const ov = this.noticeOverlay(`<div class="dhd"><h3>取引開始申請（${approved ? '承認済み・本登録の番' : '審査中'}）</h3><button class="x" data-ntc-close>✕</button></div>
         <div class="dbody">${this.noticeFixHtml(n)}
-          <div class="mf" style="font-size:12px;margin-bottom:10px">${temp ? '登録を承認すると本登録になります。' : 'この会社は本登録済みです。'}</div>
+          <div class="mf" style="font-size:12px;margin-bottom:10px">${!approved ? '承認されると登録を承認できます。口座・支払条件はこの間に入れておけます。' : temp ? '登録を承認すると本登録になります。' : 'この会社は本登録済みです。'}</div>
           <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
-            <button class="btn btn-sm" id="tmk-ntc-dismiss" style="margin-right:auto">入れずに済みにする</button>
-            <button class="btn" data-ntc-close2>あとで</button>
-            ${temp ? '<button class="btn btn-success" id="tmk-ntc-reg">✓ 登録を承認</button>' : '<button class="btn btn-primary" id="tmk-ntc-done">済みにする</button>'}
+            <button class="btn" data-ntc-close>閉じる</button>
+            <button class="btn btn-success" id="tmk-ntc-reg" ${can ? '' : 'disabled style="opacity:.5"'}>✓ 登録を承認</button>
           </div></div>`);
-      ov.querySelector('[data-ntc-close2]').onclick = () => this.closeNoticeWindow();
-      ov.querySelector('#tmk-ntc-dismiss').onclick = () => this.finishNotice(n, '入れずに済み');
       const reg = ov.querySelector('#tmk-ntc-reg');
-      if (reg) reg.onclick = async () => {
-        this.closeNoticeWindow();
-        await this.approveRegistration({ keepPending: true });
-        if (this.detail && this.detail.company.registration_stage === 'full') await this.finishNotice(n, '本登録した');
-      };
-      const dn = ov.querySelector('#tmk-ntc-done');
-      if (dn) dn.onclick = () => this.finishNotice(n, '本登録済みを確かめた');
+      if (reg && can) reg.onclick = async () => { this.closeNoticeWindow(); await this.approveRegistration({ keepPending: true }); };
       return;
     }
-    const ov = this.noticeOverlay(`<div class="dhd"><h3>与信の稟議が承認されました</h3><button class="x" data-ntc-close>✕</button></div>
+    const v = k => this.esc(n['draft_' + k] == null ? '' : String(n['draft_' + k]));
+    const ov = this.noticeOverlay(`<div class="dhd"><h3>与信の稟議（${approved ? '承認済み・入力待ち' : '審査中'}）</h3><button class="x" data-ntc-close>✕</button></div>
       <div class="dbody">${this.noticeFixHtml(n)}
-        <div class="ff"><label>与信限度額<span class="req">*</span></label><div class="row"><input class="amt" id="tmk-ntc-lim" inputmode="numeric"></div></div>
-        <div class="ff"><label>与信種類(普通/臨時)<span class="req">*</span></label><div class="row"><select id="tmk-ntc-type"><option value="">（選ぶ）</option>${this.CREDIT_TYPES.map(x => `<option>${x}</option>`).join('')}</select></div></div>
-        <div class="ff"><label>与信有効期限(1年)<span class="req">*</span></label><div class="row"><input type="date" id="tmk-ntc-until"></div></div>
-        <div class="ff"><label>決裁者<span class="req">*</span></label><div class="row"><input id="tmk-ntc-who" maxlength="40"></div></div>
-        <div class="mf" style="font-size:11px;margin-bottom:10px">${where}</div>
+        <div class="ff"><label>与信限度額<span class="req">*</span></label><div class="row"><input class="amt" id="tmk-ntc-lim" inputmode="numeric" value="${n.draft_limit_amount ? this.esc(this.amtFmt(n.draft_limit_amount)) : ''}"></div></div>
+        <div class="ff"><label>与信種類(普通/臨時)<span class="req">*</span></label><div class="row"><select id="tmk-ntc-type"><option value="">（選ぶ）</option>${this.CREDIT_TYPES.map(x => `<option${n.draft_limit_type === x ? ' selected' : ''}>${x}</option>`).join('')}</select></div></div>
+        <div class="ff"><label>与信有効期限(1年)<span class="req">*</span></label><div class="row"><input type="date" id="tmk-ntc-until" value="${v('valid_until')}"></div></div>
+        <div class="ff"><label>決裁者<span class="req">*</span></label><div class="row"><input id="tmk-ntc-who" maxlength="40" value="${v('decided_by')}"></div></div>
+        <div class="mf" style="font-size:11px;margin-bottom:10px">${approved
+          ? (n.is_prod ? '保存すると本物の与信に入ります。' : `保存すると ${org} の試験の与信に入ります。`)
+          : `下書きは Salesforce に配りません。承認されたときに${n.is_prod ? '本物の与信' : ` ${org} の試験の与信`}に入ります。`}</div>
         <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center">
-          <button class="btn btn-sm" id="tmk-ntc-dismiss" style="margin-right:auto">入れずに済みにする</button>
-          <button class="btn" data-ntc-close2>あとで</button><button class="btn btn-primary" id="tmk-ntc-save">保存</button>
+          <button class="btn" data-ntc-close>閉じる</button><button class="btn btn-primary" id="tmk-ntc-save">${approved ? '保存して反映' : '下書きを保存'}</button>
         </div></div>`);
     const lim = ov.querySelector('#tmk-ntc-lim');
     lim.onblur = () => { lim.value = this.amtFmt(lim.value); };
-    ov.querySelector('[data-ntc-close2]').onclick = () => this.closeNoticeWindow();
-    ov.querySelector('#tmk-ntc-dismiss').onclick = () => this.finishNotice(n, '入れずに済み');
-    ov.querySelector('#tmk-ntc-save').onclick = () => this.saveNoticeCredit(n, {
-      limit_amount: this.amtRaw(lim.value), limit_type: ov.querySelector('#tmk-ntc-type').value,
-      valid_until: ov.querySelector('#tmk-ntc-until').value, decided_by: String(ov.querySelector('#tmk-ntc-who').value || '').trim(),
-    });
+    ov.querySelector('#tmk-ntc-save').onclick = () => {
+      const vals = { limit_amount: this.amtRaw(lim.value), limit_type: ov.querySelector('#tmk-ntc-type').value,
+        valid_until: ov.querySelector('#tmk-ntc-until').value, decided_by: String(ov.querySelector('#tmk-ntc-who').value || '').trim() };
+      return approved ? this.saveNoticeCredit(n, vals) : this.saveNoticeDraft(n, vals);
+    };
   },
-
-  async saveNoticeCredit(n, v) {
-    if (this.busy) return;
+  noticeInputErrors(v) {
     const errs = [];
     if (!(Number(v.limit_amount) > 0)) errs.push('・与信限度額');
     if (!v.limit_type) errs.push('・与信種類');
     if (!v.valid_until) errs.push('・与信有効期限');
     if (!v.decided_by) errs.push('・決裁者');
+    return errs;
+  },
+  draftPatch(v) {
+    return { draft_limit_amount: Number(v.limit_amount), draft_limit_type: v.limit_type, draft_valid_until: v.valid_until,
+      draft_decided_by: v.decided_by.slice(0, 40), draft_by: this.whoAmI(), draft_at: new Date().toISOString() };
+  },
+
+  /** 審査中の下書き（Salesforce には配らない）。保存の直前に承認されていたら、その場で反映する */
+  async saveNoticeDraft(n, v) {
+    if (this.busy) return;
+    const errs = this.noticeInputErrors(v);
+    if (errs.length) { alert('入れてください。\n\n' + errs.join('\n')); return; }
+    const sb = this.getClient();
+    const cur = await sb.from('credit_notice').select('*').eq('id', n.id).maybeSingle();
+    const now = (cur && cur.data) || n;
+    if (now.done_at) { this.closeNoticeWindow(); alert('この稟議は閉じています（取り下げ、または反映済み）。'); await this.loadNotices(); await this.openDetail(n.company_id, { keepPending: true }); return; }
+    if (now.stage === '承認') { Object.assign(n, now); return this.saveNoticeCredit(n, v); }
+    this.busy = true;
+    const res = await sb.from('credit_notice').update(this.draftPatch(v)).eq('id', n.id);
+    this.busy = false;
+    if (res.error) { alert('下書きを保存できませんでした: ' + res.error.message); return; }
+    this.closeNoticeWindow();
+    await this.loadNotices();
+    this.toast(`下書きを保存しました（${n.application_no}・承認されたら反映します）`);
+    if (this.detail && this.detail.company.company_id === n.company_id) await this.openDetail(n.company_id, { keepPending: true });
+  },
+
+  /** 承認済み・入力待ちの窓の［保存して反映］ */
+  async saveNoticeCredit(n, v) {
+    if (this.busy) return;
+    const errs = this.noticeInputErrors(v);
     if (errs.length) { alert('入れてください。\n\n' + errs.join('\n')); return; }
     const sb = this.getClient();
     const cid = n.company_id;
     const who = this.whoAmI();
     const row = { limit_amount: Number(v.limit_amount), limit_type: v.limit_type, valid_until: v.valid_until, approved_on: n.approved_on || null, decided_by: v.decided_by.slice(0, 40) };
+    let table;
     this.busy = true;
     try {
-      let table, old;
+      let old;
       if (n.is_prod) {
-        // 本番の Salesforce の稟議＝本物の与信（1 社 1 行・無ければ作る）
         table = 'credit_line';
         old = (this.detail.credit_line || [])[0] || null;
         const patch = Object.assign({}, row, { basis: String(n.application_no).slice(0, 60) });
         const res = old ? await sb.from('credit_line').update(patch).eq('company_id', cid) : await sb.from('credit_line').insert(Object.assign({ company_id: cid }, patch));
         if (res.error) throw new Error(res.error.message);
       } else {
-        // dev6・dev7 の稟議＝試験の与信（その org にだけ配る）
         table = 'credit_line_test';
         old = (this.detail.credit_line_test || []).find(r => r.org_id === n.org_id) || null;
         const up = Object.assign({ company_id: cid, org_id: n.org_id, org_label: n.org_label, application_no: n.application_no, notice_id: n.id,
@@ -2332,73 +2359,49 @@ const TorihikisakiView = {
         new_value: row[k] == null ? null : String(row[k]), changed_by: `${who}(${n.org_label || n.org_id} ${n.application_no})`.slice(0, 40),
       }));
       if (hist.length) await sb.from('company_history').insert(hist); // 履歴の失敗で与信は戻さない
+      const done = await sb.from('credit_notice').update(Object.assign(this.draftPatch(v), { applied_at: new Date().toISOString(), applied_to: table,
+        done_at: new Date().toISOString(), done_by: who, done_note: n.is_prod ? '本物の与信に反映' : `${n.org_label || n.org_id} の試験の与信に反映` })).eq('id', n.id);
+      if (done.error) throw new Error('与信は入れましたが、知らせを閉じられませんでした: ' + done.error.message);
     } catch (e) {
       this.busy = false;
       alert('与信を保存できませんでした。\n\n' + (e.message || e));
       return;
     }
     this.busy = false;
-    await this.finishNotice(n, n.is_prod ? '本物の与信に入れた' : `${n.org_label || n.org_id} の試験の与信に入れた`, true);
-  },
-
-  /** 知らせを済みにする（与信を入れた・本登録した・入れずに閉じた） */
-  async finishNotice(n, note, saved) {
-    if (!saved && note === '入れずに済み' && !confirm(`${n.application_no} の知らせを、入れずに済みにしますか？`)) return;
-    const res = await this.getClient().from('credit_notice').update({ done_at: new Date().toISOString(), done_by: this.whoAmI(), done_note: String(note).slice(0, 200) }).eq('id', n.id);
-    if (res.error) alert('知らせを済みにできませんでした: ' + res.error.message);
     this.closeNoticeWindow();
     await this.loadNotices();
-    this.toast(saved ? `保存しました（${note}）` : `済みにしました（${n.application_no}）`);
-    if (this.detail && this.detail.company.company_id === n.company_id) await this.openDetail(n.company_id, { keepPending: true });
+    this.toast(`保存して反映しました（${n.is_prod ? '本物の与信' : (n.org_label || n.org_id) + ' の試験の与信'}）`);
+    if (this.detail && this.detail.company.company_id === cid) await this.openDetail(cid, { keepPending: true });
   },
 
-  /** 与信の段の下: 試験の与信の札と［消す］・届いている知らせ */
+  /** 本登録になったら、その会社の取引開始の知らせ（承認済み）を閉じる＝［済みにする］は置かない */
+  async closeTradeStartNotices(cid) {
+    try {
+      await this.getClient().from('credit_notice').update({ done_at: new Date().toISOString(), done_by: this.whoAmI(), done_note: '本登録した' })
+        .eq('company_id', cid).eq('kind', '取引開始').eq('stage', '承認').is('done_at', null);
+      await this.loadNotices();
+    } catch (e) { /* 表が無い＝知らせは無い */ }
+  },
+
+  /** 与信の段の下: 開いている稟議（審査中・承認済み＝窓を開く／差し戻し中＝1 行）と試験の与信の札 */
   creditExtraHtml(host) {
     if (!host || host.id !== 'tmk-fields' || this.view !== 'detail' || !this.detail) return '';
     const tcs = this.detail.credit_line_test || [];
-    const ns = (this.detail.notices || []);
+    const ns = (this.detail.notices || []).filter(n => n.kind !== '取引開始');
     if (!tcs.length && !ns.length) return '';
     const fmt = v => v == null ? '—' : Number(v).toLocaleString();
-    return '<div class="ntc-test">' +
-      ns.map(n => `<div class="slink"><span class="nm2"><span class="badge b-amber">承認の知らせ（${this.esc(n.org_label || n.org_id)}・${this.esc(n.application_no)}）</span></span><button class="btn btn-sm btn-primary" data-nwin="${n.id}">窓を開く</button></div>`).join('') +
+    const nline = n => {
+      const tag = `<span class="badge ${n.stage === '承認' ? 'b-amber' : 'b-slate'}">与信の稟議（${this.esc(n.org_label || n.org_id)}・${this.esc(n.application_no)}）</span>`;
+      if (n.stage === '差し戻し') return `<div class="slink"><span class="nm2">${tag} <span class="mf">差し戻し中${this.draftReady(n) ? '・下書きあり' : ''}（再申請で審査中に戻ります）</span></span></div>`;
+      return `<div class="slink"><span class="nm2">${tag} ${this.stageBadge(n)}</span><button class="btn btn-sm btn-primary" data-nwin="${n.id}">窓を開く</button></div>`;
+    };
+    return '<div class="ntc-test">' + ns.map(nline).join('') +
       tcs.map(r => `<div class="slink"><span class="nm2"><span class="badge b-slate">試験の与信（${this.esc(r.org_label || r.org_id)}・${this.esc(r.application_no)}）</span></span>
-        <b class="tnum">${fmt(r.limit_amount)}</b><span class="mf">${this.esc(r.limit_type || '')}・期限 ${this.esc(r.valid_until || '—')}</span>
-        <button class="btn btn-sm" data-tcdel="${this.esc(r.org_id)}">消す</button></div>`).join('') + '</div>';
+        <b class="tnum">${fmt(r.limit_amount)}</b><span class="mf">${this.esc(r.limit_type || '')}・期限 ${this.esc(r.valid_until || '—')}</span></div>`).join('') + '</div>';
   },
   wireCreditExtra(host) {
     if (!host) return;
-    host.querySelectorAll('[data-tcdel]').forEach(b => b.onclick = () => this.deleteTestCredit(b.dataset.tcdel));
     host.querySelectorAll('[data-nwin]').forEach(b => b.onclick = () => this.showNoticeWindow((this.detail.notices || []).find(n => n.id === +b.dataset.nwin)));
-  },
-  async deleteTestCredit(orgId) {
-    const cid = this.detail.company.company_id;
-    const r = (this.detail.credit_line_test || []).find(x => x.org_id === orgId);
-    if (!r || this.busy) return;
-    if (!confirm(`試験の与信（${r.org_label || orgId}・${r.application_no}）を消します。${r.org_label || orgId} には本物の与信の値が配り直されます。`)) return;
-    const sb = this.getClient();
-    const del = await sb.from('credit_line_test').delete().eq('company_id', cid).eq('org_id', orgId);
-    if (del.error) { alert('消せませんでした: ' + del.error.message); return; }
-    await sb.from('company_history').insert({ company_id: cid, table_name: 'credit_line_test', column_name: '(削除)',
-      old_value: `${r.org_label || orgId} ${r.application_no} 限度 ${r.limit_amount ?? ''}`, new_value: null, changed_by: this.whoAmI() });
-    await this.loadNotices();
-    this.toast('試験の与信を消しました');
-    await this.openDetail(cid, { keepPending: true });
-  },
-  /** 環境ごとにまとめて消す（UAT の終わり・sandbox の作り直し） */
-  async bulkDeleteTestCredit(orgId) {
-    const rows = (this.testCredits || []).filter(r => r.org_id === orgId);
-    if (!rows.length) return;
-    const label = rows[0].org_label || orgId;
-    if (!confirm(`${label} の試験の与信 ${rows.length} 社分をすべて消します。${label} には本物の与信の値が配り直されます。よろしいですか？`)) return;
-    const sb = this.getClient();
-    const del = await sb.from('credit_line_test').delete().eq('org_id', orgId);
-    if (del.error) { alert('消せませんでした: ' + del.error.message); return; }
-    const who = this.whoAmI();
-    await sb.from('company_history').insert(rows.map(r => ({ company_id: r.company_id, table_name: 'credit_line_test', column_name: '(削除)',
-      old_value: `${label} の試験の与信（まとめて消す）`, new_value: null, changed_by: who })));
-    await this.loadNotices();
-    this.toast(`${label} の試験の与信を消しました（${rows.length} 社）`);
-    this.renderList();
   },
   /** 保存の帯の「根拠」（今の欄で与信の判断の欄を変えたときだけ・試験の会社は出さない） */
   basisInputHtml() {
@@ -3191,6 +3194,7 @@ const TorihikisakiView = {
     if (rh.error) alert('承認は完了しましたが履歴の記録に失敗しました: ' + rh.error.message);
     const row = (this.rows || []).find(r => r.company_id === c.company_id);
     if (row) row.registration_stage = 'full';
+    await this.closeTradeStartNotices(c.company_id); // 取引開始の知らせ（承認済み）は本登録で閉じる（2026-10-31）
     this.toast('登録を承認しました');
     await this.openDetail(c.company_id, opt);
   },
