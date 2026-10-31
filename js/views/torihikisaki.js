@@ -2231,9 +2231,10 @@ const TorihikisakiView = {
         <div class="ff"><label>会社<span class="req">*</span></label><div class="row"><select id="tmk-ntc-pick"><option value="">（選ぶ）</option>
           ${cands.map(r => `<option value="${this.esc(r.company_id)}">${this.esc(r.company_id)} ${this.esc(r.official_name)}</option>`).join('')}</select></div>
           <div class="row" style="margin-top:6px"><input id="tmk-ntc-code" placeholder="候補に無ければ取引先番号（5 桁）"></div></div>
-        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" data-ntc-close2>あとで</button><button class="btn btn-primary" id="tmk-ntc-pickok">この会社で開く</button></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-sm" id="tmk-ntc-dismiss" style="margin-right:auto">入れずに済みにする</button><button class="btn" data-ntc-close2>あとで</button><button class="btn btn-primary" id="tmk-ntc-pickok">この会社で開く</button></div>
       </div>`);
     ov.querySelector('[data-ntc-close2]').onclick = () => this.closeNoticeWindow();
+    ov.querySelector('#tmk-ntc-dismiss').onclick = () => this.finishNotice(n, '入れずに済み');
     ov.querySelector('#tmk-ntc-pickok').onclick = async () => {
       const cid = String(ov.querySelector('#tmk-ntc-code').value || '').trim() || ov.querySelector('#tmk-ntc-pick').value;
       const r = (this.rows || []).find(x => x.company_id === cid);
