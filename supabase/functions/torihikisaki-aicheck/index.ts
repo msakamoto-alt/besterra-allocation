@@ -1,10 +1,12 @@
 // 取引先マスタ AIの点検 Edge Function（torihikisaki-aicheck・2026-11-02）
 //
-// 役割：会社を保存するたびに、その会社の内容を Claude に点検させ、指摘を company_ai_check に残す。
+// 役割：会社の画面の［AIで点検］を押したとき、その会社の保存済みの内容を Claude に点検させ、指摘を company_ai_check に残す
+//   （11/02 坂本さん：保存のたびに自動 → 手動に変更）。
 //   点検の中身（坂本さん 11/02 決定）＝ ①社名の揺れ ②住所の食い違い ③重複しそうな会社 ④種別と中身の矛盾
 //
 // 🔴設計の鉄則：
-//   1) AI は値を書き換えない。この関数が書くのは company_ai_check（点検の記録）だけ。直すのは人。
+//   1) AI は値を書き換えない。この関数が書くのは company_ai_check（点検の記録）だけ。
+//      直す値が決まる指摘には path（項目）と value（案）を付ける＝画面の［案を入れる］で未保存の変更に入り、経理が「💾 保存」で確定する。
 //   2) 鍵（ANTHROPIC_API_KEY）は Secrets にだけ置く。ブラウザへは返さない（status は有無だけ）。
 //      鍵は坂本さんの Claude API（個人の org）＝本番の会社でも動かす（11/02 坂本さん）。
 //   3) 口座（bank_account）・支払条件・請求先は Claude に送らない。送るのは会社の基本情報・種別・支店・
@@ -16,7 +18,7 @@
 //
 // アクション（POST body の action）：
 //   status … 版・鍵の有無・モデル
-//   check  … { company_id, trigger: 'save'|'new'|'retry' } → 点検して記録を返す
+//   check  … { company_id, trigger: 'manual'|'retry' } → 点検して記録を返す
 //
 // 必要な Secrets：
 //   ANTHROPIC_API_KEY … 坂本さんの Claude API の鍵（Masaji's Individual Org）
@@ -26,7 +28,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.135.0';
 
-const FN_VERSION = '2026-11-02.1';
+const FN_VERSION = '2026-11-02.2';
 const MODEL = 'claude-opus-5-5';
 
 const CORS = {
@@ -80,7 +82,7 @@ async function fetchRegistry(corporateNumber: string | null) {
 }
 
 // ===== 点検に渡す材料 =====
-const CO_COLS = 'company_id,official_name,name_kana,name_half,corporate_number,representative_name,search_name_normalized,established_on,' +
+const CO_COLS = 'company_id,official_name,name_kana,name_kana_half,name_half,corporate_number,representative_name,search_name_normalized,established_on,' +
   'capital_amount,listing_class,entity_class,domestic_class,industry_code,business_summary,employee_count,postal_code,prefecture,address_line,' +
   'building,registered_address,phone,fax,website_url,invoice_reg_number,invoice_status,trade_status,major_class,construction_class,' +
   'is_suspended,suspend_reason,last_trade_on,registration_stage,remarks,updated_at';
@@ -136,6 +138,15 @@ async function findDuplicates(sb: Sb, c: Record<string, unknown>) {
 }
 
 // ===== Claude =====
+// [案を入れる] で直せる項目（画面の会社の欄のパス）。画面の側でも直せる欄かを確かめる
+const FIXABLE: Record<string, string> = {
+  'company.official_name': '正式社名', 'company.name_kana': 'カナ（全角）', 'company.name_kana_half': 'カナ（半角）', 'company.name_half': '略称（半角）',
+  'company.corporate_number': '法人番号', 'company.representative_name': '代表者名', 'company.postal_code': '郵便番号（ハイフンなし 7 桁）',
+  'company.prefecture': '都道府県', 'company.address_line': '住所（市区町村以下）', 'company.building': '建物名',
+  'company.registered_address': '本店所在地（登記）', 'company.phone': '電話番号', 'company.fax': 'FAX', 'company.website_url': 'ホームページ',
+  'company.invoice_reg_number': 'インボイス登録番号（T＋13 桁）',
+};
+
 const SYSTEM = `あなたは建設会社（ベステラ株式会社）の経理部で、取引先マスタの登録内容を点検する担当者です。
 渡された 1 社分の登録内容を読み、次の 4 つの観点で「直すべき・確かめるべき点」だけを指摘してください。
 
@@ -153,6 +164,10 @@ const SYSTEM = `あなたは建設会社（ベステラ株式会社）の経理�
 - 1 つの指摘は 1 つの項目について。field は画面の項目名の日本語（例: 社名・カナ・郵便番号・住所・電話番号・種別・重複）。
 - why は何と何が食い違っているかを、値を引用して 1 文で。fix は直し方の案を短く（例:「株式会社東亜テクノ」に直す／同じ会社なら 00001234 を使う）。
 - level は、明らかな誤り・重複の疑いが強いものを err、確かめてほしいものを warn。
+- 直す値がデータから一つに決まるときだけ、path に直す項目、value に入れる値そのもの（欄に入れる完全な値）を入れる。
+  例: カナを社名の読みに合わせる／インボイス登録番号を「T＋法人番号」に／登記の商号・郵便番号に合わせる。
+  直す値が一つに決まらないもの（「〜など」「確かめて直す」）、重複、種別の指摘は path と value を空文字にする。
+  直せる項目（path: 意味）: ${Object.entries(FIXABLE).map(([k, v]) => `${k}: ${v}`).join('／')}
 - 指摘は多くても 8 件。気になる点が無ければ findings は空の配列。`;
 
 const SCHEMA = {
@@ -167,8 +182,10 @@ const SCHEMA = {
           field: { type: 'string' },
           why: { type: 'string' },
           fix: { type: 'string' },
+          path: { type: 'string', enum: ['', ...Object.keys(FIXABLE)] },
+          value: { type: 'string' },
         },
-        required: ['level', 'field', 'why', 'fix'],
+        required: ['level', 'field', 'why', 'fix', 'path', 'value'],
         additionalProperties: false,
       },
     },
@@ -177,7 +194,7 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
-type Finding = { level: 'warn' | 'err'; field: string; why: string; fix: string };
+type Finding = { level: 'warn' | 'err'; field: string; why: string; fix: string; path: string; value: string };
 
 async function askClaude(material: unknown) {
   const client = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY'), timeout: 120_000, maxRetries: 2 });
@@ -202,6 +219,7 @@ async function askClaude(material: unknown) {
   const findings = (parsed.findings || []).slice(0, 8).map((f) => ({
     level: f.level === 'err' ? 'err' : 'warn', field: String(f.field || '').slice(0, 40),
     why: String(f.why || '').slice(0, 300), fix: String(f.fix || '').slice(0, 200),
+    ...(FIXABLE[f.path] && String(f.value || '').trim() ? { path: f.path, value: String(f.value).trim().slice(0, 300) } : {}),
   }));
   return { findings, model: res.model || MODEL, usage: res.usage || {} };
 }
@@ -245,7 +263,7 @@ Deno.serve(async (req) => {
 
   const cid = String(body.company_id || '').trim();
   if (!/^[0-9A-Za-z-]{1,8}$/.test(cid)) return json({ error: 'company_id が必要です' }, 400);
-  const trigger = ['save', 'new', 'retry'].includes(String(body.trigger)) ? String(body.trigger) : 'save';
+  const trigger = ['manual', 'retry'].includes(String(body.trigger)) ? String(body.trigger) : 'manual';
 
   const ins = await sb.from('company_ai_check').insert({ company_id: cid, trigger, requested_by: who, model: MODEL, status: 'running' })
     .select('id').single();

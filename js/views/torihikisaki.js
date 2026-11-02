@@ -1127,6 +1127,7 @@ const TorihikisakiView = {
     if (/\(郵便番号API/.test(s)) return ['api', '郵便番号API'];   // 〒⇄住所の入力補助（2026-09-11）
     if (/\(Sansan/i.test(s)) return ['api', 'Sansan API'];
     if (/\(国税庁|\(invoice/i.test(s)) return ['api', '国税庁API'];
+    if (/\(AIの点検\)/.test(s)) return ['api', 'AIの点検'];   // AIの点検の［案を入れる］→ 経理が保存（2026-11-02）
     if (/\(自動判定\)/.test(s)) return ['auto', '自動判定'];
     if (/Pleasanter/i.test(s)) return ['pleasanter', 'Pleasanter'];   // 新規取引会社一覧（Pleasanter）からの取込（2026-09-08）
     if (/migration/i.test(s)) return ['mig', '移行'];
@@ -1791,15 +1792,20 @@ const TorihikisakiView = {
     if (!a || !this.detail) return;
     a.innerHTML = '<div class="aisub">入力チェック</div>' + this.aiHtml(f => this.fieldValueWithPending(f), this.detailTypes())
       + '<div class="aisub">AIの点検（Claude）</div>' + this.aiCheckHtml();
-    const rb = this.el('tmk-ai-retry');
-    if (rb) rb.onclick = () => this.runAiCheck(this.detail.company.company_id, 'retry');
+    const cid = this.detail.company.company_id;
+    a.querySelectorAll('[data-airun]').forEach(b => { b.onclick = () => this.runAiCheck(cid, b.dataset.airun); });
+    a.querySelectorAll('[data-aiput]').forEach(b => { b.onclick = () => this.applyAiFix(+b.dataset.aiput); });
   },
 
   // ===== AIの点検（Claude・2026-11-02 坂本さん）=====
-  // 保存のたびに関数 torihikisaki-aicheck が点検し、company_ai_check に残す。AI は値を書き換えない（直すのは人）。
+  // ［AIで点検］を押すと関数 torihikisaki-aicheck が保存済みの内容を点検し、company_ai_check に残す（手動＝11/02 坂本さん）。
+  // AI は値を書き換えない。直す値が決まる指摘は［案を入れる］で未保存の変更に入れ、経理が「💾 保存」で確定する（履歴に「(AIの点検)」）。
+  AI_LABEL: 'AIの点検',
   aiBusy: {},      // 会社ごとの「点検中」（関数の返事待ち）
   aiCheck: null,   // 開いている会社の最新の点検
   aiFnName() { return (typeof Sync !== 'undefined' && Sync.AICHECK_FN) || 'torihikisaki-aicheck'; },
+  // 人が入れた未保存の変更があるか（自動判定だけなら無いとみなす）
+  aiHumanPending() { return Object.keys(this.pending || {}).some(p => !(this.autoPaths || {})[p]); },
 
   async runAiCheck(cid, trigger) {
     if (!cid || this.aiBusy[cid]) return;
@@ -1821,30 +1827,71 @@ const TorihikisakiView = {
     if (this.detail && this.detail.company.company_id === cid) { this.aiCheck = rec; this.refreshAiSide(); }
   },
 
+  // 指摘の案が今の画面で直せる欄か（直せなければボタンを出さない）
+  aiFixable(f) {
+    return !!(f && f.path && f.value !== undefined && String(f.value).trim() !== '' && this.pathMeta(f.path));
+  },
+
+  // ［案を入れる］＝未保存の変更へ（DB には書かない）。確定は「💾 保存」＝履歴に「(AIの点検)」の印
+  applyAiFix(idx) {
+    const f = ((this.aiCheck && this.aiCheck.findings) || [])[idx];
+    if (!this.aiFixable(f)) return;
+    const meta = this.pathMeta(f.path);
+    const val = String(f.value).trim();
+    const msg = this.inputErrorDt(meta.dtype, val);
+    if (msg) { alert(`案をそのまま入れられません（${meta.label}: ${msg}）。欄で直してください。`); return; }
+    if (this.sameVal(this.rawByPath(f.path, this.detail), this.normInDt(meta.dtype, val, meta.norm))) {
+      delete this.pending[f.path]; delete this.apiPaths[f.path];
+    } else {
+      this.pending[f.path] = val;
+      this.apiPaths[f.path] = this.AI_LABEL;
+      delete this.autoPaths[f.path]; delete this.autoWhy[f.path];
+    }
+    this.renderDbody();
+    this.renderSavebar();
+    this.refreshAiSide();
+    this.toast(`${meta.label}に案を入れました（「💾 保存」で確定します）`);
+  },
+
   aiCheckHtml() {
     const cid = this.detail.company.company_id;
+    const pend = this.aiHumanPending();
+    const runBtn = (label, trig) => `<button class="btn btn-sm" data-airun="${trig}"${pend ? ' disabled' : ''}>${label}</button>`
+      + (pend ? '<div class="aifoot">未保存の変更は点検に入りません。保存してから押してください。</div>' : '');
     let c = this.aiCheck;
     // 関数が途中で落ちて running のまま残った記録（5 分を過ぎた）は、終わらなかったものとして扱う
     if (!this.aiBusy[cid] && c && c.status === 'running' && Date.now() - new Date(c.requested_at).getTime() > 5 * 60 * 1000) {
       c = Object.assign({}, c, { status: 'error', error: '点検が終わりませんでした' });
     }
     if (this.aiBusy[cid] || (c && c.status === 'running')) {
-      return '<div class="airow run">… 保存した内容を点検しています</div>';
+      return '<div class="airow run">… 保存済みの内容を点検しています</div>';
     }
-    if (!c) return '<div class="airow">保存すると点検します</div>';
-    const when = c.requested_at ? `<div class="aifoot">${this.esc(this.jstStamp(c.requested_at))} ${c.trigger === 'retry' ? '点検し直し' : '保存時'}</div>` : '';
+    if (!c) return runBtn('AIで点検', 'manual');
+    const when = c.requested_at ? `<div class="aifoot">${this.esc(this.jstStamp(c.requested_at))} に点検${c.requested_by ? '（' + this.esc(String(c.requested_by).split('@')[0]) + '）' : ''}</div>` : '';
     if (c.status === 'error') {
-      return `<div class="airow err">✕ 点検できませんでした（${this.esc(c.error || '理由不明')}）</div>`
-        + '<button class="btn btn-sm" id="tmk-ai-retry">もう一度点検</button>' + when;
+      return `<div class="airow err">✕ 点検できませんでした（${this.esc(c.error || '理由不明')}）</div>` + runBtn('もう一度点検', 'retry') + when;
     }
     const fs = Array.isArray(c.findings) ? c.findings : [];
     const body = fs.length
-      ? fs.map(f => `<div class="airow ${f.level === 'err' ? 'err' : 'warn'}">${f.level === 'err' ? '✕' : '⚠'} <b>${this.esc(f.field)}</b>`
-          + `<span class="aiwhy">${this.esc(f.why)}</span>${f.fix ? `<span class="aifix">案：${this.esc(f.fix)}</span>` : ''}</div>`).join('')
+      ? fs.map((f, i) => {
+        let put = '';
+        if (this.aiFixable(f)) {
+          const inPending = this.pending[f.path] !== undefined && this.apiPaths[f.path] === this.AI_LABEL && String(this.pending[f.path]) === String(f.value).trim();
+          const meta = this.pathMeta(f.path);
+          const same = !inPending && this.sameVal(this.rawByPath(f.path, this.detail), this.normInDt(meta.dtype, String(f.value).trim(), meta.norm));
+          put = inPending ? '<span class="aidone">入れました（未保存）</span>'
+            : same ? '<span class="aidone">保存済みの値と同じです</span>'
+            : `<button class="btn btn-sm aiput" data-aiput="${i}">案を入れる</button>`;
+        }
+        return `<div class="airow ${f.level === 'err' ? 'err' : 'warn'}">${f.level === 'err' ? '✕' : '⚠'} <b>${this.esc(f.field)}</b>`
+          + `<span class="aiwhy">${this.esc(f.why)}</span>${f.fix ? `<span class="aifix">案：${this.esc(f.fix)}</span>` : ''}${put}</div>`;
+      }).join('')
       : '<div class="airow ok">✓ 気になる点はありません</div>';
-    const stale = Object.keys(this.pending || {}).some(p => !(this.autoPaths || {})[p])
-      ? '<div class="aifoot">保存した時点の点検です。保存すると点検し直します。</div>' : '';
-    return body + stale + when;
+    // 点検のあとに保存された（別の人の保存を含む）＝今の内容は点検していない
+    const cu = this.detail.company.updated_at, ck = c.company_updated_at;
+    const after = (cu && ck && String(cu).slice(0, 19) !== String(ck).slice(0, 19))
+      ? '<div class="aifoot">点検のあとに保存された内容は、まだ点検していません。</div>' : '';
+    return body + after + when + runBtn('もう一度点検', 'manual');
   },
 
   // 項目の値（未保存の編集を重ねた状態）。AIチェック・必須判定に使う
@@ -1964,7 +2011,13 @@ const TorihikisakiView = {
     const note = auto === n ? `自動判定で入れた${auto}件です。保存すると確定します（違っていれば選び直してください）`
       : auto ? `うち自動判定 ${auto}件。変わった項目だけが変更履歴に記録されます`
         : '変わった項目だけが変更履歴に記録されます';
-    bar.innerHTML = `<div class="savebar"><span>未保存の変更 <b>${n}件</b>（${note}）</span>${this.basisInputHtml()}<span style="flex:1"></span>` +
+    // AIの点検の案は、確定する前に中身が見えるように「項目：今の値 → 案」を並べる（2026-11-02）
+    const aiKeys = keys.filter(k => this.apiPaths[k] === this.AI_LABEL);
+    const aiList = aiKeys.length ? '<div class="aichg">' + aiKeys.map(k => {
+      const m = this.pathMeta(k);
+      return `<div>AIの点検の案　${this.esc(m ? m.label : k)}：「${this.esc(this.editValOf(k))}」→「${this.esc(this.pending[k])}」</div>`;
+    }).join('') + '</div>' : '';
+    bar.innerHTML = `<div class="savebar"><span>未保存の変更 <b>${n}件</b>（${note}）${aiList}</span>${this.basisInputHtml()}<span style="flex:1"></span>` +
       `<button class="btn" id="tmk-discard" ${this.busy ? 'disabled' : ''}>破棄</button>` +
       `<button class="btn btn-primary" id="tmk-save" ${this.busy ? 'disabled' : ''}>${this.busy ? '保存中…' : '💾 保存'}</button></div>`;
     this.el('tmk-discard').onclick = () => {
@@ -2184,7 +2237,6 @@ const TorihikisakiView = {
     this.busy = false;
     this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {}; this.basisDraft = '';
     this.toast(`保存しました（${n}項目・変更履歴に記録）`);
-    this.runAiCheck(cid, 'save');   // 待たない＝点検は裏で（2026-11-02）
     await this.openDetail(cid);
   },
 
@@ -4125,7 +4177,7 @@ const TorihikisakiView = {
       </div>
      </div>
      <div>
-      <div class="sec" style="position:sticky;top:64px"><h3>点検</h3><div class="mf" style="font-size:11px;margin-bottom:6px">登録すると AIの点検（Claude）も動きます。要確認が残っても申請中にはできます。</div><div class="aisub">入力チェック</div><div id="tmk-nai"></div></div>
+      <div class="sec" style="position:sticky;top:64px"><h3>点検</h3><div class="mf" style="font-size:11px;margin-bottom:6px">要確認が残っても申請中にはできます。AIの点検は登録したあとの会社の画面で。</div><div class="aisub">入力チェック</div><div id="tmk-nai"></div></div>
       <div class="sec"><h3>外部APIからの取得</h3><div class="mf" style="font-size:11px;margin-bottom:8px">会社情報を自動で埋める取得元。未接続でも手入力で登録できます</div>
         <div id="tmk-enrich-status">${TM_ENRICH.statusHtml()}</div></div>
       <div class="sec"><h3>登録後に必要な作業</h3><div class="mf" style="font-size:11px;margin-bottom:8px">🔴自動配信はありません。承認後、各システムへは<b>人が手で登録</b>します（API配信は今回スコープ外）</div>${
@@ -4355,7 +4407,6 @@ const TorihikisakiView = {
     this.autoNew = {};
     this.newTypes = [];
     this.toast(`登録しました（取引先番号 ${cid}・申請中）`);
-    this.runAiCheck(cid, 'new');    // 待たない＝点検は裏で（2026-11-02）
     await this.openDetail(cid);
     return cid;
   },
