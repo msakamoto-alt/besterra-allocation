@@ -1741,7 +1741,7 @@ const TorihikisakiView = {
       <div id="tmk-dbody"></div>
      </div>
      <div>
-      <div class="sec" style="position:sticky;top:64px"><h3>点検</h3><div id="tmk-aiside"></div></div>
+      <div class="sec"><h3>AIの点検（Claude）</h3><div id="tmk-aiside"></div></div>
       <div class="sec"><h3>支店・枝番管理</h3><div class="mf" style="font-size:11px;margin-bottom:8px">本社=枝番000。支店は枝番を自動連番（マスタ番号‑枝番）。⚙で住所・電話も入れられます</div>
         <div id="tmk-branches"></div>
         <button class="btn btn-sm" id="tmk-addbranch" style="margin-top:6px">＋ 支店を追加</button></div>
@@ -1790,8 +1790,8 @@ const TorihikisakiView = {
   refreshAiSide() {
     const a = this.el('tmk-aiside');
     if (!a || !this.detail) return;
-    a.innerHTML = '<div class="aisub">入力チェック</div>' + this.aiHtml(f => this.fieldValueWithPending(f), this.detailTypes())
-      + '<div class="aisub">AIの点検（Claude）</div>' + this.aiCheckHtml();
+    // 入力チェック（規則の 3 つ）は枠に出さない＝必須の空欄は欄の赤い線で分かる（2026-11-02 坂本さん「邪魔すぎる」）
+    a.innerHTML = this.aiCheckHtml();
     const cid = this.detail.company.company_id;
     a.querySelectorAll('[data-airun]').forEach(b => { b.onclick = () => this.runAiCheck(cid, b.dataset.airun); });
     a.querySelectorAll('[data-aiput]').forEach(b => { b.onclick = () => this.applyAiFix(+b.dataset.aiput); });
@@ -4177,7 +4177,6 @@ const TorihikisakiView = {
       </div>
      </div>
      <div>
-      <div class="sec" style="position:sticky;top:64px"><h3>点検</h3><div class="mf" style="font-size:11px;margin-bottom:6px">要確認が残っても申請中にはできます。AIの点検は登録したあとの会社の画面で。</div><div class="aisub">入力チェック</div><div id="tmk-nai"></div></div>
       <div class="sec"><h3>外部APIからの取得</h3><div class="mf" style="font-size:11px;margin-bottom:8px">会社情報を自動で埋める取得元。未接続でも手入力で登録できます</div>
         <div id="tmk-enrich-status">${TM_ENRICH.statusHtml()}</div></div>
       <div class="sec"><h3>登録後に必要な作業</h3><div class="mf" style="font-size:11px;margin-bottom:8px">🔴自動配信はありません。承認後、各システムへは<b>人が手で登録</b>します（API配信は今回スコープ外）</div>${
@@ -4249,6 +4248,7 @@ const TorihikisakiView = {
     };
   },
 
+  // 新規登録の画面の入力チェックの枠は 2026-11-02 に撤去（#tmk-nai は無い＝何もしない）
   refreshNewAi() {
     const a = this.el('tmk-nai');
     if (a) a.innerHTML = this.aiHtml(f => this.newFieldValue(f), this.newTypes);
