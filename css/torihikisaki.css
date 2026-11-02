@@ -61,6 +61,12 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki .airow.ok{background:var(--success-bg);color:var(--success);}
 #tab-torihikisaki .airow.warn{background:var(--amber-bg);color:var(--amber);}
 #tab-torihikisaki .airow.err{background:var(--accent-bg);color:var(--primary);}
+#tab-torihikisaki .airow.run{background:var(--muted);color:var(--mf2);}
+#tab-torihikisaki .airow .aiwhy{display:block;color:var(--mf2);margin-top:2px;}
+#tab-torihikisaki .airow .aifix{display:block;margin-top:2px;}
+#tab-torihikisaki .aisub{font-size:11px;font-weight:700;color:var(--mf2);margin:10px 0 6px;}
+#tab-torihikisaki .aisub:first-child{margin-top:0;}
+#tab-torihikisaki .aifoot{font-size:10.5px;color:var(--mf);margin-top:6px;}
 #tab-torihikisaki .syscard{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow);}
 #tab-torihikisaki .slink{display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:11.5px;border-bottom:1px solid var(--muted);}
 #tab-torihikisaki .slink:last-child{border-bottom:none;}

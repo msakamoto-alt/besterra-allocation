@@ -922,6 +922,9 @@ const TorihikisakiView = {
       ]);
       this.detail.credit_line_test = tc.error ? null : (tc.data || []);
       this.detail.notices = nt.error ? null : (nt.data || []);
+      // AIの点検の最新 1 件（2026-11-02）。表が無い（company_ai_check.sql 未実行）なら null
+      const ac = await sb.from('company_ai_check').select('*').eq('company_id', cid).order('requested_at', { ascending: false }).limit(1);
+      this.aiCheck = ac.error ? null : ((ac.data || [])[0] || null);
       this.sel = cid;
       this.dtab = 'basic';
       this.fmtFocus = 0;
@@ -1189,7 +1192,7 @@ const TorihikisakiView = {
     return this.resolveField(f, d);
   },
 
-  // ===== AIチェック（モックのロジック・実データ） =====
+  // ===== 入力チェック（決まった規則・その場で出す）＝2026-11-02 まで「AIチェック」と呼んでいたもの（AI は使っていない）。AIの点検は aiCheckHtml =====
   aiChecks(getv, types) {
     const out = [];
     const hj = getv(this.fieldByNo(6)) || '';
@@ -1737,7 +1740,7 @@ const TorihikisakiView = {
       <div id="tmk-dbody"></div>
      </div>
      <div>
-      <div class="sec" style="position:sticky;top:64px"><h3>🤖 AIチェック</h3><div id="tmk-aiside"></div></div>
+      <div class="sec" style="position:sticky;top:64px"><h3>点検</h3><div id="tmk-aiside"></div></div>
       <div class="sec"><h3>支店・枝番管理</h3><div class="mf" style="font-size:11px;margin-bottom:8px">本社=枝番000。支店は枝番を自動連番（マスタ番号‑枝番）。⚙で住所・電話も入れられます</div>
         <div id="tmk-branches"></div>
         <button class="btn btn-sm" id="tmk-addbranch" style="margin-top:6px">＋ 支店を追加</button></div>
@@ -1786,7 +1789,62 @@ const TorihikisakiView = {
   refreshAiSide() {
     const a = this.el('tmk-aiside');
     if (!a || !this.detail) return;
-    a.innerHTML = this.aiHtml(f => this.fieldValueWithPending(f), this.detailTypes());
+    a.innerHTML = '<div class="aisub">入力チェック</div>' + this.aiHtml(f => this.fieldValueWithPending(f), this.detailTypes())
+      + '<div class="aisub">AIの点検（Claude）</div>' + this.aiCheckHtml();
+    const rb = this.el('tmk-ai-retry');
+    if (rb) rb.onclick = () => this.runAiCheck(this.detail.company.company_id, 'retry');
+  },
+
+  // ===== AIの点検（Claude・2026-11-02 坂本さん）=====
+  // 保存のたびに関数 torihikisaki-aicheck が点検し、company_ai_check に残す。AI は値を書き換えない（直すのは人）。
+  aiBusy: {},      // 会社ごとの「点検中」（関数の返事待ち）
+  aiCheck: null,   // 開いている会社の最新の点検
+  aiFnName() { return (typeof Sync !== 'undefined' && Sync.AICHECK_FN) || 'torihikisaki-aicheck'; },
+
+  async runAiCheck(cid, trigger) {
+    if (!cid || this.aiBusy[cid]) return;
+    this.aiBusy[cid] = true;
+    if (this.detail && this.detail.company.company_id === cid) this.refreshAiSide();
+    let rec = null;
+    try {
+      const res = await Sync.getSupabase().functions.invoke(this.aiFnName(), { body: { action: 'check', company_id: cid, trigger } });
+      if (res.error) {
+        const msg = String(res.error.message || res.error);
+        rec = { status: 'error', error: /Failed to send|not found|404/i.test(msg) ? 'AIの点検の関数が未配備です' : msg.slice(0, 200) };
+      } else {
+        rec = (res.data && res.data.check) || { status: 'error', error: (res.data && res.data.error) || '返事が空でした' };
+      }
+    } catch (e) {
+      rec = { status: 'error', error: String(e.message || e).slice(0, 200) };
+    }
+    this.aiBusy[cid] = false;
+    if (this.detail && this.detail.company.company_id === cid) { this.aiCheck = rec; this.refreshAiSide(); }
+  },
+
+  aiCheckHtml() {
+    const cid = this.detail.company.company_id;
+    let c = this.aiCheck;
+    // 関数が途中で落ちて running のまま残った記録（5 分を過ぎた）は、終わらなかったものとして扱う
+    if (!this.aiBusy[cid] && c && c.status === 'running' && Date.now() - new Date(c.requested_at).getTime() > 5 * 60 * 1000) {
+      c = Object.assign({}, c, { status: 'error', error: '点検が終わりませんでした' });
+    }
+    if (this.aiBusy[cid] || (c && c.status === 'running')) {
+      return '<div class="airow run">… 保存した内容を点検しています</div>';
+    }
+    if (!c) return '<div class="airow">保存すると点検します</div>';
+    const when = c.requested_at ? `<div class="aifoot">${this.esc(this.jstStamp(c.requested_at))} ${c.trigger === 'retry' ? '点検し直し' : '保存時'}</div>` : '';
+    if (c.status === 'error') {
+      return `<div class="airow err">✕ 点検できませんでした（${this.esc(c.error || '理由不明')}）</div>`
+        + '<button class="btn btn-sm" id="tmk-ai-retry">もう一度点検</button>' + when;
+    }
+    const fs = Array.isArray(c.findings) ? c.findings : [];
+    const body = fs.length
+      ? fs.map(f => `<div class="airow ${f.level === 'err' ? 'err' : 'warn'}">${f.level === 'err' ? '✕' : '⚠'} <b>${this.esc(f.field)}</b>`
+          + `<span class="aiwhy">${this.esc(f.why)}</span>${f.fix ? `<span class="aifix">案：${this.esc(f.fix)}</span>` : ''}</div>`).join('')
+      : '<div class="airow ok">✓ 気になる点はありません</div>';
+    const stale = Object.keys(this.pending || {}).some(p => !(this.autoPaths || {})[p])
+      ? '<div class="aifoot">保存した時点の点検です。保存すると点検し直します。</div>' : '';
+    return body + stale + when;
   },
 
   // 項目の値（未保存の編集を重ねた状態）。AIチェック・必須判定に使う
@@ -2126,6 +2184,7 @@ const TorihikisakiView = {
     this.busy = false;
     this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {}; this.basisDraft = '';
     this.toast(`保存しました（${n}項目・変更履歴に記録）`);
+    this.runAiCheck(cid, 'save');   // 待たない＝点検は裏で（2026-11-02）
     await this.openDetail(cid);
   },
 
@@ -4066,7 +4125,7 @@ const TorihikisakiView = {
       </div>
      </div>
      <div>
-      <div class="sec" style="position:sticky;top:64px"><h3>🤖 AIチェック</h3><div class="mf" style="font-size:11px;margin-bottom:6px">保存時に自動点検。要確認が残っても下書き（申請中）にはできます。</div><div id="tmk-nai"></div></div>
+      <div class="sec" style="position:sticky;top:64px"><h3>点検</h3><div class="mf" style="font-size:11px;margin-bottom:6px">登録すると AIの点検（Claude）も動きます。要確認が残っても申請中にはできます。</div><div class="aisub">入力チェック</div><div id="tmk-nai"></div></div>
       <div class="sec"><h3>外部APIからの取得</h3><div class="mf" style="font-size:11px;margin-bottom:8px">会社情報を自動で埋める取得元。未接続でも手入力で登録できます</div>
         <div id="tmk-enrich-status">${TM_ENRICH.statusHtml()}</div></div>
       <div class="sec"><h3>登録後に必要な作業</h3><div class="mf" style="font-size:11px;margin-bottom:8px">🔴自動配信はありません。承認後、各システムへは<b>人が手で登録</b>します（API配信は今回スコープ外）</div>${
@@ -4296,6 +4355,7 @@ const TorihikisakiView = {
     this.autoNew = {};
     this.newTypes = [];
     this.toast(`登録しました（取引先番号 ${cid}・申請中）`);
+    this.runAiCheck(cid, 'new');    // 待たない＝点検は裏で（2026-11-02）
     await this.openDetail(cid);
     return cid;
   },
