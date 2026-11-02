@@ -1,7 +1,7 @@
 /**
  * management.js - 経営レポート（段階E3: 経営ドッキング）
  *
- * R/F 分析資料・月次経営分析レポートの生成済HTMLを Supabase(management_reports) から取得し、
+ * R/F 分析資料・経営分析BI の生成済HTMLを Supabase(management_reports) から取得し、
  * Blob URL 化して iframe で表示する。閲覧=admin/executive のみ（RLSでサーバー強制）、
  * 差替=admin のみ（アプリ内アップロード）。
  *
@@ -10,10 +10,12 @@
  *     触れられない。Chart.js CDN は opaque origin でも読み込み・実行できるので表示は問題ない。
  */
 const ManagementView = {
-  TYPE_LABELS: { annual: '年度経営分析レポート', analysis: '月次経営分析レポート', rf: 'ローリングフォーキャスト分析資料', bi: '経営分析BI' },
+  // 年度経営分析（annual）・月次経営分析（analysis）は 2026-11-02 に画面から撤去（坂本さん）。
+  // management_reports の行は消していない＝戻すときはここと index.html のボタン・選択肢を足す。
+  TYPE_LABELS: { rf: 'ローリングフォーキャスト分析資料', bi: '経営分析BI' },
 
   reports: [],          // メタ一覧（html_content は含まない）
-  currentType: 'analysis',
+  currentType: 'bi',
   currentId: null,
   _blobUrl: null,
 
@@ -86,19 +88,16 @@ const ManagementView = {
   // 現在の種類のレポートを年月降順で月セレクタに反映し、最新を表示
   populateMonths() {
     const sel = document.getElementById('mgmt-month');
-    // 年度版は「対象年度」、月次/R/Fは「対象月」とラベルを切替
+    // BI は「バージョン」、R/F は「対象月」とラベルを切替
     const plabel = document.getElementById('mgmt-period-label');
-    if (plabel) plabel.textContent = this.currentType === 'annual' ? '対象年度:'
-      : (this.currentType === 'bi' ? 'バージョン:' : '対象月:');
+    if (plabel) plabel.textContent = this.currentType === 'bi' ? 'バージョン:' : '対象月:';
     const list = this.reports
       .filter(r => r.report_type === this.currentType)
       .sort((a, b) => String(b.year_month).localeCompare(String(a.year_month)));
     if (!sel) return;
     sel.innerHTML = list.map(r => {
-      // 年度版はタイトル（期）を主ラベルに。月次/R/Fは「YYYY年M月（タイトル）」。
-      const label = (this.currentType === 'annual' && r.title)
-        ? this.esc(r.title)
-        : `${this.esc(this.fmtYM(r.year_month))}${r.title ? '（' + this.esc(r.title) + '）' : ''}`;
+      // 「YYYY年M月（タイトル）」
+      const label = `${this.esc(this.fmtYM(r.year_month))}${r.title ? '（' + this.esc(r.title) + '）' : ''}`;
       return `<option value="${r.id}">${label}</option>`;
     }).join('');
     if (list.length) {
