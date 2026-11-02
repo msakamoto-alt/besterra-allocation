@@ -1729,7 +1729,7 @@ const TorihikisakiView = {
       <div class="dhead">
         <h2>${this.esc(c.official_name || '')}</h2>${stateB}${approveBtn}
         <button class="btn btn-sm" id="tmk-dup" style="float:right" title="この会社の枠組みを複製して新規登録">⧉ 複製</button>
-        <div class="codes"><span>取引先マスタ番号 <b>${+c.company_id || '—'}</b></span>
+        <div class="codes"><span>取引先マスタ番号 <b>${this.esc(c.company_id || '—')}</b></span>
           <span>取引先コード <b>${this.esc(code || '未採番')}</b></span></div>
       </div>
       <div class="tabbar">
