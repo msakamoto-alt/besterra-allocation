@@ -4412,20 +4412,28 @@ const TorihikisakiView = {
   },
 
   // ===== CSV出力（モック互換ヘッダ「no:項目名」・一覧で解決できる値） =====
+  //   出すのは一覧で絞り込んだ会社だけ（状態・種別・検索語・並び順も一覧のまま）（2026-11-02 坂本さん）。
+  //   列は全項目のまま＝CSV取込でそのまま戻せる形を崩さない。
   expCSV() {
     if (this.rows === null) return;
+    const list = this.filtered();
+    if (!list.length) { this.toast('絞り込みに当てはまる会社がありません'); return; }
+    const STATE_LABELS = { active: '有効', suspended: '欠番', temp: '申請中', test: 'テスト', credit: '与信期限切れ・間近', notice: '与信の稟議あり' };
+    const cond = [STATE_LABELS[this.stateFilter], this.typeFilter ? TM_META.TYPE_CODES[this.typeFilter] : '', this.filtQ ? '検索「' + this.filtQ + '」' : '']
+      .filter(Boolean);
     const fields = TM_META.FIELDS;
     const rows = [['取引先マスタ番号', 'システムコード', ...fields.map(f => f.no + ':' + f.name)]];
-    this.rows.forEach(r => {
+    list.forEach(r => {
       rows.push([+r.company_id, (this.codesByCid[r.company_id] || {}).tera || '',
         ...fields.map(f => this.getListVal(r, f) || '')]);
     });
     const csv = '﻿' + rows.map(row => row.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\r\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    a.download = '取引先マスタ_' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '.csv';
+    const tag = cond.map(s => s.replace(/[\\/:*?"<>|]/g, '')).join('_');
+    a.download = '取引先マスタ_' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + (tag ? '_' + tag : '') + '.csv';
     a.click();
-    this.toast(`CSVを出力しました（${this.rows.length.toLocaleString()}社）`);
+    this.toast(`CSVを出力しました（${list.length.toLocaleString()}社${cond.length ? '・' + cond.join('・') : '・すべて'}）`);
   },
 
   // ===== 複数列にまたがる項目の分解（CSV取込・外部API補完で使う） =====
