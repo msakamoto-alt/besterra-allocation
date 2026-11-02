@@ -750,7 +750,7 @@ const TorihikisakiView = {
     const code = (this.codesByCid[r.company_id] || {}).tera || '';
     return this.norm(r.official_name).includes(q) || this.norm(r.name_kana).includes(q)
       || this.norm(r.name_half).includes(q) || this.norm(r.corporate_number).includes(q)
-      || this.norm(code).includes(q) || this.norm(String(+r.company_id)).includes(q);
+      || this.norm(code).includes(q) || this.norm(String(r.company_id)).includes(q);
   },
 
   filtered() {
@@ -4644,7 +4644,7 @@ const TorihikisakiView = {
   buildCmd(q) {
     const nq = this.norm(q);
     this._cmdItems = (this.rows || []).filter(r => !nq || this.norm(r.official_name).includes(nq)
-      || this.norm((this.codesByCid[r.company_id] || {}).tera).includes(nq) || this.norm(String(+r.company_id)).includes(nq))
+      || this.norm((this.codesByCid[r.company_id] || {}).tera).includes(nq) || this.norm(String(r.company_id)).includes(nq))
       .slice(0, 10)
       .map(r => ({ label: `🏢 ${r.official_name}  (No.${+r.company_id}${(this.codesByCid[r.company_id] || {}).tera ? ' / ' + (this.codesByCid[r.company_id] || {}).tera : ''})`, cid: r.company_id }));
     this.drawCmd();
