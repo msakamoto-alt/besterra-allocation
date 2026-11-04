@@ -8,7 +8,7 @@
 --   credit_line.use_parent_credit（旧「一括手続先」・本番 29 行すべて false）は使わない。画面からは外した。列を消すのは末尾（後日）。
 -- 使い方: SQL Editor で実行（学習用 DB → 本番ハブ の順・何度流しても同じ）。
 --   権限（4.3）は環境で分かれる: app_role() がある本番ハブは RLS（admin・accounting だけ読める）、
---   app_role() も user_roles も Auth ユーザーも無い学習用 DB（画面は anon・RLS 無し）は読める形のまま。
+--   app_role() も user_roles も Auth ユーザーも無い学習用 DB（画面は anon・RLS 無し）は anon が読めて消せる形（書けないのは同じ）。
 --   このあと sf-export 2026-11-04.1 を貼り（与信先の限度額・期限とグループの使用額を一括手続先にも配る）、画面（torihikisaki.js）を公開する。
 --   sf-export を貼る前でも壊れない（古い sf-export は与信先を知らない＝今までどおり自分の行だけで配る）。
 -- 戻し方: 末尾。
@@ -203,6 +203,8 @@ begin
   if to_regproc('public.app_role') is not null then
     -- 本番ハブ
     execute 'alter table public.credit_group_listing enable row level security';
+    execute 'drop policy if exists learning_sel_credit_group_listing on public.credit_group_listing';
+    execute 'drop policy if exists learning_del_credit_group_listing on public.credit_group_listing';
     execute 'drop policy if exists tm_sel_credit_group_listing on public.credit_group_listing';
     execute 'create policy tm_sel_credit_group_listing on public.credit_group_listing for select to authenticated using (public.app_role() in (''admin'',''accounting''))';
     execute 'revoke all on public.credit_group_listing from anon';
@@ -211,10 +213,17 @@ begin
     execute 'revoke all on public.v_company_group, public.v_credit_effective from anon';
     execute 'grant select on public.v_company_group, public.v_credit_effective to authenticated';
   else
-    -- 学習用 DB（検証スクリプト verify_torihikisaki_group.py が anon で読み、片付けで別紙の記録を消す）
+    -- 学習用 DB（検証スクリプト verify_torihikisaki_group.py が anon で読み、片付けで別紙の記録を消す。人が書けないのは本番と同じ）
     execute 'alter table public.credit_group_listing disable row level security';
+    execute 'revoke insert, update on public.credit_group_listing from anon, authenticated';
     execute 'grant select, delete on public.credit_group_listing to anon, authenticated';
     execute 'grant select on public.v_company_group, public.v_credit_effective to anon, authenticated';
+    -- Supabase は新しい表に RLS を付けることがある（disable_rls_learning.sql の前提。2026-11-04 は上の disable のあとも掛かっていて anon から 0 行に見えた）。
+    -- RLS が掛かっていてもいなくても同じに読めて消せるよう、ポリシーも置く
+    execute 'drop policy if exists learning_sel_credit_group_listing on public.credit_group_listing';
+    execute 'drop policy if exists learning_del_credit_group_listing on public.credit_group_listing';
+    execute 'create policy learning_sel_credit_group_listing on public.credit_group_listing for select to anon, authenticated using (true)';
+    execute 'create policy learning_del_credit_group_listing on public.credit_group_listing for delete to anon, authenticated using (true)';
   end if;
 end $$;
 
@@ -223,7 +232,7 @@ end $$;
 -- =====================================================================
 select (to_regproc('public.app_role') is not null) as prod_form,                                                     -- 本番ハブ true／学習用 false
        (select relrowsecurity from pg_class where oid = 'public.credit_group_listing'::regclass) as listing_rls,      -- 本番 true／学習用 false
-       (select count(*) from pg_policies where schemaname = 'public' and tablename = 'credit_group_listing') as listing_policies;  -- 本番 1／学習用 0
+       (select count(*) from pg_policies where schemaname = 'public' and tablename = 'credit_group_listing') as listing_policies;  -- 本番 1／学習用 2
 select column_name, data_type from information_schema.columns
  where table_schema = 'public' and table_name = 'company'
    and column_name in ('parent_ownership_pct','parent_confirmed_on','parent_source','credit_holder_id','credit_listing_decided_on','credit_listing_ref')

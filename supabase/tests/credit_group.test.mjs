@@ -50,10 +50,11 @@ await run('credit_group.sql 1 回目（学習用の形）', sql);
 let chk = await row(`select (to_regproc('public.app_role') is not null) as prod_form,
   (select relrowsecurity from pg_class where oid = 'public.credit_group_listing'::regclass) as listing_rls,
   (select count(*)::int from pg_policies where schemaname = 'public' and tablename = 'credit_group_listing') as listing_policies`);
-ok('確かめ 学習用: prod_form false / listing_rls false / policies 0', chk.prod_form === false && chk.listing_rls === false && chk.listing_policies === 0, chk);
+ok('確かめ 学習用: prod_form false / listing_rls false / policies 2', chk.prod_form === false && chk.listing_rls === false && chk.listing_policies === 2, chk);
 let priv = await row(`select has_table_privilege('anon','public.credit_group_listing','select') as a_sel, has_table_privilege('anon','public.credit_group_listing','delete') as a_del,
+  has_table_privilege('anon','public.credit_group_listing','insert') as a_ins, has_table_privilege('anon','public.credit_group_listing','update') as a_upd,
   has_table_privilege('anon','public.v_credit_effective','select') as a_view`);
-ok('学習用: anon が別紙の記録を読める・消せる・view を読める', priv.a_sel && priv.a_del && priv.a_view, priv);
+ok('学習用: anon が別紙の記録を読める・消せる・view を読める／書けない', priv.a_sel && priv.a_del && priv.a_view && !priv.a_ins && !priv.a_upd, priv);
 
 await run('会社 5 社', `insert into company (company_id, official_name) values ('P','親ホールディングス'),('A','子会社A'),('B','孫会社B'),('X','無関係X'),('E','与信不要E');`);
 await expectErr('B1 親に自分', `update company set parent_company_id = 'A' where company_id = 'A'`, '自分自身');
@@ -113,6 +114,23 @@ let cnt = await row(`select count(*)::int as n from credit_group_listing`);
 await run('credit_group.sql 2 回目（同じ結果）', sql);
 let cnt2 = await row(`select count(*)::int as n from credit_group_listing`);
 ok('2 回流しても記録は消えない', cnt.n === cnt2.n && cnt.n === 5, [cnt, cnt2]);
+
+// 学習用で別紙の記録に RLS が掛かった場合（実害 2026-11-04: 流したのに anon から 0 行に見え、試験の片付けも効かなかった）
+await run('学習用: 別紙の記録に RLS を掛ける（Supabase が付けた場合の見立て）', `alter table credit_group_listing enable row level security`);
+await run('set role anon', `set role anon`);
+let seenAnon = await row(`select count(*)::int as n from credit_group_listing`);
+ok('RLS が掛かっても anon が読める', seenAnon.n === 5, seenAnon);
+await run('anon が会社に親と与信先を付ける（トリガが記録を残す）', `insert into company (company_id, official_name, parent_company_id) values ('L','試験L','P'); update company set credit_holder_id = 'P', credit_listing_decided_on = '2026-12-10', updated_by = '試験' where company_id = 'L';`);
+seenAnon = await row(`select count(*)::int as n from credit_group_listing where member_id = 'L'`);
+ok('   L の記録 1 行が anon から見える', seenAnon.n === 1, seenAnon);
+await expectErr('anon は別紙の記録に insert できない', `insert into credit_group_listing (member_id, holder_id, action) values ('L','P','載せる')`, 'permission denied');
+await run('anon が試験の記録を消せる', `delete from credit_group_listing where member_id = 'L'`);
+seenAnon = await row(`select count(*)::int as n from credit_group_listing where member_id = 'L'`);
+ok('   L の記録が消えた', seenAnon.n === 0, seenAnon);
+await run('reset role', `reset role; delete from company where company_id = 'L';`);
+await run('credit_group.sql（RLS が掛かった状態から流し直す）', sql);
+chk = await row(`select (select relrowsecurity from pg_class where oid = 'public.credit_group_listing'::regclass) as listing_rls`);
+ok('流し直すと RLS は外れる', chk.listing_rls === false, chk);
 
 // ---------------- 本番の形 ----------------
 await run('app_role() を置く（本番の見立て）', `create function public.app_role() returns text language sql stable as $$ select 'admin'::text $$;`);

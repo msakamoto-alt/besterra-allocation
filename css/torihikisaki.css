@@ -298,12 +298,15 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki .ntc-test .slink{border-bottom-color:var(--border);}
 
 /* グループとグループの与信（2026-11-04・設計 グループと与信_設計_2026-11-02） */
+#tab-torihikisaki .fctl{flex:1;min-width:0;}
+#tab-torihikisaki .focus .cmode,#tab-torihikisaki .focus .gbox,#tab-torihikisaki .focus .gtree{text-align:left;}
 #tab-torihikisaki .cmode{display:flex;flex-direction:column;gap:5px;margin:2px 0 4px;}
 #tab-torihikisaki .cmode label{display:flex;gap:8px;align-items:flex-start;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-size:12px;background:var(--card);}
 #tab-torihikisaki .cmode label.on{border-color:var(--primary);background:var(--accent-bg);}
 #tab-torihikisaki .cmode label.off{opacity:.55;cursor:not-allowed;}
 #tab-torihikisaki .cmode small{display:block;color:var(--mf);font-size:10.5px;font-weight:400;}
-#tab-torihikisaki .cmode input{margin-top:3px;}
+/* .ff／.focus／.xl の input の幅指定（flex:1・width:100%）が radio に当たると潰れる・伸びるので、どの入力形式でも radio の大きさに戻す */
+#tab-torihikisaki .cmode input[type=radio]{flex:none;width:14px;height:14px;min-width:14px;padding:0;margin:2px 0 0;border:none;background:none;box-shadow:none;accent-color:var(--primary);cursor:inherit;}
 #tab-torihikisaki .gbox{background:var(--muted);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;margin:8px 0 4px;font-size:12px;}
 #tab-torihikisaki .gbox .grow{display:grid;grid-template-columns:130px 1fr;gap:6px;padding:4px 0;border-bottom:1px dashed var(--border);}
 #tab-torihikisaki .gbox .grow:last-of-type{border-bottom:0;}

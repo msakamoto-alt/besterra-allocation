@@ -171,7 +171,7 @@ const TorihikisakiView = {
     // #50 グループの与信（決裁・規程第20条）: 与信先と、別紙『一括手続先一覧』に載せた常務会の日・決裁番号。欄の見た目は creditModeHtml（与信の取り方）
     50: [
       { path: 'company.credit_holder_id', label: '与信先', dtype: 'VARCHAR(8)', norm: 'cid' },
-      { path: 'company.credit_listing_decided_on', label: '別紙に載せた常務会の日', dtype: 'DATE' },
+      { path: 'company.credit_listing_decided_on', label: '別紙の常務会の日', dtype: 'DATE' },
       { path: 'company.credit_listing_ref', label: '決裁番号', dtype: 'VARCHAR(60)' },
     ],
     3: [
@@ -1367,7 +1367,7 @@ const TorihikisakiView = {
     // #50 与信の取り方（自分で与信／グループの与信／与信不要）＝詳細の画面だけ。新規登録では会社を作ってから（2026-11-04）
     if (f.no === 50) {
       if (this.view !== 'detail' || this.isNew || !this.detail) return this.roInput('') + '<div class="mf subnote">会社を作ってから、詳細の画面の「与信の取り方」で入れます</div>';
-      return this.creditModeHtml(f, api);
+      return `<div class="fctl">${this.creditModeHtml(f, api)}</div>`;   // .row は横並びの flex＝子を 1 つにまとめないと欄が潰れる
     }
     if (plan.kind === 'card') return this.roInput(api.val(f)) + `<div class="mf subnote">${this.esc(plan.note)}</div>`;
     if (plan.kind === 'single') {
@@ -1390,7 +1390,7 @@ const TorihikisakiView = {
       // #16 親会社の下にグループの木（頂点からこの会社まで・保存済みの親子から計算）
       if (f.no === 16 && this.view === 'detail' && !this.isNew && this.detail) {
         const tree = this.groupTreeHtml(this.detail.company.company_id);
-        if (tree) html += '<div class="mf subnote" style="margin-top:6px">グループ（親をたどった頂点から・保存済みの親子）</div>' + tree;
+        if (tree) html = `<div class="fctl">${html}<div class="mf subnote" style="margin-top:6px">グループ</div>${tree}</div>`;   // .row は横並びの flex＝子を 1 つにまとめる
       }
       return html;
     }
@@ -2691,18 +2691,23 @@ const TorihikisakiView = {
       const sel = `<select data-path="company.credit_holder_id" id="tmk-cholder"><option value=""${holderId ? '' : ' selected'}>（与信先を選ぶ）</option>` +
         cands.map(a => { const cr = this.creditRowOf(a.company_id); return `<option value="${this.esc(a.company_id)}"${a.company_id === holderId ? ' selected' : ''}>${this.esc(a.official_name)}（${this.esc(a.company_id)}）${cr && cr.limit_amount != null ? '・限度額 ' + this.fmtAmt(cr.limit_amount) : '・限度額なし'}</option>`; }).join('') +
         (holderId && !cands.some(a => a.company_id === holderId) ? `<option value="${this.esc(holderId)}" selected>${this.esc(cur ? cur.official_name : holderId)}（現在値・上の会社ではありません）</option>` : '') + '</select>';
-      html += `<div class="subs" style="margin-top:8px"><div class="subrow"><span class="sublbl">与信先<span class="req">*</span></span>${sel}</div>${this.listingRowsHtml(api)}</div>` +
-        '<div class="mf subnote">付け外しは別紙『一括手続先一覧』の記録に自動で残ります（入れた人・日時は DB が付けます）</div>';
+      html += `<div class="subs" style="margin-top:8px"><div class="subrow"><span class="sublbl">与信先<span class="req">*</span></span>${sel}</div>${this.listingRowsHtml(api, '別紙に載せた常務会の日')}</div>`;
       if (holderId) html += this.groupCreditBoxHtml(cid, holderId);
     } else {
-      if (members.length) html += `<div class="gbox">この会社の与信は一括手続先 <b>${members.length} 社</b>にも配られます: ` + members.map(m => `<a data-gcid="${this.esc(m.company_id)}">${this.esc(m.official_name)}</a>`).join('、') + '<div class="mf subnote">限度額・期限を変えると、一括手続先にも配り直します（Salesforce）</div></div>';
-      if (savedHolder) html += `<div class="subs" style="margin-top:8px">${this.listingRowsHtml(api)}</div><div class="mf subnote">保存すると与信先（${this.esc((this.rowById(savedHolder) || {}).official_name || savedHolder)}）から外れ、別紙の記録に「外す」として残ります（外した常務会の日・決裁番号を入れてください）</div>`;
+      if (members.length) html += `<div class="gbox">この会社の与信は一括手続先 <b>${members.length} 社</b>にも配られます: ` + members.map(m => `<a data-gcid="${this.esc(m.company_id)}">${this.esc(m.official_name)}</a>`).join('、') + '</div>';
+      if (savedHolder) html += `<div class="subs" style="margin-top:8px">${this.listingRowsHtml(api, '別紙から外した常務会の日')}</div><div class="mf subnote">保存すると与信先（${this.esc((this.rowById(savedHolder) || {}).official_name || savedHolder)}）から外れます</div>`;
     }
     return html;
   },
-  listingRowsHtml(api) {
-    return `<div class="subrow"><span class="sublbl">別紙に載せた常務会の日</span>${this.inputByDtype('company.credit_listing_decided_on', 'DATE', api.get('company.credit_listing_decided_on'))}</div>` +
+  listingRowsHtml(api, dateLabel) {
+    return `<div class="subrow"><span class="sublbl">${this.esc(dateLabel)}</span>${this.inputByDtype('company.credit_listing_decided_on', 'DATE', api.get('company.credit_listing_decided_on'))}</div>` +
       `<div class="subrow"><span class="sublbl">決裁番号</span>${this.inputByDtype('company.credit_listing_ref', 'VARCHAR(60)', api.get('company.credit_listing_ref'))}</div>`;
+  },
+  /** 別紙の決裁（常務会の日・決裁番号）は付け外しごとに新しく入れる＝前の決裁の日を次の付け外しの日にしない。保存済みの与信先のままなら保存済みの値に戻す */
+  syncListingDraft(api, f50) {
+    const now = String(api.get('company.credit_holder_id') || '').trim();
+    const same = now === this.editValOf('company.credit_holder_id');
+    ['company.credit_listing_decided_on', 'company.credit_listing_ref'].forEach(p => api.set(f50, p, same ? this.editValOf(p) : ''));
   },
   /** グループの与信の読むだけの枠: 与信先の限度額・種類・期限・決裁日／グループの使用額（与信先＋一括手続先）／残り／確認が要る印 */
   groupCreditBoxHtml(cid, holderId) {
@@ -2722,7 +2727,7 @@ const TorihikisakiView = {
     html += `<div class="grow"><span class="k">グループの限度額</span><span><b class="tnum">${lim != null ? this.fmtAmt(lim) + ' 円' : '—'}</b>${cr ? `<span class="mf">（${this.esc(cr.limit_type || '種類なし')}・期限 ${this.esc(cr.valid_until || '—')}・決裁 ${this.esc(cr.approved_on || '—')}）</span>` : ''}${this.creditBadge(holderId)}</span></div>` +
       `<div class="grow"><span class="k">グループの使用額</span><span><div class="gbar"><i class="${over ? 'over' : ''}" style="width:${rate}%"></i></div><b class="tnum">${used != null ? this.fmtAmt(used) + ' 円' : '—（未入力）'}</b>${parts.length ? `<span class="mf">（${parts.join(' ＋ ')}）</span>` : ''}${lim != null && used != null ? `　残り <b class="tnum">${this.fmtAmt(lim - used)} 円</b>` : ''}${over ? ' <span class="badge b-red">超過</span>' : ''}</span></div>` +
       `<div class="grow"><span class="k">一括手続先</span><span>${ids.length - 1} 社: ${ids.slice(1).map(id => id === cid ? '<b>この会社</b>' : `<a data-gcid="${this.esc(id)}">${this.esc((this.rowById(id) || {}).official_name || id)}</a>`).join('、')}</span></div>` +
-      '<div class="mf subnote">限度額・種類・期限・決裁日は与信先の行を読むだけ（ここでは入れない）。Salesforce にはこの値がこの会社の与信として配られます。延長・増額の稟議は与信先の分として出します</div></div>';
+      '<div class="mf subnote">延長・増額の稟議は与信先の分として出します</div></div>';
     return html;
   },
   /** グループの木（頂点から）。cid＝この会社（太字）・rootId を渡すとその頂点から（グループの一覧用） */
@@ -2796,10 +2801,11 @@ const TorihikisakiView = {
           const cands = this.ancestorsOf(cid).filter(a => !a.credit_holder_id && !a.credit_exempt);
           if (cands.length === 1) api.set(f50, 'company.credit_holder_id', cands[0].company_id);
         }
+        this.syncListingDraft(api, f50);
         if (this._fieldsRender) this._fieldsRender();
       });
       const hs = host.querySelector('#tmk-cholder');
-      if (hs) hs.addEventListener('change', () => { if (this._fieldsRender) this._fieldsRender(); });   // 与信先を選んだら枠（限度額・使用額）を描き直す
+      if (hs) hs.addEventListener('change', () => { this.syncListingDraft(api, f50); if (this._fieldsRender) this._fieldsRender(); });   // 与信先を選んだら枠（限度額・使用額）を描き直す
     }
     host.querySelectorAll('[data-gcid]').forEach(a => a.onclick = e => { e.preventDefault(); this.openDetail(a.dataset.gcid); });
   },
@@ -2829,7 +2835,7 @@ const TorihikisakiView = {
     const holders = [...new Set(members.map(r => r.credit_holder_id))];
     const problems = members.map(r => ({ r, e: this.effCredit(r.company_id) })).filter(x => !x.e.holderOk || x.e.conflict || !x.e.holderHasCredit || x.e.holderIsMember);
     const mm = this.jstToday().slice(5, 7);
-    let html = '<div class="sub">グループ（親会社をたどって計算）と、グループの与信（一括手続先・与信管理規程 第20条）。頂点ごとに 1 行、与信先ごとに段を分けます。行を押すと木の形で子会社と与信の取り方が見えます。使用額は与信先＋一括手続先の合計（受注残を Salesforce から取り込む仕組みは段階 2）。</div>' +
+    let html = '<div class="sub">行を押すと、木の形で子会社と与信の取り方が見えます。</div>' +
       ((mm === '12' || mm === '01') ? '<div class="alert warn">別紙『一括手続先一覧』の見直しの時期です（期末 1/31 まで・常務会で社長決裁・規程第20条2）。下の記録と「確認が要る」を見て、別紙を作り直してください</div>' : '') +
       `<div class="tool" style="margin:8px 0;display:flex;gap:14px;align-items:center;font-size:12px"><span>グループ <b>${roots.length}</b></span><span>一括手続先 <b>${members.length}</b> 社</span><span>与信先 <b>${holders.length}</b> 社</span>${problems.length ? `<span class="badge b-red">確認が要る ${problems.length}</span>` : ''}</div>`;
     if (!roots.length) html += '<div class="fcard mf">親会社が入った会社はまだありません。会社の詳細「識別・基本」の「親会社・資本関係」から入れてください。</div>';
@@ -2911,6 +2917,7 @@ const TorihikisakiView = {
       return this.PERMIT_TYPE_LABEL[m[1]] + ' ' + (this.PERMIT_COL_LABEL[m[2]] || m[2]);
     }
     if (table === 'company_type' && column === 'type_code') return '種別フラグ';
+    if (table === 'company' && column === 'credit_holder_id') return '与信先（グループの与信）';   // メタの #50 の名前は「与信の取り方」＝履歴では何の値か分からない
     if (table === 'company_billing' && (m = column.match(/^(invoice_send_to|order_send_to)\.(\w+)$/))) {
       return (m[1] === 'invoice_send_to' ? '請求書送付先' : '注文書送付先') + '（' + (this.JSONB_KEY_LABEL[m[2]] || m[2]) + '）';
     }
