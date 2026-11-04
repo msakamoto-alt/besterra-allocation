@@ -78,7 +78,7 @@ await expectErr('与信不要先に与信先（E → P）', `update company set 
 await run('A の与信先 = P（常務会 2019-05-15・経理 太郎）', `update company set credit_holder_id = 'P', credit_listing_decided_on = '2019-05-15', credit_listing_ref = '常務会 2019-05', updated_by = '経理 太郎', parent_ownership_pct = 100 where company_id = 'A'`);
 let lst = await rows(`select member_id, holder_id, action, ownership_pct, decided_on::text as decided_on, decision_ref, created_by from credit_group_listing order by id`);
 ok('B3 別紙の記録 1 行（載せる・P・2019-05-15・経理 太郎・100%）', lst.length === 1 && lst[0].action === '載せる' && lst[0].holder_id === 'P' && lst[0].decided_on === '2019-05-15' && lst[0].created_by === '経理 太郎' && Number(lst[0].ownership_pct) === 100, lst);
-await expectErr('B4 2 段（B → A・A は P の与信）', `update company set credit_holder_id = 'A' where company_id = 'B'`, '自身がグループの与信');
+await expectErr('B4 2 段（B → A・A は P の与信）', `update company set credit_holder_id = 'A' where company_id = 'B'`, '単体で与信を取っている会社にしてください');
 await run('B の与信先 = P（孫から頂点）', `update company set credit_holder_id = 'P', credit_listing_decided_on = '2019-05-15' where company_id = 'B'`);
 await expectErr('与信先を持つ会社を与信不要に（A）', `update company set credit_exempt = true where company_id = 'A'`, '与信不要先');
 await run('P の親 = X（頂点が上がる）', `update company set parent_company_id = 'X' where company_id = 'P'`);
@@ -179,6 +179,14 @@ let seen2 = await row(`select count(*)::int as n from v_company_group`);
 let seen3 = await row(`select count(*)::int as n from credit_group_listing`);
 ok('viewer は view も別紙の記録も 0 行（security_invoker・RLS が効く）', seen.n === 0 && seen2.n === 0 && seen3.n === 0, [seen, seen2, seen3]);
 await run('reset role', `reset role`);
+
+// ---------------- 表記の直し（credit_group_wording_tantai.sql）: 本体の関数と同じになること・何度流しても同じ ----------------
+const guardSrc = async () => (await row(`select prosrc from pg_proc where oid = 'public.company_group_guard'::regproc`)).prosrc;
+const srcBefore = await guardSrc();
+const wording = await runScript('credit_group_wording_tantai.sql', fs.readFileSync(path.join(HERE, '..', 'credit_group_wording_tantai.sql'), 'utf8'));
+ok('   最後の 1 行: prod_form true（本番の形）/ new_wording true', wording.prod_form === true && wording.new_wording === true, wording);
+ok('   関数の中身は credit_group.sql 本体と同じ', (await guardSrc()) === srcBefore);
+ok('   決まりのトリガは残っている', (await row(`select count(*)::int as n from pg_trigger where tgname = 'trg_company_group_guard'`)).n === 1);
 
 console.log(fails === 0 ? '\nALL OK' : `\n${fails} FAIL`);
 process.exit(fails === 0 ? 0 : 1);

@@ -28,7 +28,7 @@ comment on column public.company.parent_company_id is '直接の親会社（取�
 comment on column public.company.parent_ownership_pct is '親の持株比率（%・分からなければ空）';
 comment on column public.company.parent_confirmed_on is '親子関係を確かめた日';
 comment on column public.company.parent_source is '何で確かめたか（有価証券報告書・登記・帝国データバンク・Sansan など）';
-comment on column public.company.credit_holder_id is '与信先。この会社の与信を、どの会社の限度額でまかなうか（同じグループの上の会社・自分で与信を取っている会社に限る）。空＝自分の与信。規程 KG-10 第20条の一括手続先';
+comment on column public.company.credit_holder_id is '与信先。この会社の与信を、どの会社の限度額でまかなうか（同じグループの上の会社・単体で与信を取っている会社に限る）。空＝単体の与信。規程 KG-10 第20条の一括手続先';
 comment on column public.company.credit_listing_decided_on is '別紙『一括手続先一覧』に載せた（外した）常務会の日';
 comment on column public.company.credit_listing_ref is 'その決裁番号など';
 create index if not exists ix_company_parent on public.company (parent_company_id) where parent_company_id is not null;
@@ -37,7 +37,7 @@ create index if not exists ix_company_credit_holder on public.company (credit_ho
 -- =====================================================================
 -- 2. 決まりを DB で守る（画面・CSV・SQL のどこから入れても同じ）
 --   ・親に自分は指定できない／親子が輪にならない
---   ・与信先は、親をたどった先（同じグループの上の会社）で、自分で与信を取っている会社（与信先がさらに与信先を持たない＝2 段で借りない）
+--   ・与信先は、親をたどった先（同じグループの上の会社）で、単体で与信を取っている会社（与信先がさらに与信先を持たない＝2 段で借りない）
 --   ・与信不要先にはグループの与信を付けない（1 社 1 つの取り方）
 --   ・誰かの与信先になっている会社は、自分がグループの与信にはなれない（先にその会社の与信先を変える）
 --   親を付け替えたせいで「与信先が上の会社でなくなる」孫の会社は止めない（画面と view で赤く出し、経理が直す）
@@ -77,10 +77,10 @@ begin
     if not holder_found then
       raise exception '与信先（%）は、この会社（%）の親会社をたどった先にありません。先に親会社を入れるか、親を変えるなら先にグループの与信を外してください', new.credit_holder_id, new.company_id;
     end if;
-    -- 与信先は自分で与信を取っている会社（2 段で借りない）
+    -- 与信先は単体で与信を取っている会社（2 段で借りない）
     select credit_holder_id into holder_holder from public.company where company_id = new.credit_holder_id;
     if holder_holder is not null then
-      raise exception '与信先（%）自身がグループの与信（与信先 %）です。与信先は自分で与信を取っている会社にしてください', new.credit_holder_id, holder_holder;
+      raise exception '与信先（%）自身がグループの与信（与信先 %）です。与信先は単体で与信を取っている会社にしてください', new.credit_holder_id, holder_holder;
     end if;
     -- 自分が誰かの与信先なら、グループの与信にはなれない
     select count(*) into n_members from public.company where credit_holder_id = new.company_id and company_id <> new.company_id;
