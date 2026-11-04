@@ -55,9 +55,9 @@ const TorihikisakiView = {
 
   LS: { cols: 'tmk_cols', fmt: 'tmk_fmt', theme: 'tmk_theme' },
   FORMATS: ['単票フォーム', '2カラム', 'カード', 'フォーカス', 'Excel風グリッド'],
-  NAV: [['list', '▦', '会社一覧'], ['new', '＋', '新規登録・編集'], ['apichk', '🔄', 'API更新チェック'],
+  NAV: [['list', '▦', '会社一覧'], ['new', '＋', '新規登録・編集'], ['group', '⛓', 'グループ・グループの与信'], ['apichk', '🔄', 'API更新チェック'],
     ['sys', '⇄', 'システム連携'], ['history', '🕘', '変更履歴'], ['ilog', '📡', '連携ログ']],
-  TITLES: { list: '会社一覧', new: '新規登録・編集', apichk: 'API更新チェック', sys: 'システム連携', history: '変更履歴', ilog: '連携ログ', detail: '' },
+  TITLES: { list: '会社一覧', new: '新規登録・編集', group: 'グループ・グループの与信', apichk: 'API更新チェック', sys: 'システム連携', history: '変更履歴', ilog: '連携ログ', detail: '' },
 
   // ===== Box 埋め込み（2026-08-28 坂本さん指示） =====
   // 対象＝Box `030_財務経理課 / 00_取引先コード`。
@@ -161,6 +161,19 @@ const TorihikisakiView = {
   // 複数欄に分解して編集する項目（項目No → サブ欄定義）。
   // gen: 'halfKana'=全角カナから自動変換 / 'nameHalf'=正式社名から半角社名の候補を作る（人が手直しできる）
   SUBFIELDS: {
+    // #16 親会社（グループ＝事実・2026-11-04 credit_group.sql）: 親は社名で探して選ぶ（picker）。持株比率・確認日・確かめた資料を添える
+    16: [
+      { path: 'company.parent_company_id', label: '親会社', dtype: 'VARCHAR(8)', norm: 'cid', picker: 'parent' },
+      { path: 'company.parent_ownership_pct', label: '持株比率(%)', dtype: 'NUMERIC(5,2)' },
+      { path: 'company.parent_confirmed_on', label: '確認日', dtype: 'DATE' },
+      { path: 'company.parent_source', label: '確かめた資料', dtype: 'VARCHAR(40)', optionsFrom: 'PARENT_SOURCES' },
+    ],
+    // #50 グループの与信（決裁・規程第20条）: 与信先と、別紙『一括手続先一覧』に載せた常務会の日・決裁番号。欄の見た目は creditModeHtml（与信の取り方）
+    50: [
+      { path: 'company.credit_holder_id', label: '与信先', dtype: 'VARCHAR(8)', norm: 'cid' },
+      { path: 'company.credit_listing_decided_on', label: '別紙に載せた常務会の日', dtype: 'DATE' },
+      { path: 'company.credit_listing_ref', label: '決裁番号', dtype: 'VARCHAR(60)' },
+    ],
     3: [
       { path: 'company.name_kana', label: '全角カナ', dtype: 'VARCHAR(200)' },
       { path: 'company.name_kana_half', label: '半角カナ', dtype: 'VARCHAR(200)', gen: 'halfKana', genLabel: '全角から変換' },
@@ -641,7 +654,7 @@ const TorihikisakiView = {
           this.fetchAll('company', '*', 'company_id'),
           this.fetchAll('company_type', 'company_id,type_code'),
           this.fetchAll('system_code', 'company_id,system,code'),
-          this.fetchAll('credit_line', 'company_id,limit_amount,valid_until'), // 与信の期限のアラート（2026-10-28 坂本さん）
+          this.fetchAll('credit_line', 'company_id,limit_amount,limit_type,valid_until,approved_on,used_amount'), // 与信の期限のアラート（2026-10-28 坂本さん）・グループの実効の与信（2026-11-04）
         ]);
         this.creditByCid = {};
         credits.forEach(c => { this.creditByCid[c.company_id] = c; }); // 1社1行（複数あれば後の行）
@@ -690,6 +703,7 @@ const TorihikisakiView = {
     else if (v === 'sys') this.renderSysGlobal();
     else if (v === 'history') this.renderHistGlobal();
     else if (v === 'ilog') this.renderIlogGlobal();
+    else if (v === 'group') this.renderGroupGlobal();
     else if (v === 'detail') this.renderDetail();
   },
 
@@ -935,6 +949,7 @@ const TorihikisakiView = {
       this.branchEdit = null;
       this.isNew = false;
       this.enrichNotice = null;
+      this._cmodeDraft = null;   // 与信の取り方の radio で「グループ」を押しただけ（与信先はまだ）の状態は会社ごと
       this.view = 'detail';
       this.markNav();
       this.applyAutoJudgeDetail();
@@ -1056,6 +1071,10 @@ const TorihikisakiView = {
       const n = Number(t.replace(/,/g, ''));
       return Number.isFinite(n) ? n : null;
     }
+    if (/^NUMERIC/.test(dt)) {   // 持株比率(%) など小数あり（2026-11-04）
+      const n = Number(t.replace(/,/g, '').replace(/％|%/g, ''));
+      return Number.isFinite(n) ? n : null;
+    }
     return t;
   },
   normIn(f, s) { return this.normInDt(f.dtype, s); },
@@ -1065,6 +1084,7 @@ const TorihikisakiView = {
     const t = String(s == null ? '' : s).trim();
     if (t === '') return null;
     if (/^(BIGINT|INTEGER|SMALLINT)/.test(dt) && !/^-?[\d,]+$/.test(t)) return '数値で入力してください';
+    if (/^NUMERIC/.test(dt) && !/^-?\d+(\.\d+)?\s*[%％]?$/.test(t)) return '数値で入力してください（例: 62.5）';
     const m = dt.match(/^(VARCHAR|CHAR)\((\d+)\)/);
     if (m) {
       const len = [...t].length, max = +m[2];
@@ -1344,6 +1364,11 @@ const TorihikisakiView = {
   fieldControl(f, api) {
     const plan = this.editPlan(f);
     if (!plan) return this.roInput(api.val(f));
+    // #50 与信の取り方（自分で与信／グループの与信／与信不要）＝詳細の画面だけ。新規登録では会社を作ってから（2026-11-04）
+    if (f.no === 50) {
+      if (this.view !== 'detail' || this.isNew || !this.detail) return this.roInput('') + '<div class="mf subnote">会社を作ってから、詳細の画面の「与信の取り方」で入れます</div>';
+      return this.creditModeHtml(f, api);
+    }
     if (plan.kind === 'card') return this.roInput(api.val(f)) + `<div class="mf subnote">${this.esc(plan.note)}</div>`;
     if (plan.kind === 'single') {
       const off = this.linkedOff(f, api);
@@ -1355,11 +1380,19 @@ const TorihikisakiView = {
     if (plan.kind === 'kyoka29') return this.k29ControlHtml(plan.path, api.get(plan.path));
     if (plan.kind === 'area47') return this.area47ControlHtml(plan.path, api.get(plan.path));
     if (plan.kind === 'multi') {
-      return '<div class="subs">' + plan.subs.map(s => {
+      let html = '<div class="subs">' + plan.subs.map(s => {
         const opts = s.optionsFrom ? { options: this[s.optionsFrom] } : {};
         const gen = s.gen ? `<button type="button" class="btn btn-sm sgen" data-gen="${this.esc(s.gen)}" data-gtarget="${this.esc(s.path)}" title="自動生成した値を入れます（手直しできます）">⚙ ${this.esc(s.genLabel)}</button>` : '';
-        return `<div class="subrow"><span class="sublbl">${this.esc(s.label)}</span>${this.inputByDtype(s.path, s.dtype, api.get(s.path), opts)}${gen}</div>`;
+        // 会社を選ぶ欄（親会社）は社名で探して選ぶ（2026-11-04）
+        const inp = s.picker ? this.cidPickerHtml(s.path, api.get(s.path), s.picker) : this.inputByDtype(s.path, s.dtype, api.get(s.path), opts);
+        return `<div class="subrow"><span class="sublbl">${this.esc(s.label)}</span>${inp}${gen}</div>`;
       }).join('') + '</div>';
+      // #16 親会社の下にグループの木（頂点からこの会社まで・保存済みの親子から計算）
+      if (f.no === 16 && this.view === 'detail' && !this.isNew && this.detail) {
+        const tree = this.groupTreeHtml(this.detail.company.company_id);
+        if (tree) html += '<div class="mf subnote" style="margin-top:6px">グループ（親をたどった頂点から・保存済みの親子）</div>' + tree;
+      }
+      return html;
     }
     if (plan.kind === 'type') {
       if (!api.setTypes) return this.roInput((api.types() || []).join('・')) + '<div class="mf subnote">上の「取引先種別」チップで選びます</div>';
@@ -1373,6 +1406,7 @@ const TorihikisakiView = {
   },
 
   renderFieldsGeneric(host, fields, api) {
+    fields = this.detailFields(host, fields, api);   // 詳細の「与信」の段の組み替え（与信の取り方・2026-11-04）
     const blocks = [];
     fields.forEach(f => { if (!blocks.includes(f.block)) blocks.push(f.block); });
     const inputFor = f => {
@@ -1411,6 +1445,7 @@ const TorihikisakiView = {
     host.innerHTML = html;
     this.wireFieldInputs(host, fields, api);
     this.wireCreditExtra(host);
+    this.wireGroupControls(host, fields, api);   // 親会社の picker・与信の取り方の radio・グループの木のリンク（2026-11-04）
     if (this.fmt === 'フォーカス') {
       const fi = host.querySelector('[data-path]');
       if (fi) fi.focus();
@@ -1715,7 +1750,8 @@ const TorihikisakiView = {
       : c.registration_stage === 'temp'
       ? '<span class="badge b-amber" style="margin-left:8px;vertical-align:middle">申請中（承認待ち）</span>'
       : '<span class="badge b-green" style="margin-left:8px;vertical-align:middle">有効</span>')
-      + this.creditBadge(c.company_id, 'margin-left:8px;vertical-align:middle');
+      + this.creditBadge(c.company_id, 'margin-left:8px;vertical-align:middle')
+      + this.groupBadge(c.company_id, 'margin-left:8px;vertical-align:middle');
     const approveBtn = c.registration_stage === 'temp'
       ? ((c.created_by || null) !== me
         ? '<button class="btn btn-success btn-sm" id="tmk-approve-reg" style="margin-left:10px">✓ 登録を承認</button>'
@@ -1959,6 +1995,7 @@ const TorihikisakiView = {
     b.innerHTML = this.fmtBarHtml() + '<div id="tmk-fields"></div><div id="tmk-savebar"></div>';
     const host = this.el('tmk-fields');
     const render = () => this.renderFieldsGeneric(host, this.appFields(this.detailTypes()), this.detailApi());
+    this._fieldsRender = render;   // 与信の取り方の radio・与信先の選択が自分の段を描き直すために持つ（2026-11-04）
     this.wireFmtBar(b, render);
     render();
     this.renderSavebar();
@@ -2085,6 +2122,12 @@ const TorihikisakiView = {
       if (/^\s*YS[-‐－\s]?\d/i.test(basis)) { alert('YS- の番号は Salesforce の稟議です。稟議の結果は、一覧の「届いている承認の知らせ」から入れてください（どの Salesforce の稟議かで、入れる先が決まります）。'); return; }
       const cur = ((d.credit_line || [])[0] || {}).basis || null;
       if (cur !== basis) changes.push({ path: 'credit_line.basis', p: { table: 'credit_line', column: 'basis' }, f: null, label: '与信の根拠', oldV: cur, newV: basis.slice(0, 60) });
+    }
+    // ②'' グループの与信（2026-11-04）: 与信先を付ける・替えるときは「別紙に載せた常務会の日」が要る（規程第20条＝別紙の記録の根拠）
+    const hCh = changes.find(c => c.p.table === 'company' && c.p.column === 'credit_holder_id' && !c.p.jsonKey);
+    if (hCh && hCh.newV) {
+      const dOn = this.pending['company.credit_listing_decided_on'] !== undefined ? this.pending['company.credit_listing_decided_on'] : this.editValOf('company.credit_listing_decided_on');
+      if (!String(dOn || '').trim()) { alert('グループの与信にするときは「別紙に載せた常務会」の日を入れてください（与信管理規程 第20条・別紙の記録に残ります）。'); return; }
     }
     if (!changes.length && !typeChange) { this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {}; this.renderSavebar(); return; }
 
@@ -2233,6 +2276,9 @@ const TorihikisakiView = {
       if (c.newV === null) delete m[c.p.keyVal]; else m[c.p.keyVal] = c.newV;
     });
     if (typeChange && this.typesByCid) this.typesByCid[cid] = typeChange.next.slice();
+    // 与信の行の変更も一覧の写し（期限のアラート・グループの実効の与信）へ（2026-11-04）
+    const crChs = changes.filter(c => c.p.table === 'credit_line' && !c.p.keyVal && !c.p.jsonKey);
+    if (crChs.length) { const m = (this.creditByCid = this.creditByCid || {}); const r = (m[cid] = m[cid] || { company_id: cid }); crChs.forEach(c => { r[c.p.column] = c.newV; }); }
     const n = changes.length + (typeChange ? 1 : 0);
     this.busy = false;
     this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {}; this.basisDraft = '';
@@ -2526,15 +2572,318 @@ const TorihikisakiView = {
       `<input id="tmk-basis" style="width:160px" maxlength="60" placeholder="棚卸 2026-11" value="${this.esc(this.basisDraft || '')}"></span>`;
   },
 
+  // ===== グループとグループの与信（2026-11-04・設計: 自動化\SF連携設計\グループと与信_設計_2026-11-02.md・DB: supabase/credit_group.sql）=====
+  // 「グループは事実（company.parent_company_id）、グループの与信は決裁（company.credit_holder_id＋別紙の記録 credit_group_listing）」。
+  //   与信の取り方＝自分で与信／グループの与信（一括手続先・与信管理規程 KG-10 第20条）／与信不要（第19条）の 3 つ（1 社 1 つ）。
+  //   グループの与信の会社は、与信先の限度額・種類・期限・決裁日を読むだけ。使用額は与信先＋その下の一括手続先の合計（設計 §4.3）。
+  //   SF には sf-export 2026-11-04.1 が実効の値を一括手続先にも配る（CreditStatus__c の式と見積の門は変えない）。
+  //   頂点・木・実効の与信は表に持たず、読み込んだ会社の一覧（rows・creditByCid）から毎回計算する（親を付け替えたときの直し忘れを無くす）。
+  //   決まり（輪・与信先は上の会社・2 段で借りない・1 社 1 つの取り方）は DB のトリガが守る＝画面は候補を絞って案内するだけ。
+  PARENT_SOURCES: ['有価証券報告書', '登記', '帝国データバンク', 'Sansan', '先方の申告', 'その他'],
+  rowById(cid) {
+    if (!this.rows) return null;
+    if (this._rowMapSrc !== this.rows || this._rowMapN !== this.rows.length) {
+      this._rowMap = {}; this.rows.forEach(r => { this._rowMap[r.company_id] = r; });
+      this._rowMapSrc = this.rows; this._rowMapN = this.rows.length;
+    }
+    return this._rowMap[cid] || null;
+  },
+  /** 親をたどった上の会社（近い順）。輪・50 段超で止める */
+  ancestorsOf(cid) {
+    const out = []; const seen = new Set([cid]);
+    let cur = this.rowById(cid);
+    while (cur && cur.parent_company_id && !seen.has(cur.parent_company_id) && out.length < 50) {
+      seen.add(cur.parent_company_id);
+      cur = this.rowById(cur.parent_company_id);
+      if (cur) out.push(cur);
+    }
+    return out;
+  },
+  rootOf(cid) { const a = this.ancestorsOf(cid); return a.length ? a[a.length - 1].company_id : cid; },
+  childrenMap() {
+    const m = {};
+    (this.rows || []).forEach(r => { if (r.parent_company_id) (m[r.parent_company_id] = m[r.parent_company_id] || []).push(r); });
+    return m;
+  },
+  descendantsOf(cid, cm) {
+    cm = cm || this.childrenMap();
+    const out = []; const seen = new Set([cid]); const stack = [cid];
+    while (stack.length) {
+      const x = stack.pop();
+      (cm[x] || []).forEach(r => { if (!seen.has(r.company_id)) { seen.add(r.company_id); out.push(r); stack.push(r.company_id); } });
+    }
+    return out;
+  },
+  membersOf(holderId) { return holderId ? (this.rows || []).filter(r => r.credit_holder_id === holderId) : []; },
+  creditModeOf(c) { return !c ? 'self' : c.credit_exempt ? 'exempt' : c.credit_holder_id ? 'group' : 'self'; },
+  /** 与信の行（一覧の読み込み時の写し。詳細で開いている会社は詳細の行＝保存直後も新しい） */
+  creditRowOf(cid) {
+    if (this.view === 'detail' && this.detail && this.detail.company && this.detail.company.company_id === cid) return (this.detail.credit_line || [])[0] || null;
+    return (this.creditByCid || {})[cid] || null;
+  },
+  /** 実効の与信: 自分で与信なら自分の行、グループの与信なら与信先の行。使用額はグループ（与信先＋一括手続先）の合計 */
+  effCredit(cid) {
+    const c = this.rowById(cid);
+    const mode = this.creditModeOf(c);
+    const holderId = mode === 'group' ? c.credit_holder_id : null;
+    const effId = holderId || cid;
+    const holder = holderId ? this.rowById(holderId) : null;
+    const cr = this.creditRowOf(effId);
+    const members = this.membersOf(effId);
+    let used = null;
+    [effId].concat(members.map(m => m.company_id)).forEach(id => { const r = this.creditRowOf(id); if (r && r.used_amount != null) used = (used || 0) + Number(r.used_amount); });
+    const own = this.creditRowOf(cid);
+    const lim = cr && cr.limit_amount != null ? Number(cr.limit_amount) : null;
+    return { mode, holderId, holder, cr, members, used, limit: lim,
+      remaining: lim != null ? lim - (used || 0) : null,
+      over: lim != null && used != null && used > lim,
+      conflict: !!(holderId && own && own.limit_amount != null),                           // 第4条「1 件限り」＝自分の与信の行が残っている
+      holderOk: !holderId || this.ancestorsOf(cid).some(a => a.company_id === holderId),   // 与信先が上の会社か（親を付け替えると外れる）
+      holderHasCredit: lim != null,
+      holderIsMember: !!(holder && holder.credit_holder_id) };
+  },
+  fmtAmt(v) { return v == null ? '—' : Number(v).toLocaleString(); },
+  groupBadge(cid, style) {
+    const e = this.effCredit(cid);
+    const st = style || 'margin-left:5px';
+    if (e.mode === 'group') return `<span class="badge b-slate" style="${st}" title="グループの与信（一括手続先・規程第20条）＝与信先の限度額・期限で与信済みになる">グループの与信${e.holder ? '（与信先 ' + this.esc(e.holder.official_name) + '）' : ''}</span>`;
+    if (e.members.length) return `<span class="badge b-slate" style="${st}" title="この会社の与信で一括手続先の与信をまかなう">与信先（一括手続先 ${e.members.length} 社）</span>`;
+    return '';
+  },
+  /** 詳細の「与信」の段の組み替え: 与信の取り方（#50）を段の先頭に・#49（与信不要）は取り方に畳む・
+   *  グループの与信／与信不要のときは自分の与信の欄（#45〜#48・#51）を出さない（第4条「1 件限り」）。自分の行が残っていれば赤い印と一緒に出す */
+  detailFields(host, fields, api) {
+    if (!host || host.id !== 'tmk-fields' || this.view !== 'detail' || this.isNew || !this.detail) return fields;
+    const f50 = fields.find(f => f.no === 50);
+    const at = fields.findIndex(f => f.block === '与信');
+    if (!f50 || at < 0) return fields;
+    let out = fields.filter(f => f.no !== 49 && f.no !== 50);
+    const exempt = String(api.get('company.credit_exempt')) === 'true';
+    const holder = !!String(api.get('company.credit_holder_id') || '').trim() || this._cmodeDraft === 'group';
+    const e = this.effCredit(this.detail.company.company_id);
+    if ((exempt || holder) && !e.conflict) out = out.filter(f => ![45, 46, 47, 48, 51].includes(f.no));
+    let j = out.findIndex(f => f.block === '与信');
+    if (j < 0) j = Math.min(at, out.length);
+    out.splice(j, 0, f50);
+    return out;
+  },
+  /** #50 与信の取り方。radio の値は company.credit_exempt と company.credit_holder_id に写す（確定は今までどおり「💾 保存」） */
+  creditModeHtml(f, api) {
+    const cid = this.detail.company.company_id;
+    const g = p => { const v = api.get(p); return v == null ? '' : String(v).trim(); };
+    const exempt = g('company.credit_exempt') === 'true';
+    const holderId = g('company.credit_holder_id');
+    const mode = exempt ? 'exempt' : (holderId || this._cmodeDraft === 'group') ? 'group' : 'self';
+    const anc = this.ancestorsOf(cid);
+    const cands = anc.filter(a => !a.credit_holder_id && !a.credit_exempt);   // 与信先の候補＝上の会社のうち自分で与信を取っている会社
+    const members = this.membersOf(cid);
+    const savedHolder = this.editValOf('company.credit_holder_id');
+    const opt = (v, label, sub, on, off) => `<label class="${on ? 'on' : ''}${off ? ' off' : ''}"${off ? ` title="${this.esc(off)}"` : ''}><input type="radio" name="tmk-cmode" value="${v}"${on ? ' checked' : ''}${off ? ' disabled' : ''}><span>${this.esc(label)}${sub ? `<small>${this.esc(sub)}</small>` : ''}</span></label>`;
+    const holderOfMsg = members.length ? `この会社は一括手続先 ${members.length} 社の与信先です。先にその会社の与信先を変えてください` : '';
+    const groupOff = mode === 'group' ? '' : (holderOfMsg || (!cands.length ? (anc.length ? '上の会社に自分で与信を取っている会社がありません' : '親会社が入っていません。先に「識別・基本」の親会社を入れてください') : ''));
+    let html = '<div class="cmode" id="tmk-cmode">' +
+      opt('self', '自分で与信', 'この会社の限度額を入れる（規程第4条・1 社 1 件）', mode === 'self', '') +
+      opt('group', 'グループの与信（一括手続先・規程第20条）', '与信先は同じグループの上の会社から選ぶ。限度額・期限は与信先の行を読むだけ', mode === 'group', groupOff) +
+      opt('exempt', '与信不要（国・公共など・規程第19条）', '', mode === 'exempt', mode === 'exempt' ? '' : holderOfMsg) +
+      '</div>';
+    if (mode === 'group') {
+      const cur = this.rowById(holderId);
+      const sel = `<select data-path="company.credit_holder_id" id="tmk-cholder"><option value=""${holderId ? '' : ' selected'}>（与信先を選ぶ）</option>` +
+        cands.map(a => { const cr = this.creditRowOf(a.company_id); return `<option value="${this.esc(a.company_id)}"${a.company_id === holderId ? ' selected' : ''}>${this.esc(a.official_name)}（${this.esc(a.company_id)}）${cr && cr.limit_amount != null ? '・限度額 ' + this.fmtAmt(cr.limit_amount) : '・限度額なし'}</option>`; }).join('') +
+        (holderId && !cands.some(a => a.company_id === holderId) ? `<option value="${this.esc(holderId)}" selected>${this.esc(cur ? cur.official_name : holderId)}（現在値・上の会社ではありません）</option>` : '') + '</select>';
+      html += `<div class="subs" style="margin-top:8px"><div class="subrow"><span class="sublbl">与信先<span class="req">*</span></span>${sel}</div>${this.listingRowsHtml(api)}</div>` +
+        '<div class="mf subnote">付け外しは別紙『一括手続先一覧』の記録に自動で残ります（入れた人・日時は DB が付けます）</div>';
+      if (holderId) html += this.groupCreditBoxHtml(cid, holderId);
+    } else {
+      if (members.length) html += `<div class="gbox">この会社の与信は一括手続先 <b>${members.length} 社</b>にも配られます: ` + members.map(m => `<a data-gcid="${this.esc(m.company_id)}">${this.esc(m.official_name)}</a>`).join('、') + '<div class="mf subnote">限度額・期限を変えると、一括手続先にも配り直します（Salesforce）</div></div>';
+      if (savedHolder) html += `<div class="subs" style="margin-top:8px">${this.listingRowsHtml(api)}</div><div class="mf subnote">保存すると与信先（${this.esc((this.rowById(savedHolder) || {}).official_name || savedHolder)}）から外れ、別紙の記録に「外す」として残ります（外した常務会の日・決裁番号を入れてください）</div>`;
+    }
+    return html;
+  },
+  listingRowsHtml(api) {
+    return `<div class="subrow"><span class="sublbl">別紙に載せた常務会の日</span>${this.inputByDtype('company.credit_listing_decided_on', 'DATE', api.get('company.credit_listing_decided_on'))}</div>` +
+      `<div class="subrow"><span class="sublbl">決裁番号</span>${this.inputByDtype('company.credit_listing_ref', 'VARCHAR(60)', api.get('company.credit_listing_ref'))}</div>`;
+  },
+  /** グループの与信の読むだけの枠: 与信先の限度額・種類・期限・決裁日／グループの使用額（与信先＋一括手続先）／残り／確認が要る印 */
+  groupCreditBoxHtml(cid, holderId) {
+    const h = this.rowById(holderId); const name = h ? h.official_name : holderId;
+    const cr = this.creditRowOf(holderId);
+    const lim = cr && cr.limit_amount != null ? Number(cr.limit_amount) : null;
+    const ids = [holderId].concat(this.membersOf(holderId).map(m => m.company_id).filter(id => id !== cid), [cid]);
+    let used = null; const parts = [];
+    ids.forEach(id => { const r = this.creditRowOf(id); if (r && r.used_amount != null) { used = (used || 0) + Number(r.used_amount); parts.push(`${this.esc((this.rowById(id) || {}).official_name || id)} ${this.fmtAmt(r.used_amount)}`); } });
+    const rate = lim && used != null ? Math.min(100, Math.round(used / lim * 100)) : 0;
+    const over = lim != null && used != null && used > lim;
+    const own = (this.detail.credit_line || [])[0];
+    let html = '<div class="gbox">';
+    if (!this.ancestorsOf(cid).some(a => a.company_id === holderId)) html += `<div class="alert warn">与信先（${this.esc(name)}）は、この会社の親会社をたどった先にありません。「識別・基本」の親会社を確かめてください</div>`;
+    if (lim == null) html += `<div class="alert warn">与信先（${this.esc(name)}）に限度額が入っていません。与信先の稟議と入力が先です（Salesforce では「与信未」のまま）</div>`;
+    if (own && own.limit_amount != null) html += `<div class="alert warn" style="border:1px solid var(--primary)">⚠ この会社自身の与信の行（限度額 ${this.fmtAmt(own.limit_amount)}）が残っています。与信は一取引先に 1 件限り（規程第4条）＝下の自分の与信の欄を空にして保存してください</div>`;
+    html += `<div class="grow"><span class="k">グループの限度額</span><span><b class="tnum">${lim != null ? this.fmtAmt(lim) + ' 円' : '—'}</b>${cr ? `<span class="mf">（${this.esc(cr.limit_type || '種類なし')}・期限 ${this.esc(cr.valid_until || '—')}・決裁 ${this.esc(cr.approved_on || '—')}）</span>` : ''}${this.creditBadge(holderId)}</span></div>` +
+      `<div class="grow"><span class="k">グループの使用額</span><span><div class="gbar"><i class="${over ? 'over' : ''}" style="width:${rate}%"></i></div><b class="tnum">${used != null ? this.fmtAmt(used) + ' 円' : '—（未入力）'}</b>${parts.length ? `<span class="mf">（${parts.join(' ＋ ')}）</span>` : ''}${lim != null && used != null ? `　残り <b class="tnum">${this.fmtAmt(lim - used)} 円</b>` : ''}${over ? ' <span class="badge b-red">超過</span>' : ''}</span></div>` +
+      `<div class="grow"><span class="k">一括手続先</span><span>${ids.length - 1} 社: ${ids.slice(1).map(id => id === cid ? '<b>この会社</b>' : `<a data-gcid="${this.esc(id)}">${this.esc((this.rowById(id) || {}).official_name || id)}</a>`).join('、')}</span></div>` +
+      '<div class="mf subnote">限度額・種類・期限・決裁日は与信先の行を読むだけ（ここでは入れない）。Salesforce にはこの値がこの会社の与信として配られます。延長・増額の稟議は与信先の分として出します</div></div>';
+    return html;
+  },
+  /** グループの木（頂点から）。cid＝この会社（太字）・rootId を渡すとその頂点から（グループの一覧用） */
+  groupTreeHtml(cid, rootId) {
+    const root = rootId || this.rootOf(cid); const cm = this.childrenMap();
+    if (!rootId && root === cid && !(cm[cid] || []).length) return '';
+    const node = (id, depth) => {
+      const r = this.rowById(id); if (!r) return '';
+      const kids = cm[id] || [];
+      const em = this.effCredit(id);
+      const tag = em.mode === 'exempt' ? '<span class="badge b-slate">与信不要</span>'
+        : em.mode === 'group' ? `<span class="badge b-slate">グループの与信${em.holder ? '（与信先 ' + this.esc(em.holder.official_name) + '）' : ''}</span>`
+        : em.members.length ? `<span class="badge b-amber">与信先（一括手続先 ${em.members.length} 社）</span>`
+        : em.limit != null ? '<span class="badge b-green">自分で与信</span>' : '<span class="badge b-slate">与信なし</span>';
+      const label = id === cid ? `<span class="me">${this.esc(r.official_name)}（この会社）</span>` : `<a data-gcid="${this.esc(id)}">${this.esc(r.official_name)}</a>`;
+      return `<li>${label} <span class="mf tnum">${this.esc(id)}</span>${r.is_suspended ? ' <span class="badge b-red">欠番</span>' : ''} ${tag}${this.creditBadge(id)}` +
+        (kids.length && depth < 8 ? `<ul class="gtree">${kids.map(k => node(k.company_id, depth + 1)).join('')}</ul>` : kids.length ? ` <span class="mf">（下に ${kids.length} 社）</span>` : '') + '</li>';
+    };
+    return `<ul class="gtree" style="padding-left:0">${node(root, 0)}</ul>`;
+  },
+  /** 会社を社名・取引先番号で探して選ぶ欄（値は hidden の data-path に取引先番号＝既存の pending／保存／出所の仕組みに乗る） */
+  cidPickerHtml(path, val, kind) {
+    const v = val == null ? '' : String(val);
+    const r = v ? this.rowById(v) : null;
+    return `<div class="pk" data-picker="${this.esc(kind)}"><input type="hidden" data-path="${this.esc(path)}" value="${this.esc(v)}">` +
+      `<input type="text" class="pkq" value="${this.esc(r ? `${r.official_name}（${r.company_id}）` : v)}" placeholder="社名・取引先番号で探す" autocomplete="off">` +
+      `<button type="button" class="pkx" title="外す"${v ? '' : ' style="display:none"'}>✕</button><div class="pkl"></div></div>`;
+  },
+  wireGroupControls(host, fields, api) {
+    if (!host) return;
+    const cid = this.view === 'detail' && !this.isNew && this.detail ? this.detail.company.company_id : null;
+    host.querySelectorAll('.pk[data-picker]').forEach(pk => {
+      const hid = pk.querySelector('input[data-path]'); const q = pk.querySelector('.pkq'); const list = pk.querySelector('.pkl'); const x = pk.querySelector('.pkx');
+      let items = []; let sel = 0;
+      // 自分と自分の下の会社は親にできない（輪）。DB のトリガも止めるが、候補から外して案内する
+      const exclude = new Set(cid ? [cid].concat(this.descendantsOf(cid).map(r => r.company_id)) : []);
+      const show = id => { const r = id ? this.rowById(id) : null; return r ? `${r.official_name}（${r.company_id}）` : (id || ''); };
+      const commit = id => { hid.value = id || ''; q.value = show(id); x.style.display = id ? '' : 'none'; list.classList.remove('on'); hid.dispatchEvent(new Event('input', { bubbles: true })); };
+      const draw = () => {
+        list.innerHTML = items.length ? items.map((r, i) => `<div class="pkr${i === sel ? ' sel' : ''}" data-i="${i}">${this.esc(r.official_name)} <span class="mf tnum">${this.esc(r.company_id)}</span>${r.is_suspended ? ' <span class="badge b-red">欠番</span>' : ''}</div>`).join('') : '<div class="pkr mf">該当なし</div>';
+        list.classList.add('on');
+        list.querySelectorAll('[data-i]').forEach(el => el.onmousedown = e => { e.preventDefault(); commit(items[+el.dataset.i].company_id); });
+      };
+      q.addEventListener('input', () => {
+        const nq = this.norm(q.value);
+        if (!nq) { items = []; list.classList.remove('on'); return; }
+        items = (this.rows || []).filter(r => !exclude.has(r.company_id) && (this.norm(r.official_name).includes(nq) || this.norm(r.name_kana).includes(nq) || String(r.company_id).includes(nq))).slice(0, 12);
+        sel = 0; draw();
+      });
+      q.addEventListener('keydown', e => {
+        if (!list.classList.contains('on')) return;
+        if (e.key === 'ArrowDown') { sel = Math.min(items.length - 1, sel + 1); draw(); e.preventDefault(); }
+        else if (e.key === 'ArrowUp') { sel = Math.max(0, sel - 1); draw(); e.preventDefault(); }
+        else if (e.key === 'Enter') { if (items[sel]) commit(items[sel].company_id); e.preventDefault(); }
+        else if (e.key === 'Escape') list.classList.remove('on');
+      });
+      q.addEventListener('blur', () => { setTimeout(() => list.classList.remove('on'), 150); q.value = show(hid.value); });
+      x.onclick = () => commit('');
+    });
+    // 与信の取り方（radio）→ 与信不要の印と与信先に写し、自分の段を描き直す
+    const cm = host.querySelector('#tmk-cmode');
+    if (cm && cid) {
+      const f49 = this.fieldByNo(49), f50 = this.fieldByNo(50);
+      cm.querySelectorAll('input[type=radio]').forEach(rb => rb.onchange = () => {
+        const v = rb.value;
+        const savedEx = this.editValOf('company.credit_exempt');
+        api.set(f49, 'company.credit_exempt', v === 'exempt' ? 'true' : (savedEx === 'true' ? 'false' : savedEx));
+        this._cmodeDraft = v === 'group' ? 'group' : null;
+        if (v !== 'group') api.set(f50, 'company.credit_holder_id', '');
+        else if (!String(api.get('company.credit_holder_id') || '').trim()) {
+          const cands = this.ancestorsOf(cid).filter(a => !a.credit_holder_id && !a.credit_exempt);
+          if (cands.length === 1) api.set(f50, 'company.credit_holder_id', cands[0].company_id);
+        }
+        if (this._fieldsRender) this._fieldsRender();
+      });
+      const hs = host.querySelector('#tmk-cholder');
+      if (hs) hs.addEventListener('change', () => { if (this._fieldsRender) this._fieldsRender(); });   // 与信先を選んだら枠（限度額・使用額）を描き直す
+    }
+    host.querySelectorAll('[data-gcid]').forEach(a => a.onclick = e => { e.preventDefault(); this.openDetail(a.dataset.gcid); });
+  },
+  // ----- 一覧「グループ・グループの与信」 -----
+  async renderGroupGlobal() {
+    const wrap = this.el('tmk-wrap');
+    if (!wrap || this.rows === null) return;
+    wrap.innerHTML = '<p class="mf" style="padding:12px">読み込み中…</p>';
+    this.listing = null; this.listingErr = null;
+    try {
+      const res = await this.getClient().from('credit_group_listing').select('*').order('created_at', { ascending: false }).limit(300);
+      if (res.error) throw new Error(res.error.message);
+      this.listing = res.data || [];
+    } catch (e) { this.listingErr = String((e && e.message) || e); }
+    if (this.view === 'group') this.drawGroup();
+  },
+  listingLastOf(holderId) {
+    const ds = (this.listing || []).filter(r => r.holder_id === holderId && r.action === '載せる' && r.decided_on).map(r => r.decided_on).sort();
+    return ds.length ? ds[ds.length - 1] : null;
+  },
+  drawGroup() {
+    const wrap = this.el('tmk-wrap');
+    if (!wrap) return;
+    const cm = this.childrenMap();
+    const roots = (this.rows || []).filter(r => !r.parent_company_id && (cm[r.company_id] || []).length).sort((a, b) => String(a.official_name).localeCompare(String(b.official_name), 'ja'));
+    const members = (this.rows || []).filter(r => r.credit_holder_id);
+    const holders = [...new Set(members.map(r => r.credit_holder_id))];
+    const problems = members.map(r => ({ r, e: this.effCredit(r.company_id) })).filter(x => !x.e.holderOk || x.e.conflict || !x.e.holderHasCredit || x.e.holderIsMember);
+    const mm = this.jstToday().slice(5, 7);
+    let html = '<div class="sub">グループ（親会社をたどって計算）と、グループの与信（一括手続先・与信管理規程 第20条）。頂点ごとに 1 行、与信先ごとに段を分けます。行を押すと木の形で子会社と与信の取り方が見えます。使用額は与信先＋一括手続先の合計（受注残を Salesforce から取り込む仕組みは段階 2）。</div>' +
+      ((mm === '12' || mm === '01') ? '<div class="alert warn">別紙『一括手続先一覧』の見直しの時期です（期末 1/31 まで・常務会で社長決裁・規程第20条2）。下の記録と「確認が要る」を見て、別紙を作り直してください</div>' : '') +
+      `<div class="tool" style="margin:8px 0;display:flex;gap:14px;align-items:center;font-size:12px"><span>グループ <b>${roots.length}</b></span><span>一括手続先 <b>${members.length}</b> 社</span><span>与信先 <b>${holders.length}</b> 社</span>${problems.length ? `<span class="badge b-red">確認が要る ${problems.length}</span>` : ''}</div>`;
+    if (!roots.length) html += '<div class="fcard mf">親会社が入った会社はまだありません。会社の詳細「識別・基本」の「親会社・資本関係」から入れてください。</div>';
+    else {
+      html += '<div class="tblwrap grp"><table class="tbl"><thead><tr><th>グループ（頂点）</th><th class="n">社数</th><th>与信先</th><th class="n">限度額</th><th class="n">グループの使用額</th><th class="n">残り</th><th>状態</th><th>別紙の最後の決裁</th></tr></thead><tbody>';
+      roots.forEach(root => {
+        const all = [root].concat(this.descendantsOf(root.company_id, cm));
+        const hs = [...new Set(all.filter(r => r.credit_holder_id).map(r => r.credit_holder_id))];
+        const open = this._grpOpen === root.company_id;
+        const rs = hs.length > 1 ? ` rowspan="${hs.length}"` : '';
+        const head = `<td class="nm"${rs}>${open ? '▾' : '▸'} <b>${this.esc(root.official_name)}</b> <span class="mf tnum">${this.esc(root.company_id)}</span></td><td class="n"${rs}>${all.length}</td>`;
+        if (!hs.length) {
+          html += `<tr class="grow" data-g="${this.esc(root.company_id)}">${head}<td class="mf">—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td><span class="badge b-slate">別紙に未掲載</span></td><td>—</td></tr>`;
+        } else hs.forEach((hid, i) => {
+          const e = this.effCredit(hid); const h = this.rowById(hid); const al = this.creditAlert(hid);
+          const st = !h ? '<span class="badge b-red">与信先が無い</span>' : e.limit == null ? '<span class="badge b-amber">与信先の限度額なし</span>' : al ? `<span class="badge ${al.cls}">${this.esc(al.text)}</span>` : e.over ? '<span class="badge b-red">超過</span>' : '<span class="badge b-green">与信済み</span>';
+          const last = this.listingLastOf(hid);
+          html += `<tr class="grow" data-g="${this.esc(root.company_id)}">${i === 0 ? head : ''}<td>${this.esc(h ? h.official_name : hid)} <span class="mf tnum">${this.esc(hid)}</span>${h && hid !== root.company_id ? ' <span class="mf">（途中の会社）</span>' : ''}<div class="mf" style="font-size:11px">一括手続先 ${e.members.length} 社</div></td><td class="n">${this.fmtAmt(e.limit)}</td><td class="n">${this.fmtAmt(e.used)}</td><td class="n">${e.limit != null ? this.fmtAmt(e.limit - (e.used || 0)) : '—'}</td><td>${st}</td><td>${last ? this.esc(last) : (this.listing ? '<span class="mf">記録なし</span>' : '—')}</td></tr>`;
+        });
+        if (open) html += `<tr class="gdet"><td colspan="8">${this.groupTreeHtml(null, root.company_id)}</td></tr>`;
+      });
+      html += '</tbody></table></div>';
+    }
+    if (problems.length) {
+      html += '<div class="fcard" style="margin-top:12px"><h4>確認が要る（経理が直す）</h4>' + problems.map(({ r, e }) => {
+        const why = [];
+        if (!e.holderOk) why.push('与信先が親会社をたどった先にない（親を付け替えた）');
+        if (e.holderIsMember) why.push('与信先自身がグループの与信（2 段で借りている）');
+        if (e.conflict) why.push('自分の与信の行が残っている（第4条・1 件限り）');
+        if (!e.holderHasCredit) why.push('与信先に限度額が無い');
+        return `<div class="slink"><span class="nm2"><a data-gcid="${this.esc(r.company_id)}">${this.esc(r.official_name)}</a> <span class="mf tnum">${this.esc(r.company_id)}</span> → 与信先 ${this.esc(e.holder ? e.holder.official_name : e.holderId)}</span><span class="mf">${this.esc(why.join('／'))}</span></div>`;
+      }).join('') + '</div>';
+    }
+    html += '<div class="fcard" style="margin-top:12px"><h4>別紙『一括手続先一覧』の記録（付け外しの履歴・新しい順・300 件まで）</h4>' +
+      (this.listingErr
+        ? `<div class="alert warn">${/credit_group_listing|does not exist|schema cache/i.test(this.listingErr) ? '別紙の記録の表（credit_group_listing）が未作成です。<code>supabase/credit_group.sql</code> を SQL Editor で実行してください。' : '別紙の記録を読めませんでした: ' + this.esc(this.listingErr)}</div>`
+        : !(this.listing || []).length ? '<div class="mf">まだ記録はありません（与信先を付けると自動で残ります）。</div>'
+        : '<div class="tblwrap"><table class="tbl"><thead><tr><th>記録日時</th><th>区分</th><th>会社</th><th>与信先</th><th class="n">持株比率</th><th>常務会の日</th><th>決裁番号</th><th>入れた人</th></tr></thead><tbody>' +
+          this.listing.map(l => `<tr><td class="tnum">${this.esc(this.jstStamp(l.created_at))}</td><td><span class="badge ${l.action === '載せる' ? 'b-green' : 'b-slate'}">${this.esc(l.action)}</span></td><td><a data-gcid="${this.esc(l.member_id)}">${this.esc((this.rowById(l.member_id) || {}).official_name || l.member_id)}</a></td><td><a data-gcid="${this.esc(l.holder_id)}">${this.esc((this.rowById(l.holder_id) || {}).official_name || l.holder_id)}</a></td><td class="n">${l.ownership_pct != null ? this.esc(String(l.ownership_pct)) + '%' : '—'}</td><td>${this.esc(l.decided_on || '—')}</td><td>${this.esc(l.decision_ref || '—')}</td><td class="mf">${this.esc(l.created_by || '')}</td></tr>`).join('') + '</tbody></table></div>') + '</div>';
+    wrap.innerHTML = html;
+    wrap.querySelectorAll('tr.grow').forEach(tr => tr.onclick = e => { if (e.target.closest('a')) return; this._grpOpen = this._grpOpen === tr.dataset.g ? null : tr.dataset.g; this.drawGroup(); });
+    wrap.querySelectorAll('[data-gcid]').forEach(a => a.onclick = e => { e.preventDefault(); e.stopPropagation(); this.openDetail(a.dataset.gcid); });
+  },
+
   // ===== 取引履歴タブ（基幹からの参照＝未接続の案内＋わかる範囲） =====
   renderTx(b) {
     const c = this.detail.company;
     let html = '<div class="alert info">ℹ 取引実績は基幹（teraServation／Salesforce／Bill One）からの<b>参照</b>です。取引先マスタには保持しません。基幹との参照接続は今後の連携スコープです。</div>';
-    const cr = (this.detail.credit_line || [])[0];
-    if (cr && cr.limit_amount) {
-      const lim = cr.limit_amount, use = cr.used_amount || 0;
+    // 実効の与信（グループの与信なら与信先の限度額とグループの使用額・2026-11-04）
+    const e = this.effCredit(c.company_id);
+    if (e.limit != null) {
+      const lim = e.limit, use = e.used || 0;
       const rate = Math.min(100, Math.round(use / lim * 100)), over = use > lim;
-      html += `<div class="fcard" style="margin-bottom:10px"><h4>与信使用状況 ${over ? '<span class="badge b-red">限度超過</span>' : ''}</h4>
+      html += `<div class="fcard" style="margin-bottom:10px"><h4>与信使用状況 ${e.mode === 'group' ? `<span class="badge b-slate">グループの与信（与信先 ${this.esc(e.holder ? e.holder.official_name : e.holderId)}）</span>` : e.members.length ? `<span class="badge b-slate">与信先（一括手続先 ${e.members.length} 社の分を含む）</span>` : ''} ${over ? '<span class="badge b-red">限度超過</span>' : ''}</h4>
        <div style="height:10px;border-radius:5px;background:var(--muted);overflow:hidden"><div style="height:100%;width:${rate}%;background:${over ? 'var(--accent)' : 'var(--sansan)'}"></div></div>
        <div class="mf tnum" style="font-size:11px;margin-top:4px">限度 ${lim.toLocaleString()} ・ 使用 ${use.toLocaleString()} ・ ${rate}%</div></div>`;
     }
@@ -3621,7 +3970,7 @@ const TorihikisakiView = {
    *  期限が切れると SF の取引先は「期限切れ」になり、見積の承認申請が止まる＝経理がここで気づいて延長の稟議を促す */
   CREDIT_WARN_DAYS: 30,
   creditAlert(cid, cr) {
-    cr = cr || (this.creditByCid || {})[cid];
+    cr = cr || this.effCredit(cid).cr;   // グループの与信なら与信先の行で判定（一括手続先も与信先の期限で止まる・2026-11-04）
     if (!cr || !(cr.limit_amount > 0) || !cr.valid_until) return null;
     const today = this.jstToday();
     const days = Math.round((Date.parse(cr.valid_until) - Date.parse(today)) / 86400000);

@@ -732,13 +732,16 @@ const TM_META = {
   "approval": false
  },
  {
+  // 2026-11-04 グループの与信（設計 グループと与信_設計_2026-11-02）: 旧 credit_line.use_parent_credit（印だけ・与信の行が無い子会社に付けられない）を
+  //   会社の側の「与信先」company.credit_holder_id に置き換えた。画面は「与信の取り方」（自分で与信／グループの与信／与信不要）の欄＝torihikisaki.js creditModeHtml。
+  //   サブ欄（与信先・別紙に載せた常務会の日・決裁番号）は torihikisaki.js SUBFIELDS[50]。gen_meta_js.py で再生成するときはこの改変を維持すること
   "no": 50,
   "block": "与信",
-  "name": "一括手続先(親会社で与信)",
-  "must": "必須",
-  "must3": "②種別別必須",
-  "col": "credit_line.use_parent_credit",
-  "dtype": "BOOLEAN",
+  "name": "与信の取り方（グループの与信・一括手続先）",
+  "must": "推奨",
+  "must3": "任意",
+  "col": "company.credit_holder_id",
+  "dtype": "VARCHAR(8)",
   "source": "社内判断(経理)",
   "sansan": "×",
   "types": [

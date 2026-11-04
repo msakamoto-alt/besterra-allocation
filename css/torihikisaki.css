@@ -296,3 +296,34 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki .ntc-fix .k{color:var(--mf);font-size:11px;font-weight:700;}
 #tab-torihikisaki .ntc-test{border:1px dashed var(--input);border-radius:var(--radius);padding:6px 10px;margin:2px 0 10px;background:var(--muted);}
 #tab-torihikisaki .ntc-test .slink{border-bottom-color:var(--border);}
+
+/* グループとグループの与信（2026-11-04・設計 グループと与信_設計_2026-11-02） */
+#tab-torihikisaki .cmode{display:flex;flex-direction:column;gap:5px;margin:2px 0 4px;}
+#tab-torihikisaki .cmode label{display:flex;gap:8px;align-items:flex-start;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-size:12px;background:var(--card);}
+#tab-torihikisaki .cmode label.on{border-color:var(--primary);background:var(--accent-bg);}
+#tab-torihikisaki .cmode label.off{opacity:.55;cursor:not-allowed;}
+#tab-torihikisaki .cmode small{display:block;color:var(--mf);font-size:10.5px;font-weight:400;}
+#tab-torihikisaki .cmode input{margin-top:3px;}
+#tab-torihikisaki .gbox{background:var(--muted);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;margin:8px 0 4px;font-size:12px;}
+#tab-torihikisaki .gbox .grow{display:grid;grid-template-columns:130px 1fr;gap:6px;padding:4px 0;border-bottom:1px dashed var(--border);}
+#tab-torihikisaki .gbox .grow:last-of-type{border-bottom:0;}
+#tab-torihikisaki .gbox .k{color:var(--mf);}
+#tab-torihikisaki .gbox .alert{margin:4px 0 8px;}
+#tab-torihikisaki .gbar{height:8px;background:var(--card);border:1px solid var(--border);border-radius:99px;overflow:hidden;margin:2px 0 4px;max-width:360px;}
+#tab-torihikisaki .gbar i{display:block;height:100%;background:var(--success);}
+#tab-torihikisaki .gbar i.over{background:var(--primary);}
+#tab-torihikisaki .gtree{margin:0;padding-left:14px;list-style:none;font-size:12px;}
+#tab-torihikisaki .gtree li{position:relative;padding:2px 0 2px 12px;}
+#tab-torihikisaki .gtree li::before{content:"";position:absolute;left:0;top:11px;width:8px;border-top:1px solid var(--mf);}
+#tab-torihikisaki .gtree .me{font-weight:800;}
+#tab-torihikisaki [data-gcid]{cursor:pointer;text-decoration:underline dotted;}
+#tab-torihikisaki .pk{position:relative;flex:1;}
+#tab-torihikisaki .pk .pkq{width:100%;padding-right:26px;}
+#tab-torihikisaki .pk .pkl{position:absolute;left:0;right:0;top:100%;z-index:30;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);max-height:240px;overflow:auto;display:none;}
+#tab-torihikisaki .pk .pkl.on{display:block;}
+#tab-torihikisaki .pk .pkr{padding:5px 9px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--muted);}
+#tab-torihikisaki .pk .pkr:hover,#tab-torihikisaki .pk .pkr.sel{background:var(--muted);}
+#tab-torihikisaki .pk .pkx{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;color:var(--mf);cursor:pointer;font-size:12px;}
+#tab-torihikisaki .grp td.n,#tab-torihikisaki .grp th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+#tab-torihikisaki .grp tr.grow{cursor:pointer;}
+#tab-torihikisaki .grp tr.gdet td{background:var(--muted);padding:10px 14px;}
