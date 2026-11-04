@@ -471,17 +471,18 @@ const soqlIn = (vals: string[]) => vals.map((v) => `'${String(v).replace(/\\/g, 
 
 // 送り先の Account にある項目名（describe・1 送り先 1 回）。参照権限の無い項目は describe に出ない＝同じく「無い」扱い。
 //   無い項目は読まず送らない（グループの与信の CreditHolder__c のように SF 側の配備が後になる項目があっても配信を止めない・2026-11-04.1）
+//   SOQL も更新も項目名の大文字小文字を区別しないので、小文字にそろえて比べる（綴りの大小だけの違いで今まで送れていた項目を落とさない）
 async function sfAccountFields(sf: Sf): Promise<Set<string>> {
   const res = await fetch(`${sf.base}/services/data/${API_VERSION}/sobjects/Account/describe`, { headers: { Authorization: 'Bearer ' + sf.token } });
   const body = await res.json();
   if (!res.ok) throw new Error('Account describe 失敗: ' + JSON.stringify(body).slice(0, 300));
-  return new Set<string>(((body.fields || []) as { name: string }[]).map((f) => f.name));
+  return new Set<string>(((body.fields || []) as { name: string }[]).map((f) => f.name.toLowerCase()));
 }
 
 // SF 側の既存取引先（送信項目すべて＝差分算出に使う）。targets を渡すと対象の会社マスタID＋取引先コードに絞って読む
 const SF_SELECT_FIELDS = ['Id', ...Object.keys(FIELD_LABELS)];
 async function loadSfAccounts(sf: Sf, targets: { ids: string[]; codes: string[] } | null, have?: Set<string>): Promise<Record<string, unknown>[]> {
-  const sel = `SELECT ${SF_SELECT_FIELDS.filter((f) => !have || have.has(f)).join(', ')} FROM Account`;
+  const sel = `SELECT ${SF_SELECT_FIELDS.filter((f) => !have || have.has(f.toLowerCase())).join(', ')} FROM Account`;
   if (!targets) return await sfQuery(sf, sel);
   const seen = new Map<string, Record<string, unknown>>();
   for (const c of chunks(targets.ids, 200)) for (const a of await sfQuery(sf, `${sel} WHERE HubCompanyId__c IN (${soqlIn(c)})`)) seen.set(String(a.Id), a);
@@ -632,7 +633,7 @@ Deno.serve(async (req) => {
       if (logCtx) logCtx.sf = sf;
       // 送り先に無い項目（SF 側の配備が後になる項目）は読まず送らない（2026-11-04.1）
       const sfFields = await sfAccountFields(sf);
-      const missingFields = SF_SELECT_FIELDS.filter((f) => f !== 'Id' && !sfFields.has(f));
+      const missingFields = SF_SELECT_FIELDS.filter((f) => f !== 'Id' && !sfFields.has(f.toLowerCase()));
       const targetCodes = hubIds ? [...new Set(hub.companies.map((c) => (hub.codes.get(String(c.company_id)) || {}).tera).filter((x): x is string => !!x))] : [];
       const sfAccounts = await loadSfAccounts(sf, hubIds ? { ids: hubIds, codes: targetCodes } : null, sfFields);
       const sfByHub = new Map<string, Record<string, unknown>>();
