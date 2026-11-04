@@ -186,3 +186,11 @@ dev7 の UAT に向けて、配信を 2 つ以上の org へ同時に行える�
 - **順番**: ① `supabase/credit_group.sql` を SQL Editor で（学習用 → 本番ハブ。権限の節 4.3 は `app_role()` の有無で分かれる＝学習用 DB には user_roles も app_role() も Auth も無く anon で動くので anon が読めて消せる形（RLS の有無に左右されないようポリシーも置く・書けないのは同じ）・本番ハブは admin・accounting だけ。流す前の確かめ＝`supabase/tests/credit_group.test.mjs`。流したあとは結果の 1 行を見る＝prod_form・listing_rls・listing_policies が本番 true・true・1（学習用 false・false・2）、new_columns 6、triggers 2） ② ダッシュボードで sf-export の index.ts を貼り直し（版 2026-11-04.1。貼る前の確かめ＝`supabase/tests/sf_export_group.test.mjs`＝ハブと SF を見立てて本物の index.ts を動かす） ③ 画面（torihikisaki.js）を公開。①の前に②を貼っても壊れない（列が無ければ `meta.group_note` を残して今までどおり）。
 - **確かめ**: 一括手続先の会社をハブで保存 → 連携ログに `group_added`（与信先の番号）・`group_member: 1`・送信内容に「与信額: （空）→ 与信先の限度額」「与信先（グループの与信）: …」。dev6 の取引先が与信済みになり、鑑の与信の行で見積の申請が通る。
 - **SF 側の残り**: `Account.CreditHolder__c`（テキスト 255・連携ユーザーに参照・編集権限）と、鑑の与信の窓の一文（「この会社はグループの与信です。稟議は与信先の分として出す」）＝SF repo で dev6 → dev7 → git → 2027/1/28。
+
+## 取引の無い親と種別のメイン（sf-export 2026-11-04.2・supabase/company_main_type.sql・2026-11-04）
+
+- **取引の無い親**: 種別「グループの親（取引なし）」（`group_parent`）。持株会社など。取引先マスタには 1 社として作り、与信先の限度額を持つ。この種別だけの会社は SF に送らない（`counts.skipped_group_parent`・社名の突合 link の候補からも外す）。他の種別も付いていれば今までどおり送る。子会社には与信先の値と名前の一文を配る。
+- **種別のメイン**: `company.main_type_code`。発注先の種別（外注〜販管費先の 9 つ）が 2 つ以上の会社で、どれがメインかを選ぶ。1 つならそれがメインで選ばない。顧客・施主・スクラップは候補にしない（発注の原価に関係しない）。画面は種別の欄の下の「メイン」。`MainPartnerType__c` に種別の名前を送る。SF の原価要素につなぐ（10/29 刷新PJ 第 4 回の宿題 9）。種別から外された値が残っていても画面と sf-export は無視する。
+- **順番**: ① `supabase/company_main_type.sql` を SQL Editor で（学習用 → 本番ハブ） ② sf-export の index.ts を貼り直し（版 2026-11-04.2） ③ 画面を公開。①の前に②を貼っても壊れない（列を減らして読み直し `meta.group_note` に残す）。
+- **貼る前・公開前の確かめ**: `supabase/tests/sf_export_group.test.mjs`・`supabase/tests/credit_group.test.mjs`・`検証スクリプト\verify_torihikisaki_maintype.py`（学習用）。
+- **SF 側の残り**: `Account.MainPartnerType__c`（連携ユーザーに参照・編集権限）と、メインの種別から原価要素を決める対応表＝SF repo で dev6 → dev7 → git → 2027/1/28。項目が無い間は sf-export が読まず送らない。

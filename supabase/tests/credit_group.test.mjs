@@ -52,6 +52,13 @@ await run('schema company / credit_line', extractTable('company') + '\n' + extra
 
 const sql = fs.readFileSync(SQL_PATH, 'utf8');
 
+// ---------------- 種別のメイン（company_main_type.sql）: 何度流しても同じ・最後の 1 行 ----------------
+const mainSql = fs.readFileSync(path.join(HERE, '..', 'company_main_type.sql'), 'utf8');
+for (const n of [1, 2]) {
+  const r = await runScript(`company_main_type.sql ${n} 回目`, mainSql);
+  ok(`   最後の 1 行: new_column 1 / with_main 0`, r.new_column === 1 && r.with_main === 0, r);
+}
+
 // ---------------- 学習用の形 ----------------
 let chk = await runScript('credit_group.sql 1 回目（学習用の形）', sql);
 ok('最後の 1 行 学習用: prod_form false / listing_rls false / policies 2 / 列 6 / トリガ 2 / 別紙 0', chk.prod_form === false && chk.listing_rls === false && chk.listing_policies === 2 && chk.new_columns === 6 && chk.triggers === 2 && chk.listing_rows === 0, chk);

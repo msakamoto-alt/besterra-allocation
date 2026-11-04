@@ -478,6 +478,31 @@ const TorihikisakiView = {
     return inn && out ? '入金先・支払先' : inn ? '入金先' : out ? '支払先' : null;
   },
 
+  // 種別のメイン（company.main_type_code・2026-11-04 坂本さん）: 発注先の種別（PAYEE_CODES）が 2 つ以上の会社で、どれがメインかを選ぶ。SF の原価要素につなぐ。
+  //   発注先の種別が 1 つならそれがメイン＝選ばせない。顧客・施主・スクラップは発注の原価に関係しないので候補に入れない。sf-export も同じ決まりで計算する
+  MAIN_TYPE_PATH: 'company.main_type_code',
+  mainTypeCandidates() { const cur = this.pendingTypeCodes(); return this.PAYEE_CODES.filter(c => cur.includes(c)); },   // 並びは種別の欄と同じ
+  mainTypeRowHtml(api) {
+    const pay = this.mainTypeCandidates();
+    if (pay.length < 2) return '';
+    const cur = String(api.get(this.MAIN_TYPE_PATH) || '').trim();
+    const label = c => this.esc(TM_META.TYPE_CODES[c] || c);
+    const subs = pay.includes(cur) ? pay.filter(c => c !== cur).map(label).join('・') : '';
+    return '<div class="subs" style="margin-top:6px"><div class="subrow"><span class="sublbl">メイン</span>' +
+      `<select id="tmk-maintype"><option value="">（未選択）</option>${pay.map(c => `<option value="${this.esc(c)}"${c === cur ? ' selected' : ''}>${label(c)}</option>`).join('')}</select></div>` +
+      (subs ? `<div class="subrow"><span class="sublbl">サブ</span><span class="mainsub">${subs}</span></div>` : '') + '</div>';
+  },
+  /** メインの欄を描き直す。種別を変えたときは、外された種別がメインなら空に戻す（開いただけでは未保存の変更を作らない） */
+  syncMainType(host, api, f, typesChanged) {
+    const box = host.querySelector('#tmk-mainbox');
+    if (!box) return;
+    const cur = String(api.get(this.MAIN_TYPE_PATH) || '').trim();
+    if (typesChanged && cur && !this.mainTypeCandidates().includes(cur)) api.set(f, this.MAIN_TYPE_PATH, '');
+    box.innerHTML = this.mainTypeRowHtml(api);
+    const sel = box.querySelector('#tmk-maintype');
+    if (sel) sel.addEventListener('change', () => { api.set(f, this.MAIN_TYPE_PATH, sel.value); this.syncMainType(host, api, f, false); });
+  },
+
   // 項目の編集計画。null=編集不可（承認制・システム記録・未定義）
   //   {kind:'single', path, dtype} / {kind:'multi', subs} / {kind:'type'} / {kind:'card', note}
   editPlan(f) {
@@ -1397,10 +1422,10 @@ const TorihikisakiView = {
     if (plan.kind === 'type') {
       if (!api.setTypes) return this.roInput((api.types() || []).join('・')) + '<div class="mf subnote">上の「取引先種別」チップで選びます</div>';
       const cur = api.types() || [];
-      return '<div class="typeck">' + TM_META.TYPES.map(t => {
+      return '<div class="fctl"><div class="typeck">' + TM_META.TYPES.map(t => {   // .row は横並びの flex＝子を 1 つにまとめる
         const code = Object.keys(TM_META.TYPE_CODES).find(c => TM_META.TYPE_CODES[c] === t);
         return `<label class="ck"><input type="checkbox" data-tmk-type="${this.esc(code)}" ${cur.includes(t) ? 'checked' : ''}>${this.esc(t)}</label>`;
-      }).join('') + '</div>';
+      }).join('') + '</div><div id="tmk-mainbox"></div></div>';
     }
     return this.roInput(api.val(f));
   },
@@ -1651,9 +1676,11 @@ const TorihikisakiView = {
         const codes = [...host.querySelectorAll('[data-tmk-type]')].filter(x => x.checked).map(x => x.dataset.tmkType);
         if (api.setTypes) api.setTypes(codes);
         const f = fields.find(x => x.no === 53);
-        if (f) refreshBadge(f);
+        if (f) { if (api.setTypes) this.syncMainType(host, api, f, true); refreshBadge(f); }
       });
     });
+    const f53 = fields.find(x => x.no === 53);
+    if (f53 && api.setTypes) this.syncMainType(host, api, f53, false);
     // #93 47都道府県のチェックグリッド（県ボタン／地方まとめ／全国／全解除）
     host.querySelectorAll('.a47').forEach(box => {
       const inp = box.querySelector('input[data-path]');
@@ -1947,6 +1974,7 @@ const TorihikisakiView = {
     for (const f of TM_META.FIELDS) {
       const plan = this.editPlan(f);
       if (!plan) continue;
+      if (plan.kind === 'type' && path === this.MAIN_TYPE_PATH) return { f, dtype: 'VARCHAR(20)', label: '種別のメイン' };
       if ((plan.kind === 'single' || plan.kind === 'kyoka29' || plan.kind === 'area47') && plan.path === path) return { f, dtype: plan.dtype, label: f.name };
       if (plan.kind === 'multi') {
         const s = plan.subs.find(x => x.path === path);
@@ -2185,6 +2213,11 @@ const TorihikisakiView = {
       changed_by: this.apiPaths[c.path] ? who + '(' + this.apiPaths[c.path] + ')'
         : (this.autoPaths[c.path] ? who + '(自動判定)' : who),
     }));
+    // 種別のメインは履歴を種別の名前で残す（コードのままだと経理が読めない）
+    histRows.filter(h => h.table_name === 'company' && h.column_name === 'main_type_code').forEach(h => {
+      h.old_value = TM_META.TYPE_CODES[h.old_value] || h.old_value;
+      h.new_value = TM_META.TYPE_CODES[h.new_value] || h.new_value;
+    });
     // #55 取引先大区分は種別から自動＝種別が変わったら company.major_class も同期（表示は常に種別から導く）
     if (typeChange) (plainPatch['company'] = plainPatch['company'] || {}).major_class = this.majorClassOf(typeChange.next);
     if (typeChange) histRows.push({
@@ -2918,6 +2951,7 @@ const TorihikisakiView = {
     }
     if (table === 'company_type' && column === 'type_code') return '種別フラグ';
     if (table === 'company' && column === 'credit_holder_id') return '与信先（グループの与信）';   // メタの #50 の名前は「与信の取り方」＝履歴では何の値か分からない
+    if (table === 'company' && column === 'main_type_code') return '種別のメイン';
     if (table === 'company_billing' && (m = column.match(/^(invoice_send_to|order_send_to)\.(\w+)$/))) {
       return (m[1] === 'invoice_send_to' ? '請求書送付先' : '注文書送付先') + '（' + (this.JSONB_KEY_LABEL[m[2]] || m[2]) + '）';
     }

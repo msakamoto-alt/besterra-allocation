@@ -234,6 +234,7 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki .subrow{display:flex;gap:6px;align-items:center;}
 #tab-torihikisaki .subrow .sublbl{flex:0 0 74px;font-size:10px;font-weight:700;color:var(--mf);text-align:right;}
 #tab-torihikisaki .subrow input,#tab-torihikisaki .subrow select{flex:1;min-width:0;}
+#tab-torihikisaki .subrow .mainsub{flex:1;min-width:0;font-size:12px;color:var(--mf);}
 #tab-torihikisaki .sgen{flex:0 0 auto;font-size:10px;padding:3px 8px;white-space:nowrap;}
 #tab-torihikisaki .subnote{font-size:10px;margin-top:2px;}
 /* 種別フラグのチェックボックス */

@@ -62,7 +62,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-11-04.1'; // 2026-11-04.1: グループの与信（一括手続先・規程第20条）＝与信先の限度額・種類・期限・決裁日とグループの使用額（与信先＋一括手続先の合計）を一括手続先にも配る・CreditHolder__c（与信先の一文）・対象に与信先と一括手続先を足して同じ値でそろえる・送り先の Account に無い項目は読まず送らない（describe・meta.missing_fields）／2026-10-30.1: 試験の与信（credit_line_test）＝sandbox の稟議の結果はその org にだけ配り、本物の credit_line に上書きしない（坂本さん 10/30「UAT をすると確実にまた起きる」・会社 10487 の件）／2026-10-29.2: 個別配信で、出どころの違う試験の会社を「欠番」にも数えていた（連携ログの数だけ・配信は正しい）を直した／2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
+const VERSION = '2026-11-04.2'; // 2026-11-04.2: 種別「グループの親（取引なし）」だけの会社は送らない（設計 §8-2・counts.skipped_group_parent）・種別のメインを MainPartnerType__c に（SF の原価要素につなぐ・坂本さん 11/04）／2026-11-04.1: グループの与信（一括手続先・規程第20条）＝与信先の限度額・種類・期限・決裁日とグループの使用額（与信先＋一括手続先の合計）を一括手続先にも配る・CreditHolder__c（与信先の一文）・対象に与信先と一括手続先を足して同じ値でそろえる・送り先の Account に無い項目は読まず送らない（describe・meta.missing_fields）／2026-10-30.1: 試験の与信（credit_line_test）＝sandbox の稟議の結果はその org にだけ配り、本物の credit_line に上書きしない（坂本さん 10/30「UAT をすると確実にまた起きる」・会社 10487 の件）／2026-10-29.2: 個別配信で、出どころの違う試験の会社を「欠番」にも数えていた（連携ログの数だけ・配信は正しい）を直した／2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -78,6 +78,8 @@ const FIELD_LABELS: Record<string, string> = {
   CreditDecisionDate__c: '与信の決裁日', CreditUsedAmount__c: '与信の使用額',
   // グループの与信（2026-11-04.1）: 表示用の一文「グループの与信（与信先 ○○ 12080）」。SF 側に項目が無い org には送らない（describe で確かめる）
   CreditHolder__c: '与信先（グループの与信）',
+  // 種別のメイン（2026-11-04.2）: 発注先の種別のうちメインの 1 つ。SF 側に項目が無い org には送らない（describe で確かめる）
+  MainPartnerType__c: 'メイン種別',
 };
 const MULTI_FIELDS = new Set(['PartnerType__c', 'Licenses__c']);
 const NUM_FIELDS = new Set(['Capital__c', 'CreditLimit__c', 'CreditUsedAmount__c']);
@@ -131,6 +133,10 @@ const TYPE_MAP: Record<string, string> = {
   analysis: '分析・解析', waste: '産廃処理', lease: '重機・リース', material: '資材', fuel: '燃料',
   security: '保安警備', sga: '販管費先',
 };
+// 発注先の種別（画面の PAYEE_CODES と同じ）。メインはこの中から選ぶ。1 つならそれがメイン（2026-11-04.2・company_main_type.sql）
+const PAYEE_TYPES = new Set(['subcontractor', 'survey3d', 'analysis', 'waste', 'lease', 'material', 'fuel', 'security', 'sga']);
+// 取引の無い親（持株会社など）。この種別だけの会社は SF に送らない。他の種別も付いていれば取引があるので今までどおり送る（設計 §8-2）
+const GROUP_PARENT = 'group_parent';
 // 建設業許可の略号 → Licenses__c（法定29業種の正式名称）。般/特は落とす。旧列は同名へ畳む。「夕」は「タ」の誤入力
 const PERMIT_MAP: Record<string, string> = {
   '土': '土木一式工事', '建': '建築一式工事', '大': '大工工事', '左': '左官工事', 'と': 'とび・土工・コンクリート工事',
@@ -251,14 +257,17 @@ async function expandGroupIds(admin: Admin, ids: string[] | null): Promise<{ ids
 }
 
 async function loadHub(admin: Admin, ids: string[] | null): Promise<Hub> {
-  // 与信先（credit_holder_id）は credit_group.sql で足した列。無い DB でも配信を止めない（列なしで読み直す）
-  let companies: Record<string, unknown>[];
+  // 与信先（credit_holder_id）は credit_group.sql、種別のメイン（main_type_code）は company_main_type.sql で足した列。無い DB でも配信を止めない（列を減らして読み直す）
+  let companies: Record<string, unknown>[] = [];
   let groupNote: string | null = null;
-  try {
-    companies = await fetchRows(admin, 'company', COMPANY_COLS + ',credit_holder_id', 'company_id', ids);
-  } catch (e) {
-    groupNote = String((e as Error)?.message || e).slice(0, 200);
-    companies = await fetchRows(admin, 'company', COMPANY_COLS, 'company_id', ids);
+  for (const extra of [',credit_holder_id,main_type_code', ',credit_holder_id', '']) {
+    try {
+      companies = await fetchRows(admin, 'company', COMPANY_COLS + extra, 'company_id', ids);
+      break;
+    } catch (e) {
+      if (!extra) throw e;
+      groupNote = String((e as Error)?.message || e).slice(0, 200);
+    }
   }
   const holders = new Map<string, string>();
   const membersByHolder = new Map<string, string[]>();
@@ -304,6 +313,18 @@ async function loadHub(admin: Admin, ids: string[] | null): Promise<Hub> {
   return { companies, types, codes, permits, credit, testCredit, testCreditNote, holders, membersByHolder, names, groupNote };
 }
 
+// この種別だけの会社は SF に送らない（2026-11-04.2）
+function isGroupParentOnly(hub: Hub, cid: string): boolean {
+  const t = hub.types.get(cid) || [];
+  return t.length === 1 && t[0] === GROUP_PARENT;
+}
+// 種別のメイン（表示名）。選ばれていて今も発注先の種別に付いていればそれ、発注先の種別が 1 つならそれ、どちらでもなければ null（2026-11-04.2）
+function mainTypeOf(hub: Hub, c: Record<string, unknown>): string | null {
+  const pay = (hub.types.get(String(c.company_id)) || []).filter((t) => PAYEE_TYPES.has(t));
+  const main = String(c.main_type_code || '');
+  if (pay.includes(main)) return TYPE_MAP[main];
+  return pay.length === 1 ? TYPE_MAP[pay[0]] : null;
+}
 // 実効の与信を組む会社（グループの与信なら与信先・それ以外は自分）
 function creditHolderOf(hub: Hub, cid: string): string { return hub.holders.get(cid) || cid; }
 // グループの使用額＝与信先＋その下の一括手続先の使用額の合計（設計 §4.3）。どこにも無ければ null
@@ -358,6 +379,7 @@ function buildRecord(hub: Hub, c: Record<string, unknown>, keepIfEmpty: Set<stri
     Phone: c.phone,
     Fax: c.fax,
     PartnerType__c: (hub.types.get(cid) || []).map((t) => TYPE_MAP[t]).filter(Boolean).join(';'),
+    MainPartnerType__c: mainTypeOf(hub, c),
     IsActive__c: !c.is_suspended,
     LastDealDate__c: c.last_trade_on,
     Capital__c: c.capital_amount,
@@ -664,7 +686,7 @@ Deno.serve(async (req) => {
         const ambiguous: string[] = [];
         const nomatch: string[] = [];
         for (const a of unlinked) {
-          const cands = (hubByNorm.get(normName(a.Name as string)) || []).filter((cid) => !sfByHub.has(cid) && !hiddenTest.has(cid));
+          const cands = (hubByNorm.get(normName(a.Name as string)) || []).filter((cid) => !sfByHub.has(cid) && !hiddenTest.has(cid) && !isGroupParentOnly(hub, cid));
           if (cands.length !== 1) { (cands.length ? ambiguous : nomatch).push(String(a.Name)); continue; }
           const cid = cands[0];
           if (seenHub.has(cid)) { ambiguous.push(String(a.Name)); continue; }
@@ -726,10 +748,14 @@ Deno.serve(async (req) => {
       const nTest = targets.filter((c) => c.is_test === true).length;
       targets = targets.filter((c) => !hiddenTest.has(String(c.company_id)));
       const nTestSkipped = nTest - targets.filter((c) => c.is_test === true).length;
+      // 取引の無い親（持株会社など）は送らない（子会社の与信の計算には hub に残っている・2026-11-04.2）
+      const nBefore = targets.length;
+      targets = targets.filter((c) => !isGroupParentOnly(hub, String(c.company_id)));
+      const nGroupParent = nBefore - targets.length;
       if (limit > 0) targets = targets.slice(0, limit);
 
       const records: Record<string, unknown>[] = [];
-      const cls = { update: 0, create: 0, code_conflict: 0, skipped_suspended: 0, skipped_test: nTestSkipped, test_credit: 0, group_member: 0 };
+      const cls = { update: 0, create: 0, code_conflict: 0, skipped_suspended: 0, skipped_test: nTestSkipped, skipped_group_parent: nGroupParent, test_credit: 0, group_member: 0 };
       // 試験の与信（2026-10-30.1）: 本番の org には使わない。sandbox へはその org の行だけ。グループの与信なら与信先の分（2026-11-04.1）
       const orgTestCredit = isProdTarget ? undefined : hub.testCredit.get(sf.orgId);
       const conflicts: { company_id: string; name: string; code: string; holder: string }[] = [];
@@ -750,7 +776,7 @@ Deno.serve(async (req) => {
         if (testCr) cls.test_credit++;
         records.push(rec);
       }
-      if (onlyIds) cls.skipped_suspended = hub.companies.length - targets.length - nTestSkipped; // 欠番で SF に無い＝作らない（試験の会社で外した分は skipped_test に数える・2026-10-29.2）
+      if (onlyIds) cls.skipped_suspended = hub.companies.length - targets.length - nTestSkipped - nGroupParent; // 欠番で SF に無い＝作らない（試験の会社で外した分は skipped_test に・取引の無い親は skipped_group_parent に数える）
       const fieldFill: Record<string, number> = {};
       for (const r of records) for (const k of Object.keys(r)) if (r[k] !== null) fieldFill[k] = (fieldFill[k] || 0) + 1;
       const groupMeta = { group_added: grp.added, group_note: grp.note || hub.groupNote, missing_fields: missingFields };
@@ -760,7 +786,7 @@ Deno.serve(async (req) => {
         return ({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
           hub_companies: hub.companies.length, sf_accounts: sfAccounts.length, sf_linked: sfByHub.size,
           targets: targets.length, will_update: cls.update, will_create: cls.create, test_credit: cls.test_credit, test_credit_note: hub.testCreditNote, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
-          group_member: cls.group_member, ...groupMeta,
+          group_member: cls.group_member, skipped_group_parent: cls.skipped_group_parent, ...groupMeta,
           conflict_samples: conflicts.slice(0, 20), field_fill: fieldFill, sample: records.slice(0, 2),
           linkable_by_name: linkable,
           note: '書込は行っていません。code_conflict は取引先コードが SF の別レコードに付いている会社＝先に action=link で解消してください。',
@@ -800,12 +826,12 @@ Deno.serve(async (req) => {
         }
       }
       const logged = await logRun(admin, { kind: 'run', action: 'export', caller, source: body.source, sf, t0,
-        counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, skipped_test: cls.skipped_test, test_credit: cls.test_credit, group_member: cls.group_member, changed: totalChanged },
+        counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, skipped_test: cls.skipped_test, skipped_group_parent: cls.skipped_group_parent, test_credit: cls.test_credit, group_member: cls.group_member, changed: totalChanged },
         companyIds: hubIds, reason: body.reason, payload,
         meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, prod_target: isProdTarget, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty], guard: guardNote, test_credit_note: hub.testCreditNote, ...groupMeta } });
       return ({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
         targets: targets.length, sent: records.length, test_credit: cls.test_credit, group_member: cls.group_member, ...groupMeta, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,
-        failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack, skipped_test: cls.skipped_test,
+        failed_samples: failed.slice(0, 20), conflict_samples: conflicts.slice(0, 20), writeback: wroteBack, skipped_test: cls.skipped_test, skipped_group_parent: cls.skipped_group_parent,
         changed: totalChanged, changes_sample: items.slice(0, 5),
         log_written: logged, elapsed_ms: Date.now() - t0 });
     };
