@@ -197,7 +197,7 @@ left join grp g on g.holder_id = coalesce(c.credit_holder_id, c.company_id);
 comment on view public.v_credit_effective is '実効の与信（グループの子会社は与信先の行・使用額はグループの合計）。画面と sf-export は同じ決まりで計算する（credit_group.sql・2026-11-04）';
 -- 4.3 権限（取引先マスタの表と同じ＝admin・accounting だけ読める。別紙の記録は人が書けない＝select 以外のポリシー無し）
 --   学習用 DB（iinbncpofqaldpygfryz）には user_roles も app_role() も Auth ユーザーも無く、画面も検証スクリプトも anon で動く（RLS 無し・2026-08-26 の前提）。
---   app_role() が無ければ学習用と見なし、RLS と anon の取り上げはしない（本番と同じ形は作れないため）。本番ハブには app_role() がある。
+--   app_role() が無ければ学習用と見なし、anon が読めて消せる形にする（本番と同じ形は作れないため）。本番ハブには app_role() がある。
 do $$
 begin
   if to_regproc('public.app_role') is not null then
@@ -228,20 +228,19 @@ begin
 end $$;
 
 -- =====================================================================
--- 5. 確かめ
+-- 5. 確かめ（SQL Editor は最後の結果だけを出すので、見る値を 1 行にまとめる）
 -- =====================================================================
 select (to_regproc('public.app_role') is not null) as prod_form,                                                     -- 本番ハブ true／学習用 false
-       (select relrowsecurity from pg_class where oid = 'public.credit_group_listing'::regclass) as listing_rls,      -- 本番 true／学習用 false
-       (select count(*) from pg_policies where schemaname = 'public' and tablename = 'credit_group_listing') as listing_policies;  -- 本番 1／学習用 2
-select column_name, data_type from information_schema.columns
- where table_schema = 'public' and table_name = 'company'
-   and column_name in ('parent_ownership_pct','parent_confirmed_on','parent_source','credit_holder_id','credit_listing_decided_on','credit_listing_ref')
- order by column_name;                                                                       -- 6 行
-select tgname from pg_trigger where tgname in ('trg_company_group_guard','trg_company_credit_listing') order by 1;  -- 2 行
-select (select count(*) from public.company where parent_company_id is not null) as with_parent,
-       (select count(*) from public.company where credit_holder_id is not null) as with_holder,
-       (select count(*) from public.credit_group_listing) as listing_rows,
-       (select count(*) from public.v_credit_effective where credit_mode = 'グループ') as group_mode;  -- 初回は全部 0
+       (select relrowsecurity from pg_class where oid = 'public.credit_group_listing'::regclass) as listing_rls,      -- 本番 true／学習用 false（学習用は true でも動く）
+       (select count(*) from pg_policies where schemaname = 'public' and tablename = 'credit_group_listing') as listing_policies,  -- 本番 1／学習用 2
+       (select count(*) from information_schema.columns
+         where table_schema = 'public' and table_name = 'company'
+           and column_name in ('parent_ownership_pct','parent_confirmed_on','parent_source','credit_holder_id','credit_listing_decided_on','credit_listing_ref')) as new_columns,  -- 6
+       (select count(*) from pg_trigger where tgname in ('trg_company_group_guard','trg_company_credit_listing')) as triggers,  -- 2
+       (select count(*) from public.company where parent_company_id is not null) as with_parent,                     -- 親会社が入っている会社の数
+       (select count(*) from public.company where credit_holder_id is not null) as with_holder,                      -- 初回は 0
+       (select count(*) from public.credit_group_listing) as listing_rows,                                           -- 初回は 0
+       (select count(*) from public.v_credit_effective where credit_mode = 'グループ') as group_mode;                -- 初回は 0
 
 -- =====================================================================
 -- 戻し方（上から順に・別紙の記録ごと消えるので本番では慎重に）

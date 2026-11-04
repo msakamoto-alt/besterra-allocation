@@ -30,6 +30,13 @@ async function run(label, sql) {
   try { await pg.exec(sql); ok(label, true); }
   catch (e) { ok(label, false, e.message.split('\n').slice(0, 3).join(' | ')); }
 }
+async function runScript(label, sql) {  // SQL Editor と同じく最後の結果を返す（画面に出るのはこの 1 行だけ）
+  try {
+    const rs = await pg.exec(sql);
+    ok(label, true);
+    return Object.fromEntries(Object.entries(rs[rs.length - 1].rows[0]).map(([k, v]) => [k, typeof v === 'bigint' ? Number(v) : v]));
+  } catch (e) { ok(label, false, e.message.split('\n').slice(0, 3).join(' | ')); return {}; }
+}
 async function expectErr(label, sql, needle) {
   try { await pg.query(sql); ok(label + '（通ってしまった）', false); }
   catch (e) { const m = e.message || ''; ok(label + ' -> ' + m.split('\n')[0], m.includes(needle)); }
@@ -46,11 +53,8 @@ await run('schema company / credit_line', extractTable('company') + '\n' + extra
 const sql = fs.readFileSync(SQL_PATH, 'utf8');
 
 // ---------------- 学習用の形 ----------------
-await run('credit_group.sql 1 回目（学習用の形）', sql);
-let chk = await row(`select (to_regproc('public.app_role') is not null) as prod_form,
-  (select relrowsecurity from pg_class where oid = 'public.credit_group_listing'::regclass) as listing_rls,
-  (select count(*)::int from pg_policies where schemaname = 'public' and tablename = 'credit_group_listing') as listing_policies`);
-ok('確かめ 学習用: prod_form false / listing_rls false / policies 2', chk.prod_form === false && chk.listing_rls === false && chk.listing_policies === 2, chk);
+let chk = await runScript('credit_group.sql 1 回目（学習用の形）', sql);
+ok('最後の 1 行 学習用: prod_form false / listing_rls false / policies 2 / 列 6 / トリガ 2 / 別紙 0', chk.prod_form === false && chk.listing_rls === false && chk.listing_policies === 2 && chk.new_columns === 6 && chk.triggers === 2 && chk.listing_rows === 0, chk);
 let priv = await row(`select has_table_privilege('anon','public.credit_group_listing','select') as a_sel, has_table_privilege('anon','public.credit_group_listing','delete') as a_del,
   has_table_privilege('anon','public.credit_group_listing','insert') as a_ins, has_table_privilege('anon','public.credit_group_listing','update') as a_upd,
   has_table_privilege('anon','public.v_credit_effective','select') as a_view`);
@@ -134,11 +138,8 @@ ok('流し直すと RLS は外れる', chk.listing_rls === false, chk);
 
 // ---------------- 本番の形 ----------------
 await run('app_role() を置く（本番の見立て）', `create function public.app_role() returns text language sql stable as $$ select 'admin'::text $$;`);
-await run('credit_group.sql 3 回目（本番の形）', sql);
-chk = await row(`select (to_regproc('public.app_role') is not null) as prod_form,
-  (select relrowsecurity from pg_class where oid = 'public.credit_group_listing'::regclass) as listing_rls,
-  (select count(*)::int from pg_policies where schemaname = 'public' and tablename = 'credit_group_listing') as listing_policies`);
-ok('確かめ 本番: prod_form true / listing_rls true / policies 1', chk.prod_form === true && chk.listing_rls === true && chk.listing_policies === 1, chk);
+chk = await runScript('credit_group.sql 3 回目（本番の形）', sql);
+ok('最後の 1 行 本番: prod_form true / listing_rls true / policies 1 / 列 6 / トリガ 2', chk.prod_form === true && chk.listing_rls === true && chk.listing_policies === 1 && chk.new_columns === 6 && chk.triggers === 2, chk);
 priv = await row(`select has_table_privilege('anon','public.credit_group_listing','select') as a_sel, has_table_privilege('authenticated','public.credit_group_listing','select') as u_sel,
   has_table_privilege('authenticated','public.credit_group_listing','insert') as u_ins, has_table_privilege('authenticated','public.credit_group_listing','delete') as u_del,
   has_table_privilege('anon','public.v_credit_effective','select') as a_view, has_table_privilege('authenticated','public.v_credit_effective','select') as u_view,
