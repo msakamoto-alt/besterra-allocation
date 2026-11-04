@@ -1,0 +1,12 @@
+{
+  "name": "besterra-allocation-supabase-tests",
+  "private": true,
+  "description": "supabase/*.sql を Supabase に貼る前に手元の PostgreSQL（PGlite）で通す。node_modules は git に入れない（npm install で入る）",
+  "type": "module",
+  "scripts": {
+    "test:credit_group": "node credit_group.test.mjs"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.2.17"
+  }
+}

@@ -47,7 +47,7 @@ language plpgsql as $$
 declare
   cur varchar(8);
   hops int;
-  found boolean := false;
+  holder_found boolean := false;  -- found は plpgsql の予約の変数なので使わない
   holder_holder varchar(8);
   n_members int;
 begin
@@ -70,12 +70,12 @@ begin
     -- 与信先は親をたどった先にある
     cur := new.parent_company_id; hops := 0;
     while cur is not null loop
-      if cur = new.credit_holder_id then found := true; exit; end if;
+      if cur = new.credit_holder_id then holder_found := true; exit; end if;
       hops := hops + 1; exit when hops > 50;
       select parent_company_id into cur from public.company where company_id = cur;
     end loop;
-    if not found then
-      raise exception '与信先（%）は、この会社（%）の親会社をたどった先にありません。先に親会社を入れてください', new.credit_holder_id, new.company_id;
+    if not holder_found then
+      raise exception '与信先（%）は、この会社（%）の親会社をたどった先にありません。先に親会社を入れるか、親を変えるなら先にグループの与信を外してください', new.credit_holder_id, new.company_id;
     end if;
     -- 与信先は自分で与信を取っている会社（2 段で借りない）
     select credit_holder_id into holder_holder from public.company where company_id = new.credit_holder_id;
@@ -124,7 +124,7 @@ begin
   if tg_op = 'INSERT' and new.credit_holder_id is null then return null; end if;
   -- 入れた人＝画面が company.updated_by に入れる名前。無ければログインのメール、無ければ DB のロール
   who := coalesce(nullif(new.updated_by, ''), nullif(new.created_by, ''),
-                  nullif(current_setting('request.jwt.claims', true)::jsonb ->> 'email', ''), current_user);
+                  nullif(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email', ''), current_user);  -- 設定が '' のことがある（auth.jwt() と同じ守り）
   if tg_op = 'UPDATE' and old.credit_holder_id is not null then
     insert into public.credit_group_listing (member_id, holder_id, action, ownership_pct, decided_on, decision_ref, created_by)
     values (new.company_id, old.credit_holder_id, '外す', new.parent_ownership_pct, new.credit_listing_decided_on, new.credit_listing_ref, who);
@@ -147,7 +147,7 @@ create trigger trg_company_credit_listing after insert or update of credit_holde
 -- 4.1 グループ: 会社ごとに 頂点（root_id）・深さ・頂点からの道（path）・直接の子の数
 create or replace view public.v_company_group with (security_invoker = true) as
 with recursive up as (
-  select c.company_id, c.parent_company_id, c.company_id as root_id, 0 as depth, array[c.company_id] as path
+  select c.company_id, c.parent_company_id, c.company_id as root_id, 0 as depth, array[c.company_id]::varchar[] as path  -- ::varchar[] が要る（varchar(8)[] のままだと再帰側の || の結果 varchar[] と型が合わない）
   from public.company c where c.parent_company_id is null
   union all
   select c.company_id, c.parent_company_id, up.root_id, up.depth + 1, up.path || c.company_id
