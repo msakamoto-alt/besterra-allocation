@@ -10,8 +10,9 @@
 alter table public.company add column if not exists main_type_code varchar(20);
 comment on column public.company.main_type_code is '種別のメイン（company_type.type_code の値）。発注先の種別が 2 つ以上の会社で選ぶ。1 つならそれがメインなので空のまま（company_main_type.sql・2026-11-04）';
 
--- 確かめ（SQL Editor は最後の結果だけを出す）
-select (select count(*) from information_schema.columns
+-- 確かめ（SQL Editor は最後の結果だけを出す）。prod_form でどちらの DB に流れたかが分かる（11/04 学習用のつもりが開いたままの本番の画面に流れた）
+select (to_regproc('public.app_role') is not null) as prod_form,                                                       -- 本番ハブ true／学習用 false
+       (select count(*) from information_schema.columns
          where table_schema = 'public' and table_name = 'company' and column_name = 'main_type_code') as new_column,  -- 1
        (select count(*) from public.company where main_type_code is not null) as with_main;                           -- 初回は 0
 

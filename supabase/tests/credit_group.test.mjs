@@ -56,7 +56,7 @@ const sql = fs.readFileSync(SQL_PATH, 'utf8');
 const mainSql = fs.readFileSync(path.join(HERE, '..', 'company_main_type.sql'), 'utf8');
 for (const n of [1, 2]) {
   const r = await runScript(`company_main_type.sql ${n} 回目`, mainSql);
-  ok(`   最後の 1 行: new_column 1 / with_main 0`, r.new_column === 1 && r.with_main === 0, r);
+  ok(`   最後の 1 行: prod_form false（学習用の形）/ new_column 1 / with_main 0`, r.prod_form === false && r.new_column === 1 && r.with_main === 0, r);
 }
 
 // ---------------- 学習用の形 ----------------
