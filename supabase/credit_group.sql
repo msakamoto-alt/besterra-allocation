@@ -7,6 +7,8 @@
 --   実効の与信（グループの子会社の限度額・期限・グループの使用額）は view v_credit_effective で読める。画面と sf-export は同じ決まりで計算する。
 --   credit_line.use_parent_credit（旧「一括手続先」・本番 29 行すべて false）は使わない。画面からは外した。列を消すのは末尾（後日）。
 -- 使い方: SQL Editor で実行（学習用 DB → 本番ハブ の順・何度流しても同じ）。
+--   権限（4.3）は環境で分かれる: app_role() がある本番ハブは RLS（admin・accounting だけ読める）、
+--   app_role() も user_roles も Auth ユーザーも無い学習用 DB（画面は anon・RLS 無し）は読める形のまま。
 --   このあと sf-export 2026-11-04.1 を貼り（与信先の限度額・期限とグループの使用額を一括手続先にも配る）、画面（torihikisaki.js）を公開する。
 --   sf-export を貼る前でも壊れない（古い sf-export は与信先を知らない＝今までどおり自分の行だけで配る）。
 -- 戻し方: 末尾。
@@ -111,11 +113,7 @@ create table if not exists public.credit_group_listing (
 comment on table public.credit_group_listing is '別紙『一括手続先一覧』の記録（規程 KG-10 第20条）。company.credit_holder_id の付け外しをトリガが残す。内部監査で「いつから一括手続先か」を示す正本（2026-11-04）';
 create index if not exists ix_credit_group_listing_member on public.credit_group_listing (member_id, created_at desc);
 create index if not exists ix_credit_group_listing_holder on public.credit_group_listing (holder_id, created_at desc);
-alter table public.credit_group_listing enable row level security;
-drop policy if exists tm_sel_credit_group_listing on public.credit_group_listing;
-create policy tm_sel_credit_group_listing on public.credit_group_listing for select to authenticated using (app_role() in ('admin','accounting'));
-revoke all on public.credit_group_listing from anon;
-grant select on public.credit_group_listing to authenticated;
+-- 権限（RLS・anon の取り上げ）は 4.3 で環境ごとに付ける
 
 create or replace function public.company_credit_listing_log() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -197,12 +195,35 @@ left join cl hc on hc.company_id = coalesce(c.credit_holder_id, c.company_id)
 left join cl own on own.company_id = c.company_id
 left join grp g on g.holder_id = coalesce(c.credit_holder_id, c.company_id);
 comment on view public.v_credit_effective is '実効の与信（グループの子会社は与信先の行・使用額はグループの合計）。画面と sf-export は同じ決まりで計算する（credit_group.sql・2026-11-04）';
-revoke all on public.v_company_group, public.v_credit_effective from anon;
-grant select on public.v_company_group, public.v_credit_effective to authenticated;
+-- 4.3 権限（取引先マスタの表と同じ＝admin・accounting だけ読める。別紙の記録は人が書けない＝select 以外のポリシー無し）
+--   学習用 DB（iinbncpofqaldpygfryz）には user_roles も app_role() も Auth ユーザーも無く、画面も検証スクリプトも anon で動く（RLS 無し・2026-08-26 の前提）。
+--   app_role() が無ければ学習用と見なし、RLS と anon の取り上げはしない（本番と同じ形は作れないため）。本番ハブには app_role() がある。
+do $$
+begin
+  if to_regproc('public.app_role') is not null then
+    -- 本番ハブ
+    execute 'alter table public.credit_group_listing enable row level security';
+    execute 'drop policy if exists tm_sel_credit_group_listing on public.credit_group_listing';
+    execute 'create policy tm_sel_credit_group_listing on public.credit_group_listing for select to authenticated using (public.app_role() in (''admin'',''accounting''))';
+    execute 'revoke all on public.credit_group_listing from anon';
+    execute 'revoke insert, update, delete on public.credit_group_listing from authenticated';
+    execute 'grant select on public.credit_group_listing to authenticated';
+    execute 'revoke all on public.v_company_group, public.v_credit_effective from anon';
+    execute 'grant select on public.v_company_group, public.v_credit_effective to authenticated';
+  else
+    -- 学習用 DB（検証スクリプト verify_torihikisaki_group.py が anon で読み、片付けで別紙の記録を消す）
+    execute 'alter table public.credit_group_listing disable row level security';
+    execute 'grant select, delete on public.credit_group_listing to anon, authenticated';
+    execute 'grant select on public.v_company_group, public.v_credit_effective to anon, authenticated';
+  end if;
+end $$;
 
 -- =====================================================================
 -- 5. 確かめ
 -- =====================================================================
+select (to_regproc('public.app_role') is not null) as prod_form,                                                     -- 本番ハブ true／学習用 false
+       (select relrowsecurity from pg_class where oid = 'public.credit_group_listing'::regclass) as listing_rls,      -- 本番 true／学習用 false
+       (select count(*) from pg_policies where schemaname = 'public' and tablename = 'credit_group_listing') as listing_policies;  -- 本番 1／学習用 0
 select column_name, data_type from information_schema.columns
  where table_schema = 'public' and table_name = 'company'
    and column_name in ('parent_ownership_pct','parent_confirmed_on','parent_source','credit_holder_id','credit_listing_decided_on','credit_listing_ref')
