@@ -239,5 +239,32 @@ ok('頼む・取り込むのは関数（service_role）だけ', r.a === false &&
 r = await one(`select count(*) filter (where tablename = 'compliance_check_item') as i, count(*) filter (where tablename = 'antisocial_setting') as s from pg_policies`);
 ok('RLS: 項目は読むだけ 1 本・設定は読む／変える 2 本', num(r.i) === 1 && num(r.s) === 2, r);
 
+// ---------------- 試験の SF へ配る状態（試しの回も数える・2026-11-15 夜） ----------------
+r = await one(`select (select count(*) from v_compliance_status_all) as a, (select count(*) from company) as c,
+  (select count(*) from v_compliance_status) as v`);
+ok('v_compliance_status_all は会社ごとに 2 行・v_compliance_status は 1 行', num(r.a) === num(r.c) * 2 && num(r.v) === num(r.c), r);
+await run('試しの回だけの会社（10010）', `insert into company (company_id, official_name) values ('10010','試しだけ株式会社');
+  insert into compliance_check (company_id, checked_on, result, method, is_test) values ('10010', (now() at time zone 'Asia/Tokyo')::date, '問題なし', '手入力', true);`);
+r = await all(`select with_test, status, status_valid_until from v_compliance_status_all where company_id = '10010' order by with_test`);
+ok('試しの回は、本物の状態（false）では未実施・試験の SF へ配る状態（true）では問題なし', r[0].status === '未実施' && r[1].status === '問題なし' && r[1].status_valid_until !== null, r);
+ok('本物の回だけの会社は、どちらの行も同じ', (await all(`select distinct status from v_compliance_status_all where company_id = '10002'`)).length === 1);
+
+// ---------------- 申請の知らせの代表者・法人番号の区分（SF で新しく作った相手・2026-11-15 夜） ----------------
+await run('代表者の無い会社と、個人事業の会社', `insert into company (company_id, official_name) values ('10011','エスエフ新規株式会社'), ('10012','山田工務店');
+  insert into credit_notice (org_id, org_label, is_prod, kind, application_no, company_id, stage, representative, no_corp_kind) values
+  ('00Dfd000002CDWc','dev6',false,'与信','YS-00040','10011','申請中','代表取締役 山本 花子','法人番号あり'),
+  ('00Dfd000002CDWc','dev6',false,'与信','YS-00041','10012','申請中','山田 一郎','個人事業');`);
+r = await one(`select antisocial_enqueue('10011','手動',null,true,'tester') as id`);
+items = await all(`select subject, name_sent, relative_word, entity_type from compliance_check_item where check_id = $1 order by item_id`, [num(r.id)]);
+ok('会社の代表者が空なら、申請の知らせの代表者で調べる（役職は落とす）', items.length === 2 && items[1].subject === '代表者' && items[1].name_sent === '山本花子'
+  && items[1].relative_word === 'エスエフ新規株式会社' && items[0].entity_type === '組織', items);
+r = await one(`select antisocial_enqueue('10012','手動',null,true,'tester') as id`);
+items = await all(`select subject, entity_type from compliance_check_item where check_id = $1 order by item_id`, [num(r.id)]);
+ok('法人番号の区分が個人事業なら、会社を個人として調べる（代表者の 1 件は足さない）', items.length === 1 && items[0].entity_type === '個人', items);
+await run('会社に代表者が入った', `update company set representative_name = '代表取締役 佐藤 三郎' where company_id = '10011';
+  update compliance_check set result = 'エラー' where company_id = '10011' and source = 'roborobo';`);
+r = await one(`select antisocial_enqueue('10011','手動',null,true,'tester') as id`);
+ok('会社の代表者の欄があれば、そちらを先に使う', (await one(`select name_sent from compliance_check_item where check_id = $1 and subject = '代表者'`, [num(r.id)])).name_sent === '佐藤三郎');
+
 console.log(fails ? `\n${fails} FAIL` : '\nALL OK');
 process.exit(fails ? 1 : 0);

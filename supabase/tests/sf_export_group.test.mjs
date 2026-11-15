@@ -47,6 +47,7 @@ const SCHEMA = {
   permit_license: ['permit_id', 'company_id', 'permit_type', 'construction_types', 'permit_authority', 'permit_number'],
   credit_line: ['credit_id', 'company_id', 'limit_amount', 'limit_type', 'valid_until', 'approved_on', 'used_amount'],
   credit_line_test: ['id', 'company_id', 'org_id', 'org_label', 'application_no', 'limit_amount', 'limit_type', 'valid_until', 'approved_on'],
+  v_compliance_status_all: ['with_test', 'company_id', 'status', 'status_checked_on', 'status_valid_until'],
 };
 function hubClient(db, opts = {}) {
   const log = [];
@@ -54,6 +55,7 @@ function hubClient(db, opts = {}) {
   class Query {
     constructor(table) { this.table = table; this.preds = []; this.need = []; this.span = [0, 999]; }
     select(cols) { this.cols = cols.split(','); this.need.push(...this.cols); return this; }
+    eq(c, val) { this.need.push(c); this.preds.push((r) => r[c] === val); return this; }
     in(c, vals) { this.need.push(c); this.preds.push((r) => vals.map(String).includes(String(r[c]))); return this; }
     not(c) { this.need.push(c); this.preds.push((r) => r[c] !== null && r[c] !== undefined); return this; }
     order(c) { this.need.push(c); this.sortBy = c; return this; }
@@ -61,7 +63,7 @@ function hubClient(db, opts = {}) {
     insert(row) { if (this.table === 'integration_log') log.push(row); return Promise.resolve({ error: null }); }
     upsert() { return Promise.resolve({ error: null }); }
     then(resolve) {
-      if (!SCHEMA[this.table]) return resolve({ data: null, error: { message: `relation "${this.table}" does not exist` } });
+      if (!SCHEMA[this.table] || (this.table === 'v_compliance_status_all' && opts.noAntisocial !== false)) return resolve({ data: null, error: { message: `relation "${this.table}" does not exist` } });
       const bad = this.need.find((c) => !hasCol(this.table, c));
       if (bad) return resolve({ data: null, error: { message: `column ${this.table}.${bad} does not exist` } });
       let rows = (db[this.table] || []).filter((r) => this.preds.every((p) => p(r)));
@@ -147,7 +149,7 @@ const accounts = () => [HOLDER, MEMBER_A, MEMBER_B, SOLO, NO_CREDIT].map((id) =>
 
 const LABELS = CURRENT.slice(CURRENT.indexOf('const FIELD_LABELS'), CURRENT.indexOf('};', CURRENT.indexOf('const FIELD_LABELS')));
 const ALL_FIELDS = ['Id', ...[...LABELS.matchAll(/\b([A-Za-z_]+(?:__c)?):\s*'/g)].map((m) => m[1])];
-const NOT_YET = ['CreditHolder__c', 'MainPartnerType__c'];  // SF にまだ配備していない項目
+const NOT_YET = ['CreditHolder__c', 'MainPartnerType__c', 'AntisocialStatus__c', 'AntisocialCheckedOn__c', 'AntisocialValidUntil__c'];  // SF にまだ配備していない項目
 const WITHOUT_HOLDER = ALL_FIELDS.filter((f) => !NOT_YET.includes(f));
 const dev6 = (fields, extra = {}) => ({ 'https://dev6.invalid': { orgId: ORG6, fields, accounts: accounts(), ...extra } });
 
@@ -188,7 +190,7 @@ for (const [label, body] of [['全件', { action: 'export' }], ['対象を絞る
   ok('SF に無い項目は読まない', s.soql['https://dev6.invalid'].every((q) => NOT_YET.every((k) => !q.includes(k))));
   same('meta.missing_fields', r.json.missing_fields, NOT_YET);
   same('失敗 0', r.json.failed, 0);
-  same('連携ログ: 版・group_member・対象・足した分', [h.log[0].meta.version, h.log[0].counts.group_member, [...h.log[0].company_ids].sort(), [...h.log[0].meta.group_added].sort()], ['2026-11-04.2', 2, [HOLDER, MEMBER_A, MEMBER_B], [HOLDER, MEMBER_B]]);
+  same('連携ログ: 版・group_member・対象・足した分', [h.log[0].meta.version, h.log[0].counts.group_member, [...h.log[0].company_ids].sort(), [...h.log[0].meta.group_added].sort()], ['2026-11-15.1', 2, [HOLDER, MEMBER_A, MEMBER_B], [HOLDER, MEMBER_B]]);
 }
 
 // ---------------- 3. SF に CreditHolder__c が入ったあと ----------------
@@ -338,6 +340,33 @@ const holdingDb = (extraTypes = []) => {
   ok('メインの列が無い DB: group_note に理由', String(rOld.json.group_note || '').includes('main_type_code'), rOld.json.group_note);
   same('メインの列が無い DB: 1 つならそれ・選べない分は空', [sentBy(sOld)[V.ONE].MainPartnerType__c, sentBy(sOld)[V.TWO_MAIN].MainPartnerType__c], ['外注（請負）', null]);
   same('メインの列が無い DB: グループの与信は動く', sentBy(sOld)[MEMBER_A].CreditLimit__c, 1500000000);
+}
+
+// ---------------- 4. 反社チェックの 3 項目（2026-11-15.1） ----------------
+{
+  const data = db();
+  data.v_compliance_status_all = [
+    { with_test: false, company_id: SOLO, status: '問題なし', status_checked_on: '2026-11-01', status_valid_until: '2027-10-31' },
+    { with_test: true, company_id: SOLO, status: '問題なし', status_checked_on: '2026-11-01', status_valid_until: '2027-10-31' },
+    { with_test: false, company_id: HOLDER, status: '未実施', status_checked_on: null, status_valid_until: null },
+    { with_test: true, company_id: HOLDER, status: '該当なし', status_checked_on: '2026-11-15', status_valid_until: '2027-11-14' },
+  ];
+  const ids = [SOLO, HOLDER, NO_CREDIT];
+  const s6 = sfMock(dev6(ALL_FIELDS)); const r6 = await call(now, hubClient(data, { noAntisocial: false }), { action: 'export', company_ids: ids });
+  const sent6 = sentBy(s6);
+  ok('反社: 200・ok・antisocial_note なし', r6.status === 200 && r6.json.ok === true && !r6.json.antisocial_note, r6.json);
+  same('反社（試験の org）: 本物の回の状態', [sent6[SOLO].AntisocialStatus__c, sent6[SOLO].AntisocialCheckedOn__c, sent6[SOLO].AntisocialValidUntil__c], ['問題なし', '2026-11-01', '2027-10-31']);
+  same('反社（試験の org）: 試しの回も数えた状態', [sent6[HOLDER].AntisocialStatus__c, sent6[HOLDER].AntisocialValidUntil__c], ['該当なし', '2027-11-14']);
+  same('反社: ビューに無い会社は未実施・日付は空', [sent6[NO_CREDIT].AntisocialStatus__c, sent6[NO_CREDIT].AntisocialCheckedOn__c], ['未実施', null]);
+  ENV.SF_PROD_ORG_IDS = ORG6;
+  const sP = sfMock(dev6(ALL_FIELDS)); const rP = await call(now, hubClient(data, { noAntisocial: false }), { action: 'export', company_ids: ids });
+  ENV.SF_PROD_ORG_IDS = '';
+  const sentP = sentBy(sP);
+  ok('反社（本番の org）: 200', rP.status === 200, rP.json);
+  same('反社（本番の org）: 試しの回は数えない', [sentP[HOLDER] && sentP[HOLDER].AntisocialStatus__c, sentP[HOLDER] && sentP[HOLDER].AntisocialValidUntil__c, sentP[SOLO] && sentP[SOLO].AntisocialStatus__c], ['未実施', null, '問題なし']);
+  const sN = sfMock(dev6(ALL_FIELDS)); const rN = await call(now, hubClient(data), { action: 'export', company_ids: ids });
+  ok('反社: ビューが無い DB でも止まらず、3 項目は送らない（SF の値を空にしない）', rN.status === 200 && rN.json.ok === true
+    && Object.values(sentBy(sN)).every((x) => !('AntisocialStatus__c' in x)) && String(rN.json.antisocial_note || '').includes('v_compliance_status_all'), rN.json);
 }
 
 console.log(fails ? `\n${fails} FAIL` : '\nALL OK');

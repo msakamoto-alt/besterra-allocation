@@ -212,19 +212,22 @@ create trigger compliance_check_guard before insert or update or delete on publi
 -- status: 未実施／調査中／要確認／該当なし／問題なし／取引不可／期限切れ／エラー
 --   最新の回が「取引不可」「要確認」ならそれ。有効な「該当なし」「問題なし」があればそれ（新しい回を調べている途中でも）。
 --   有効期限＝回の valid_until（手入力で空なら実施日から 1 年）。試しの回（is_test）は数えない。
-create or replace view public.v_compliance_status with (security_invoker = true) as
-with r as (
-  select c.*, row_number() over (partition by c.company_id
+--   計算は v_compliance_status_all の 1 か所（2026-11-15 夜）。with_test＝true の行は試しの回も数える＝SF の試験の org（dev6・dev7）へ配る状態
+--   （テスト環境のトークンで流した回を試験の SF で確かめるため。本番の SF へは with_test＝false の行＝v_compliance_status）
+create or replace view public.v_compliance_status_all with (security_invoker = true) as
+with m(with_test) as (values (false), (true)),
+r as (
+  select m.with_test, c.*, row_number() over (partition by m.with_test, c.company_id
            order by coalesce(c.requested_at, c.checked_on::timestamptz) desc, c.check_id desc) as rn
-  from public.compliance_check c where not c.is_test
+  from m join public.compliance_check c on (m.with_test or not c.is_test)
 ), okv as (
-  select distinct on (company_id) company_id, result, checked_on,
-         coalesce(valid_until, (checked_on + interval '1 year' - interval '1 day')::date) as valid_until
-  from public.compliance_check
-  where not is_test and result in ('該当なし','問題なし')
-  order by company_id, coalesce(valid_until, (checked_on + interval '1 year' - interval '1 day')::date) desc
+  select distinct on (m.with_test, c.company_id) m.with_test, c.company_id, c.result, c.checked_on,
+         coalesce(c.valid_until, (c.checked_on + interval '1 year' - interval '1 day')::date) as valid_until
+  from m join public.compliance_check c on (m.with_test or not c.is_test)
+  where c.result in ('該当なし','問題なし')
+  order by m.with_test, c.company_id, coalesce(c.valid_until, (c.checked_on + interval '1 year' - interval '1 day')::date) desc
 ), today as (select (now() at time zone 'Asia/Tokyo')::date as d)
-select co.company_id, co.official_name, co.registration_stage, co.is_suspended, co.is_test,
+select m.with_test, co.company_id, co.official_name, co.registration_stage, co.is_suspended, co.is_test,
        (select array_agg(t.type_code order by t.type_code) from public.company_type t where t.company_id = co.company_id) as type_codes,
        l.check_id as latest_check_id, l.result as latest_result, l.checked_on as latest_checked_on,
        l.source as latest_source, l.trigger_kind as latest_trigger,
@@ -238,10 +241,21 @@ select co.company_id, co.official_name, co.registration_stage, co.is_suspended, 
          else '未実施' end as status,
        case when o.valid_until >= (select d from today) then o.checked_on end as status_checked_on,
        case when o.valid_until >= (select d from today) then o.valid_until end as status_valid_until
-from public.company co
-left join r l on l.company_id = co.company_id and l.rn = 1
-left join okv o on o.company_id = co.company_id;
+from m cross join public.company co
+left join r l on l.with_test = m.with_test and l.company_id = co.company_id and l.rn = 1
+left join okv o on o.with_test = m.with_test and o.company_id = co.company_id;
+comment on view public.v_compliance_status_all is '反社チェックの今の状態の計算（会社ごとに 2 行＝with_test false：本物の回だけ／true：試しの回も数える＝試験の SF へ配る）';
+
+create or replace view public.v_compliance_status with (security_invoker = true) as
+select company_id, official_name, registration_stage, is_suspended, is_test, type_codes,
+       latest_check_id, latest_result, latest_checked_on, latest_source, latest_trigger,
+       ok_result, ok_checked_on, ok_valid_until, status, status_checked_on, status_valid_until
+from public.v_compliance_status_all where not with_test;
 comment on view public.v_compliance_status is '会社ごとの反社チェックの今の状態（毎回計算・期限切れが日付で出る・試しの回は数えない）';
+
+-- SF の申請の知らせ（credit_notice）に代表者と法人番号の区分（2026-11-15 夜・sf-intake が入れる）
+alter table public.credit_notice add column if not exists representative varchar(200);   -- SF の「代表者（役職・氏名）」
+alter table public.credit_notice add column if not exists no_corp_kind varchar(20);      -- SF の「法人番号の区分」（法人番号あり／海外法人／共同企業体／個人事業／その他）
 
 -- ===== 7. 頼む（回と項目を作る＝依頼待ち。送るのは関数） =====
 -- 返り値＝作った回の check_id。作らなかったとき（試験の会社・調べている途中・同じ稟議で作った・有効な結果がある）は null。
@@ -249,7 +263,7 @@ create or replace function public.antisocial_enqueue(p_company_id varchar, p_tri
 returns bigint language plpgsql security definer set search_path = public as $$
 declare
   co record; s record; v_check bigint; v_rep text; v_entity varchar(4); v_folder varchar(80);
-  v_today date := (now() at time zone 'Asia/Tokyo')::date; v_need date;
+  v_today date := (now() at time zone 'Asia/Tokyo')::date; v_need date; v_notice_rep text; v_notice_kind text;
 begin
   if p_trigger not in ('与信の稟議','取引開始申請','登録','定期','手動') then raise exception 'きっかけが違います: %', p_trigger; end if;
   select * into co from company where company_id = p_company_id;
@@ -265,9 +279,15 @@ begin
     if exists (select 1 from v_compliance_status v where v.company_id = p_company_id
                  and v.status in ('該当なし','問題なし') and v.status_valid_until > v_need) then return null; end if;
   end if;
-  -- 代表者名の欄を先に使う（検索用の名前の欄は古い値・名前でない言葉が残っていることがある＝2026-11-15 有効の会社で 43 社が食い違い）
-  v_rep := antisocial_norm_rep(coalesce(nullif(btrim(co.representative_name), ''), co.search_rep_normalized));
-  v_entity := antisocial_entity_type(co.official_name, co.corporate_number, co.entity_class);
+  -- SF の申請の知らせ（いちばん新しい 1 通）の代表者・法人番号の区分。SF で新しく作った相手は、会社に代表者が無い（2026-11-15 夜）
+  select n.representative, n.no_corp_kind into v_notice_rep, v_notice_kind from credit_notice n
+   where n.company_id = p_company_id and (n.representative is not null or n.no_corp_kind is not null)
+   order by n.received_at desc, n.id desc limit 1;
+  -- 代表者名の欄を先に使う（検索用の名前の欄は古い値・名前でない言葉が残っていることがある＝2026-11-15 有効の会社で 43 社が食い違い）。
+  -- 会社の欄が空なら、申請の知らせの代表者（SF の「代表者（役職・氏名）」）で調べる
+  v_rep := antisocial_norm_rep(coalesce(nullif(btrim(co.representative_name), ''), nullif(btrim(v_notice_rep), ''), co.search_rep_normalized));
+  v_entity := antisocial_entity_type(co.official_name, co.corporate_number,
+                coalesce(co.entity_class, case when v_notice_kind = '個人事業' then '個人' end));
   v_folder := left(case p_trigger when '定期' then '定期' when '手動' then '手動' when '登録' then '登録' else '新規' end
                    || ' ' || to_char(v_today, 'YYYY-MM') || case when coalesce(p_is_test, false) then '（試し）' else '' end, 80);
   insert into compliance_check (company_id, checked_on, result, method, source, trigger_kind, trigger_ref, is_test,
@@ -489,14 +509,30 @@ grant execute on function public.antisocial_apply_result(jsonb) to service_role;
 grant execute on function public.antisocial_apply_decisions(jsonb) to service_role;
 grant execute on function public.compliance_round_refresh(bigint) to service_role;
 grant select on public.v_compliance_status to authenticated;
+grant select on public.v_compliance_status_all to authenticated;
 
--- 流した結果（SQL Editor に出るのはこの 1 行）: setting_rows 1・new_columns 8・item_table 1・companies＝会社の数・roborobo_rounds 0（初回）
+-- ===== SF への即時配信（2026-11-15 夜）=====
+-- 反社チェックの記録が変わったら、その会社を sf-export で配る（取引先の「反社チェック」「反社チェックの日」「反社チェックの有効期限」）。
+-- 配り方は今の与信と同じトリガ関数（sf_export_trigger.sql の notify_sf_export）。期限切れは日付だけで変わる＝夜の全件配信で拾う。
+-- 関数が無い DB（学習用・手元の試験）では付けない
+do $$ begin
+  if to_regprocedure('public.notify_sf_export()') is not null then
+    drop trigger if exists trg_sfx_compliance_check on public.compliance_check;
+    create trigger trg_sfx_compliance_check after insert or update or delete on public.compliance_check
+      for each row execute function public.notify_sf_export();
+  end if;
+end $$;
+
+-- 流した結果（SQL Editor に出るのはこの 1 行）: setting_rows 1・new_columns 8・item_table 1・companies＝会社の数・roborobo_rounds 0（初回）・notice_columns 2・sf_trigger 1（本番。学習用は 0）
 select (select count(*) from public.antisocial_setting) as setting_rows,
        (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'compliance_check'
           and column_name in ('source','trigger_kind','trigger_ref','is_test','requested_at','requested_by','completed_at','note')) as new_columns,
        (select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'compliance_check_item') as item_table,
        (select count(*) from public.v_compliance_status) as companies,
-       (select count(*) from public.compliance_check where source = 'roborobo') as roborobo_rounds;
+       (select count(*) from public.compliance_check where source = 'roborobo') as roborobo_rounds,
+       (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'credit_notice'
+          and column_name in ('representative','no_corp_kind')) as notice_columns,
+       (select count(*) from pg_trigger where tgname = 'trg_sfx_compliance_check') as sf_trigger;
 
 -- 【確認】 select * from antisocial_setting;
 --         select status, count(*) from v_compliance_status where not is_suspended group by status order by 2 desc;
