@@ -55,7 +55,7 @@ const TorihikisakiView = {
 
   LS: { cols: 'tmk_cols', fmt: 'tmk_fmt', theme: 'tmk_theme' },
   FORMATS: ['単票フォーム', '2カラム', 'カード', 'フォーカス', 'Excel風グリッド'],
-  NAV: [['list', '▦', '会社一覧'], ['new', '＋', '新規登録・編集'], ['group', '⛓', 'グループ・グループの与信'], ['apichk', '🔄', 'API更新チェック'],
+  NAV: [['list', '▦', '会社一覧'], ['new', '＋', '新規登録・編集'], ['group', '⛓', 'グループ・グループの与信'], ['asc', '🛡', '反社チェック'], ['apichk', '🔄', 'API更新チェック'],
     ['sys', '⇄', 'システム連携'], ['history', '🕘', '変更履歴'], ['ilog', '📡', '連携ログ']],
   TITLES: { list: '会社一覧', new: '新規登録・編集', group: 'グループ・グループの与信', apichk: 'API更新チェック', sys: 'システム連携', history: '変更履歴', ilog: '連携ログ', detail: '' },
 
@@ -236,6 +236,7 @@ const TorihikisakiView = {
   // 🔴選択肢に無い既存値は inputByDtype が「（現在値・選択肢外）」として必ず残す（値を消さない）。
   CHOICES: {
     34: ['該当', '登録なし(確認済)', '未確認'],   // 設計書03★「BOOLEANではなく3値」＋実データ2,563件が完全一致
+    38: ['該当なし', '問題なし', '取引不可'],       // 反社チェック結果の手入力（2026-11-15）。DB の決まり compliance_check_result_chk と同じ言葉
     14: ['法人', '個人'],                        // 項目名「法人/個人区分」＝定義そのもの（取得元=国税庁API）
     15: ['国内', '海外'],                        // 項目名「国内/海外区分」
     35: ['課税事業者', '免税事業者'],              // 項目名「課税/免税事業者区分」
@@ -728,6 +729,7 @@ const TorihikisakiView = {
     else if (v === 'sys') this.renderSysGlobal();
     else if (v === 'history') this.renderHistGlobal();
     else if (v === 'ilog') this.renderIlogGlobal();
+    else if (v === 'asc') this.renderAscGlobal();
     else if (v === 'group') this.renderGroupGlobal();
     else if (v === 'detail') this.renderDetail();
   },
@@ -933,7 +935,7 @@ const TorihikisakiView = {
       const [co, ty, sc, ba, bi, pl, cc, cl, st, cu, sp, br, hi, pt, nh, dc, cs] = await Promise.all([
         one('company'), one('company_type'), one('system_code'), one('bank_account'),
         one('company_billing'), one('permit_license'),
-        sb.from('compliance_check').select('*').eq('company_id', cid).order('checked_on', { ascending: false }),
+        sb.from('compliance_check').select('*').eq('company_id', cid).order('checked_on', { ascending: false }).order('check_id', { ascending: false }),
         one('credit_line'), one('company_subcontractor'), one('company_customer'), one('company_scrap'),
         sb.from('branch').select('*').eq('company_id', cid).order('branch_no'),
         sb.from('company_history').select('*').eq('company_id', cid).order('changed_at', { ascending: false }).limit(1000),
@@ -964,6 +966,7 @@ const TorihikisakiView = {
       // AIの点検の最新 1 件（2026-11-02）。表が無い（company_ai_check.sql 未実行）なら null
       const ac = await sb.from('company_ai_check').select('*').eq('company_id', cid).order('requested_at', { ascending: false }).limit(1);
       this.aiCheck = ac.error ? null : ((ac.data || [])[0] || null);
+      await this.loadAscDetail(cid);  // 反社チェック（2026-11-15）。表が無ければ null＝枠に「まだ入っていない」
       this.sel = cid;
       this.dtab = 'basic';
       this.fmtFocus = 0;
@@ -1057,7 +1060,7 @@ const TorihikisakiView = {
     let rows;
     if (table === 'company') rows = d.company ? [d.company] : [];
     else rows = d[table] || [];
-    if (table === 'compliance_check') rows = rows.slice(0, 1);
+    if (table === 'compliance_check') rows = rows.filter(r => !r.is_test).slice(0, 1);  // 試し（テスト環境）の回は欄に出さない
     const vals = rows.map(r => cols.map(c => this.fmtVal(r[c])).filter(Boolean).join(' ／ ')).filter(Boolean);
     return vals.length ? vals.join('\n') : null;
   },
@@ -1068,6 +1071,11 @@ const TorihikisakiView = {
   //   承認制の項目がCSVで一括更新できるようになるのは意図しないため。
   MANUAL_TABLES: ['company', 'compliance_check'],
   isFormEditable(f) {
+    // 最新の反社チェックが RoboRobo の回なら、その欄は直せない（結果は DB が決める・判断は RoboRobo の画面で）
+    if (f.col && f.col.startsWith('compliance_check.') && this.detail) {
+      const cur = (this.detail.compliance_check || []).filter(r => !r.is_test)[0];
+      if (cur && cur.source === 'roborobo') return false;
+    }
     if (this.isEditable(f)) return true;
     if (!this.MANUAL_OK[f.no]) return false;
     if (!f.col || f.col === '-.-' || f.col.includes('/')) return false;
@@ -1805,6 +1813,7 @@ const TorihikisakiView = {
      </div>
      <div>
       <div class="sec"><h3>AIの点検（Claude）</h3><div id="tmk-aiside"></div></div>
+      <div class="sec"><h3>反社チェック（RoboRobo）</h3><div id="tmk-asc"></div></div>
       <div class="sec"><h3>支店・枝番管理</h3><div class="mf" style="font-size:11px;margin-bottom:8px">本社=枝番000。支店は枝番を自動連番（マスタ番号‑枝番）。⚙で住所・電話も入れられます</div>
         <div id="tmk-branches"></div>
         <button class="btn btn-sm" id="tmk-addbranch" style="margin-top:6px">＋ 支店を追加</button></div>
@@ -1848,6 +1857,7 @@ const TorihikisakiView = {
     this.renderBanks();
     this.renderRowCards();
     this.refreshAiSide();
+    this.refreshAsc();
   },
 
   refreshAiSide() {
@@ -1858,6 +1868,211 @@ const TorihikisakiView = {
     const cid = this.detail.company.company_id;
     a.querySelectorAll('[data-airun]').forEach(b => { b.onclick = () => this.runAiCheck(cid, b.dataset.airun); });
     a.querySelectorAll('[data-aiput]').forEach(b => { b.onclick = () => this.applyAiFix(+b.dataset.aiput); });
+  },
+
+  // ===== 反社チェック（RoboRobo・2026-11-15 坂本さん「仕組みを構築しましょう」）=====
+  // 調べるのは RoboRobo、決めるのは経理（RoboRobo の画面で取引判断を打つ）、残すのはツール。
+  // 頼む・送る・取り込むのは関数 antisocial-check。回の結果と今の状態は DB（supabase/antisocial_check.sql）が決める。
+  ASC_FN: 'antisocial-check',
+  ascBusy: {},       // 会社ごとの「処理中」（関数の返事待ち）
+  ascFilter: 'todo', // 一覧の絞り込み
+  ASC_ITEM_COLS: 'item_id,check_id,subject,name_sent,state,hit_total,hit_high,hit_middle,hit_low,newspaper_count,blacklist_hit,compliance_url,articles,decision,decision_comment,decision_at,error_text,sent_at,received_at',
+  ASC_BADGE: { '該当なし': 'b-green', '問題なし': 'b-green', '要確認': 'b-amber', '取引不可': 'b-red', '期限切れ': 'b-red', 'エラー': 'b-red' },
+  ascBadge(s) { return s ? `<span class="badge ${this.ASC_BADGE[s] || ''}">${this.esc(s)}</span>` : '<span class="mf">—</span>'; },
+
+  async loadAscDetail(cid) {
+    if (!this.detail) return;
+    const sb = this.getClient();
+    const [it, st] = await Promise.all([
+      sb.from('compliance_check_item').select(this.ASC_ITEM_COLS).eq('company_id', cid).order('item_id', { ascending: false }).limit(40),
+      sb.from('v_compliance_status').select('status,status_checked_on,status_valid_until,latest_result,latest_trigger').eq('company_id', cid).maybeSingle(),
+    ]);
+    this.detail.cc_items = it.error ? null : (it.data || []);
+    this.detail.asc_status = st.error ? null : (st.data || null);
+  },
+
+  // 与信の知らせの窓の 1 行
+  ascStatusInline() {
+    const s = (this.detail && this.detail.asc_status) || {};
+    return this.ascBadge(s.status || '未実施') + (s.status_valid_until ? ` <span class="mf tnum">期限 ${this.esc(s.status_valid_until)}</span>` : '');
+  },
+
+  refreshAsc() {
+    const box = this.el('tmk-asc');
+    if (!box || !this.detail) return;
+    box.innerHTML = this.ascHtml();
+    const cid = this.detail.company.company_id;
+    box.querySelectorAll('[data-ascrun]').forEach(b => { b.onclick = () => this.runAsc(cid, b.dataset.ascrun); });
+  },
+
+  ascHtml() {
+    const d = this.detail;
+    if (d.cc_items === null || d.cc_items === undefined) return '<div class="mf" style="font-size:11px">反社チェックの仕組み（supabase/antisocial_check.sql）がまだ入っていません。</div>';
+    const cid = d.company.company_id;
+    const busy = !!this.ascBusy[cid];
+    const can = ['admin', 'accounting'].includes(Sync.role) && !d.company.is_test;
+    const s = d.asc_status || {};
+    const rounds = (d.compliance_check || []).filter(r => r.source === 'roborobo').sort((a, b) => b.check_id - a.check_id);
+    const latest = rounds[0] || null;
+    let html = `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">${this.ascBadge(s.status || '未実施')}`
+      + (s.status_valid_until ? `<span class="mf tnum" style="font-size:11px">調べた日 ${this.esc(s.status_checked_on || '—')}・期限 ${this.esc(s.status_valid_until)}</span>` : '') + '</div>';
+    if (latest) {
+      const items = d.cc_items.filter(x => x.check_id === latest.check_id).sort((a, b) => a.item_id - b.item_id);
+      html += `<div class="mf" style="font-size:11px;margin-bottom:4px">最新の回 ${this.esc(latest.checked_on || '')}・${this.esc(latest.trigger_kind || '')}`
+        + `${latest.trigger_ref ? '（' + this.esc(latest.trigger_ref) + '）' : ''}${latest.is_test ? '・<b>試し（テスト環境）</b>' : ''} ${this.ascBadge(latest.result)}</div>`
+        + items.map(x => this.ascItemHtml(x)).join('');
+    }
+    if (can) {
+      html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">`
+        + `<button class="btn btn-sm" data-ascrun="request"${busy ? ' disabled' : ''}>${busy ? '処理中…' : '🛡 反社チェックを流す'}</button>`
+        + (latest ? `<button class="btn btn-sm" data-ascrun="sync"${busy ? ' disabled' : ''}>↻ 結果と判断を取り込む</button>` : '') + '</div>';
+    }
+    if ((d.compliance_check || []).length > (latest ? 1 : 0)) html += this.ascHistoryHtml(d.compliance_check || []);
+    return html;
+  },
+
+  ascItemHtml(x) {
+    const hits = x.hit_total == null ? '' : `ヒット ${x.hit_total} 件（高 ${x.hit_high || 0}・中 ${x.hit_middle || 0}・低 ${x.hit_low || 0}）・新聞 ${x.newspaper_count || 0} 件`
+      + (x.blacklist_hit ? '・<b style="color:var(--primary)">ブラックリスト一致</b>' : '');
+    const top = (x.articles || []).filter(a => a.risk === 0 || a.risk === 1).slice(0, 3)
+      .map(a => `<div style="font-size:11px;line-height:1.4">・<a href="${this.esc(a.url || '#')}" target="_blank" rel="noopener">${this.esc(String(a.title || '').slice(0, 60))}</a> <span class="mf">${this.esc(a.site || '')}・${a.risk === 0 ? '高' : '中'}</span></div>`).join('');
+    const dec = x.decision == null ? '' : `<div class="mf" style="font-size:11px">取引判断: ${['保留', '承認', '否認'][x.decision]}`
+      + `${x.decision_at ? '（' + this.esc(String(x.decision_at).slice(0, 10)) + '）' : ''}${x.decision_comment ? '・' + this.esc(String(x.decision_comment).slice(0, 80)) : ''}</div>`;
+    const err = x.error_text ? `<div style="font-size:11px;color:var(--primary)">${this.esc(x.error_text)}</div>` : '';
+    const link = x.compliance_url ? `<div style="margin-top:4px"><a class="btn btn-sm" href="${this.esc(x.compliance_url)}" target="_blank" rel="noopener" title="判断（承認・否認）は RoboRobo の画面で打ちます">RoboRobo で見る ↗</a></div>` : '';
+    return `<div class="fcard" style="padding:6px 8px;margin:4px 0">
+      <div style="display:flex;justify-content:space-between;gap:6px;align-items:center"><span><b style="font-size:12px">${this.esc(x.subject)}</b> <span style="font-size:12px">${this.esc(x.name_sent)}</span></span>${this.ascBadge(x.state)}</div>
+      ${hits ? `<div class="mf" style="font-size:11px">${hits}</div>` : ''}${top}${dec}${err}${link}</div>`;
+  },
+
+  ascHistoryHtml(rows) {
+    const list = rows.slice(0, 8).map(r => `<tr><td class="tnum">${this.esc(r.checked_on || '')}</td>`
+      + `<td>${this.esc(r.source === 'roborobo' ? (r.trigger_kind || '') : (r.method || '手入力・移行'))}${r.is_test ? '（試し）' : ''}</td>`
+      + `<td>${r.result ? this.esc(r.result) : '<span class="mf">記録のみ</span>'}</td><td class="tnum">${this.esc(r.valid_until || '')}</td></tr>`).join('');
+    return `<details style="margin-top:8px"><summary class="mf" style="font-size:11px;cursor:pointer">これまでの記録（${rows.length} 件）</summary>
+      <table class="xl" style="font-size:11px;margin-top:4px"><tr><th>調べた日</th><th>きっかけ・方法</th><th>結果</th><th>有効期限</th></tr>${list}</table></details>`;
+  },
+
+  // 関数を呼ぶ（2xx 以外も本文の理由を返す）
+  async ascCall(body) {
+    const res = await Sync.getSupabase().functions.invoke(this.ASC_FN, { body });
+    if (!res.error) return res.data || {};
+    let r = null;
+    try { r = await res.error.context.json(); } catch (_) { r = null; }
+    const m = String((r && r.error) || res.error.message || res.error);
+    return Object.assign({}, r || {}, { ok: false, error: (!r && /Failed to send|not found|404/i.test(m)) ? '反社チェックの関数が未配備です' : m.slice(0, 200) });
+  },
+
+  async runAsc(cid, action) {
+    if (!cid || this.ascBusy[cid]) return;
+    if (action === 'request' && !confirm('RoboRobo へ反社チェックを頼みます（会社と代表者で最大 2 件を使います）。よろしいですか？')) return;
+    this.ascBusy[cid] = true;
+    this.refreshAsc();
+    let msg;
+    try {
+      const r = await this.ascCall({ action, company_id: cid });
+      msg = r.skipped ? r.reason : r.error ? r.error
+        : action === 'request' ? `RoboRobo へ頼みました（${r.sent || 0} 件）。結果は数分で届きます` : `取り込みました（結果 ${r.applied || 0} 件・判断 ${r.decisions || 0} 件）`;
+    } catch (e) { msg = String(e && e.message || e).slice(0, 200); }
+    this.ascBusy[cid] = false;
+    if (this.detail && this.detail.company.company_id === cid) {
+      const cc = await this.getClient().from('compliance_check').select('*').eq('company_id', cid).order('checked_on', { ascending: false }).order('check_id', { ascending: false });
+      if (!cc.error) this.detail.compliance_check = cc.data || [];
+      await this.loadAscDetail(cid);
+      this.refreshAsc();
+      this.renderDbody();
+    }
+    this.toast(msg);
+  },
+
+  // ===== 反社チェック（グローバル・左サイド） =====
+  async renderAscGlobal() {
+    const wrap = this.el('tmk-wrap');
+    if (!wrap) return;
+    wrap.innerHTML = '<p class="mf" style="padding:12px">読み込み中…</p>';
+    const sb = this.getClient();
+    let rows = [], setting = null;
+    try {
+      for (let from = 0; from < 20000; from += 1000) {   // Supabase の select は 1 回 1,000 行まで
+        const r = await sb.from('v_compliance_status')
+          .select('company_id,official_name,registration_stage,is_suspended,is_test,type_codes,status,status_checked_on,status_valid_until,latest_result,latest_checked_on,latest_trigger')
+          .order('company_id').range(from, from + 999);
+        if (r.error) throw r.error;
+        rows = rows.concat(r.data || []);
+        if ((r.data || []).length < 1000) break;
+      }
+      const s = await sb.from('antisocial_setting').select('*').eq('id', 1).maybeSingle();
+      setting = s.error ? null : s.data;
+    } catch (e) {
+      wrap.innerHTML = `<div class="alert warn">反社チェックの表を読めませんでした（${this.esc(String(e && e.message || e).slice(0, 100))}）。<code>supabase/antisocial_check.sql</code> を SQL Editor で流すと使えます。管理者・経理のみ閲覧できます。</div>`;
+      return;
+    }
+    rows = rows.filter(r => !r.is_suspended && !r.is_test);
+    const soonDay = new Date(Date.parse(this.jstToday() + 'T00:00:00Z') + 30 * 86400e3).toISOString().slice(0, 10);
+    const F = {
+      todo: ['要対応', r => ['要確認', '調査中', 'エラー', '取引不可'].includes(r.status)],
+      soon: ['期限が 30 日以内', r => ['該当なし', '問題なし'].includes(r.status) && r.status_valid_until && r.status_valid_until <= soonDay],
+      expired: ['期限切れ', r => r.status === '期限切れ'],
+      none: ['未実施', r => r.status === '未実施'],
+      ok: ['該当なし・問題なし', r => ['該当なし', '問題なし'].includes(r.status)],
+      all: ['すべて', () => true],
+    };
+    const f = F[this.ascFilter] ? this.ascFilter : 'todo';
+    const hit = rows.filter(F[f][1]);
+    const MAX = 300;
+    const typeLabel = c => ((typeof TM_META !== 'undefined' && TM_META.TYPE_CODES && TM_META.TYPE_CODES[c]) || c);
+    const canAdmin = Sync.role === 'admin';
+    const chk = (k, label) => `<label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" data-asset="${k}"${setting && setting[k] ? ' checked' : ''}${canAdmin ? '' : ' disabled'}>${label}</label>`;
+    const num = (k, w, min, max) => `<input type="number" class="inp" data-asset="${k}" value="${this.esc(String(setting[k]))}" min="${min}" max="${max}" style="width:${w}px"${canAdmin ? '' : ' disabled'}>`;
+    const settingHtml = !setting ? '' : `<details class="fcard" style="margin:8px 0"><summary style="cursor:pointer;font-size:12px"><b>設定</b> <span class="mf">自動で頼む ${setting.enabled ? 'オン' : 'オフ'}・${setting.use_prod_token ? '本番のトークン' : 'テスト環境のトークン（試し）'}・変えた人 ${this.esc(setting.updated_by || '—')}</span></summary>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-top:6px">
+        ${chk('enabled', '決まりに沿って自動で頼む')}${chk('use_prod_token', '本番のトークンを使う（契約のあと）')}
+        ${chk('on_credit', '① SF の与信の稟議・取引開始申請（申請中）で頼む')}${chk('on_register', '② ツールに会社を登録したら頼む')}
+        ${chk('periodic', '③ 1 年ごとの見直し')}${chk('check_rep', '代表者も調べる')}
+        <label style="font-size:12px">該当なしにする線 <select class="inp" data-asset="auto_rule"${canAdmin ? '' : ' disabled'}><option value="zero_hits"${setting.auto_rule === 'zero_hits' ? ' selected' : ''}>どの検索もヒット 0 件のときだけ</option><option value="no_high"${setting.auto_rule === 'no_high' ? ' selected' : ''}>注目度「高」0 件・新聞 0 件のとき</option></select></label>
+        <label style="font-size:12px">見直しの月の上限 ${num('periodic_monthly_cap', 80, 0, 1000)} 社・有効期限の ${num('periodic_days_before', 60, 0, 120)} 日前に頼む</label>
+      </div>${canAdmin ? '<div style="margin-top:6px"><button class="btn btn-sm btn-primary" id="tmk-asc-save">設定を保存</button></div>' : ''}</details>`;
+    const table = !hit.length ? '<div class="fcard mf">該当する会社はありません。</div>'
+      : '<table class="xl"><tr><th>番号</th><th>社名</th><th>種別</th><th>状態</th><th>調べた日</th><th>有効期限</th><th>最新の回</th></tr>'
+        + hit.slice(0, MAX).map(r => `<tr data-ascopen="${this.esc(r.company_id)}" style="cursor:pointer"><td class="tnum">${this.esc(r.company_id)}</td>`
+          + `<td>${this.esc(r.official_name || '')}${r.registration_stage === 'temp' ? ' <span class="badge">仮登録</span>' : ''}</td>`
+          + `<td style="font-size:11px">${this.esc((r.type_codes || []).map(typeLabel).join('・'))}</td><td>${this.ascBadge(r.status)}</td>`
+          + `<td class="tnum">${this.esc(r.status_checked_on || r.latest_checked_on || '')}</td><td class="tnum">${this.esc(r.status_valid_until || '')}</td>`
+          + `<td style="font-size:11px">${this.esc(r.latest_trigger || '')}${r.latest_result && r.latest_result !== r.status ? '（' + this.esc(r.latest_result) + '）' : ''}</td></tr>`).join('')
+        + '</table>' + (hit.length > MAX ? `<div class="mf" style="font-size:11px;margin-top:4px">ほか ${hit.length - MAX} 社</div>` : '');
+    wrap.innerHTML = `<div class="sub">有効な会社の反社チェックの状態（停止の会社・試験の会社を除く ${rows.length} 社）</div>`
+      + `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">${Object.keys(F).map(k => `<button class="btn btn-sm${k === f ? ' btn-primary' : ''}" data-ascf="${k}">${F[k][0]} ${rows.filter(F[k][1]).length}</button>`).join('')}</div>`
+      + `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0"><button class="btn btn-sm" id="tmk-asc-probe">つながりを確かめる</button><button class="btn btn-sm" id="tmk-asc-tick">今すぐ回す</button><span class="mf" id="tmk-asc-msg" style="font-size:11px"></span></div>`
+      + settingHtml + table;
+    wrap.querySelectorAll('[data-ascf]').forEach(b => { b.onclick = () => { this.ascFilter = b.dataset.ascf; this.renderAscGlobal(); }; });
+    wrap.querySelectorAll('[data-ascopen]').forEach(tr => { tr.onclick = () => this.openDetail(tr.dataset.ascopen); });
+    const msgEl = this.el('tmk-asc-msg');
+    this.el('tmk-asc-probe').onclick = async () => {
+      msgEl.textContent = '確かめています…';
+      const r = await this.ascCall({ action: 'probe' });
+      if (!r.roborobo) { msgEl.textContent = r.error || '返事がありません'; return; }
+      const one = (x, name) => !x ? '' : !x.token ? `${name}: トークンなし` : x.error ? `${name}: ${x.error}` : `${name}: つながる（今月 ${(x.month_count && x.month_count.check) || 0} 件）`;
+      msgEl.textContent = [one(r.roborobo.test, 'テスト環境'), one(r.roborobo.prod, '本番'), r.callback_secret ? '' : '結果の送付の合言葉が未設定',
+        `依頼待ち ${r.queued || 0}・要確認 ${r.reviewing || 0}`].filter(Boolean).join('／');
+    };
+    this.el('tmk-asc-tick').onclick = async () => {
+      msgEl.textContent = '回しています…';
+      const r = await this.ascCall({ action: 'tick' });
+      msgEl.textContent = r.error && r.sent === undefined ? r.error
+        : `頼んだ ${r.enqueued || 0}・送った ${r.sent || 0}・結果 ${r.applied || 0}・判断 ${r.decisions || 0}${(r.errors || []).length ? '・失敗: ' + r.errors[0] : ''}`;
+    };
+    const save = this.el('tmk-asc-save');
+    if (save) save.onclick = async () => {
+      const up = {};
+      wrap.querySelectorAll('[data-asset]').forEach(el => {
+        up[el.dataset.asset] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Math.max(0, parseInt(el.value || '0', 10) || 0) : el.value;
+      });
+      if (up.use_prod_token && !setting.use_prod_token && !confirm('本番のトークンに切り替えます（RoboRobo の契約の件数を使います）。よろしいですか？')) return;
+      const res = await Sync.getSupabase().from('antisocial_setting').update(up).eq('id', 1);   // 変えた人と時刻は DB が付ける
+      if (res.error) { alert('保存できませんでした: ' + res.error.message); return; }
+      this.toast('設定を保存しました');
+      this.renderAscGlobal();
+    };
   },
 
   // ===== AIの点検（Claude・2026-11-02 坂本さん）=====
@@ -2414,6 +2629,7 @@ const TorihikisakiView = {
       ${n.stage === '承認' ? `<span class="k">承認日</span><span class="tnum">${this.esc(n.approved_on || '—')}</span>` : ''}
       ${n.kind === '取引開始' ? '' : `<span class="k">希望額（参考）</span><span class="tnum">${fmt(n.requested_limit)}</span>`}
       ${n.project_no ? `<span class="k">案件番号</span><span>${this.esc(n.project_no)}</span>` : ''}
+      ${this.detail && this.detail.cc_items !== null && this.detail.cc_items !== undefined ? `<span class="k">反社チェック</span><span>${this.ascStatusInline()}</span>` : ''}
     </div>`;
   },
 
