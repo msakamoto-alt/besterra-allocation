@@ -451,8 +451,10 @@ begin
     end if;
     if it.item_id is null then continue; end if;
     v_at := case when coalesce(e ->> 'updatedAt', '') ~ '^\d{4}-\d{2}-\d{2}' then ((e ->> 'updatedAt')::timestamp at time zone 'Asia/Tokyo') else now() end;
-    if it.decision_at is not null and it.decision_at >= v_at and it.decision_ref is not distinct from (e ->> 'checkDecisionId')::bigint then continue; end if;
-    if it.decision_at is not null and it.decision_at > v_at then continue; end if;        -- 古い判断で上書きしない
+    -- 古い判断で上書きしない。同じ時刻なら判断の番号が新しい方を残す
+    --（RoboRobo は 1 回の判断を同じ時刻の 2 行＝コメントあり・なしで返すことがある＝2026-11-15 テスト環境で確かめた）
+    if it.decision_at is not null and (it.decision_at > v_at or (it.decision_at = v_at
+         and coalesce(it.decision_ref, 0) >= coalesce((e ->> 'checkDecisionId')::bigint, 0))) then continue; end if;
     if it.state in ('依頼待ち','調査中','エラー') then continue; end if;                    -- 結果が来る前の判断は次の回で
     update compliance_check_item set
       decision = v_dec, decision_comment = left(e ->> 'comment', 2000), decision_at = v_at,

@@ -141,6 +141,11 @@ r = await one(`select antisocial_apply_decisions($1::jsonb) as n`, [JSON.stringi
   { checkDecisionId: 7000, customerId: 900001, checkExecutionId: 800001, checkDecisionChoice: 2, comment: '古い判断', updatedAt: '2026-11-15 09:00:00' }] })]);
 ok('古い判断では上書きしない', num(r.n) === 0 && (await one(`select state from compliance_check_item where rr_execution_id = 800001`)).state === '問題なし');
 await pg.query(`select antisocial_apply_decisions($1::jsonb)`, [JSON.stringify({ checkDecisionList: [
+  { checkDecisionId: 7012, customerId: 900001, checkExecutionId: 800001, checkDecisionChoice: 1, comment: '同じ時刻のコメントあり', updatedAt: '2026-11-15 11:30:00' },
+  { checkDecisionId: 7011, customerId: 900001, checkExecutionId: 800001, checkDecisionChoice: 1, updatedAt: '2026-11-15 11:30:00' }] })]);
+r = await one(`select decision_comment, decision_ref from compliance_check_item where rr_execution_id = 800001`);
+ok('同じ時刻の 2 行（コメントあり・なし）は番号の新しい方を残す＝コメントが消えない', r.decision_comment === '同じ時刻のコメントあり' && num(r.decision_ref) === 7012, r);
+await pg.query(`select antisocial_apply_decisions($1::jsonb)`, [JSON.stringify({ checkDecisionList: [
   { checkDecisionId: 7002, customerId: 900001, checkExecutionId: 800001, checkDecisionChoice: 2, comment: '否認', updatedAt: '2026-11-15 12:00:00' }] })]);
 r = await one(`select result, valid_until from compliance_check where check_id = $1`, [c1]);
 ok('否認 → 回＝取引不可・有効期限なし', r.result === '取引不可' && r.valid_until === null, r);
