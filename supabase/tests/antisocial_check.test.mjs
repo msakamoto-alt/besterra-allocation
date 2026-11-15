@@ -92,6 +92,11 @@ ok('会社と代表者の 2 件・代表者は役職を落として関連ワー�
 ok('フォルダ名＝手動 年-月（試し）', /^手動 \d{4}-\d{2}（試し）$/.test(items[0].folder_name), items[0].folder_name);
 r = await one(`select result, source, is_test, trigger_kind, method, name_at_check, rep_at_check, requested_at from compliance_check where check_id = $1`, [c1]);
 ok('回＝調査中・roborobo・試し・時刻は DB', r.result === '調査中' && r.source === 'roborobo' && r.is_test === true && r.trigger_kind === '手動' && r.rep_at_check === '山田太郎' && r.requested_at !== null, r);
+await run('検索用の名前の欄に名前でない言葉（10002）', `update company set search_rep_normalized = 'オシマイ' where company_id = '10002';`);
+r = await one(`select antisocial_enqueue('10002','手動',null,true,'tester') as id`);
+r = await one(`select name_sent from compliance_check_item where check_id = $1 and subject = '代表者'`, [num(r.id)]);
+ok('代表者名の欄を先に使う（検索用の名前の欄は空のときだけ）', r && r.name_sent === '鈴木一郎', r);
+await run('10002 の試しの回を片付ける', `delete from compliance_check where company_id = '10002' and is_test;`);
 ok('調べている途中にもう一度頼んでも作らない', (await one(`select antisocial_enqueue('10001','手動',null,true,'tester') as id`)).id === null);
 ok('試験の会社は流さない', (await one(`select antisocial_enqueue('00009','手動',null,false,'tester') as id`)).id === null);
 r = await one(`select antisocial_enqueue('10004','手動',null,true,'tester') as id`);

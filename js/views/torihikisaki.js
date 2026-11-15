@@ -1924,8 +1924,8 @@ const TorihikisakiView = {
     }
     if (can) {
       html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">`
-        + `<button class="btn btn-sm" data-ascrun="request"${busy ? ' disabled' : ''}>${busy ? '処理中…' : '🛡 反社チェックを流す'}</button>`
-        + (latest ? `<button class="btn btn-sm" data-ascrun="sync"${busy ? ' disabled' : ''}>↻ 結果と判断を取り込む</button>` : '') + '</div>';
+        + `<button class="btn btn-sm" style="flex:0 0 auto" data-ascrun="request"${busy ? ' disabled' : ''}>${busy ? '処理中…' : '🛡 反社チェックを流す'}</button>`
+        + (latest ? `<button class="btn btn-sm" style="flex:0 0 auto" data-ascrun="sync"${busy ? ' disabled' : ''} title="RoboRobo の結果と取引判断を今すぐ取り込みます（ふだんは 10 分ごと）">↻ 判断を取り込む</button>` : '') + '</div>';
     }
     if ((d.compliance_check || []).length > (latest ? 1 : 0)) html += this.ascHistoryHtml(d.compliance_check || []);
     return html;
@@ -2023,14 +2023,15 @@ const TorihikisakiView = {
     const typeLabel = c => ((typeof TM_META !== 'undefined' && TM_META.TYPE_CODES && TM_META.TYPE_CODES[c]) || c);
     const canAdmin = Sync.role === 'admin';
     const chk = (k, label) => `<label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" data-asset="${k}"${setting && setting[k] ? ' checked' : ''}${canAdmin ? '' : ' disabled'}>${label}</label>`;
-    const num = (k, w, min, max) => `<input type="number" class="inp" data-asset="${k}" value="${this.esc(String(setting[k]))}" min="${min}" max="${max}" style="width:${w}px"${canAdmin ? '' : ' disabled'}>`;
+    const num = (k, w, min, max) => `<input type="number" class="inp" data-asset="${k}" value="${this.esc(String(setting[k]))}" min="${min}" max="${max}" style="width:${w}px;min-width:0;flex:none;display:inline-block"${canAdmin ? '' : ' disabled'}>`;
     const settingHtml = !setting ? '' : `<details class="fcard" style="margin:8px 0"><summary style="cursor:pointer;font-size:12px"><b>設定</b> <span class="mf">自動で頼む ${setting.enabled ? 'オン' : 'オフ'}・${setting.use_prod_token ? '本番のトークン' : 'テスト環境のトークン（試し）'}・変えた人 ${this.esc(setting.updated_by || '—')}</span></summary>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-top:6px">
         ${chk('enabled', '決まりに沿って自動で頼む')}${chk('use_prod_token', '本番のトークンを使う（契約のあと）')}
         ${chk('on_credit', '① SF の与信の稟議・取引開始申請（申請中）で頼む')}${chk('on_register', '② ツールに会社を登録したら頼む')}
         ${chk('periodic', '③ 1 年ごとの見直し')}${chk('check_rep', '代表者も調べる')}
         <label style="font-size:12px">該当なしにする線 <select class="inp" data-asset="auto_rule"${canAdmin ? '' : ' disabled'}><option value="zero_hits"${setting.auto_rule === 'zero_hits' ? ' selected' : ''}>どの検索もヒット 0 件のときだけ</option><option value="no_high"${setting.auto_rule === 'no_high' ? ' selected' : ''}>注目度「高」0 件・新聞 0 件のとき</option></select></label>
-        <label style="font-size:12px">見直しの月の上限 ${num('periodic_monthly_cap', 80, 0, 1000)} 社・有効期限の ${num('periodic_days_before', 60, 0, 120)} 日前に頼む</label>
+        <label style="font-size:12px;display:flex;gap:6px;align-items:center">見直しの月の上限 ${num('periodic_monthly_cap', 80, 0, 1000)} 社</label>
+        <label style="font-size:12px;display:flex;gap:6px;align-items:center">有効期限の ${num('periodic_days_before', 64, 0, 120)} 日前に見直しを頼む</label>
       </div>${canAdmin ? '<div style="margin-top:6px"><button class="btn btn-sm btn-primary" id="tmk-asc-save">設定を保存</button></div>' : ''}</details>`;
     const table = !hit.length ? '<div class="fcard mf">該当する会社はありません。</div>'
       : '<table class="xl"><tr><th>番号</th><th>社名</th><th>種別</th><th>状態</th><th>調べた日</th><th>有効期限</th><th>最新の回</th></tr>'

@@ -265,7 +265,8 @@ begin
     if exists (select 1 from v_compliance_status v where v.company_id = p_company_id
                  and v.status in ('該当なし','問題なし') and v.status_valid_until > v_need) then return null; end if;
   end if;
-  v_rep := antisocial_norm_rep(coalesce(nullif(co.search_rep_normalized, ''), co.representative_name));
+  -- 代表者名の欄を先に使う（検索用の名前の欄は古い値・名前でない言葉が残っていることがある＝2026-11-15 有効の会社で 43 社が食い違い）
+  v_rep := antisocial_norm_rep(coalesce(nullif(btrim(co.representative_name), ''), co.search_rep_normalized));
   v_entity := antisocial_entity_type(co.official_name, co.corporate_number, co.entity_class);
   v_folder := left(case p_trigger when '定期' then '定期' when '手動' then '手動' when '登録' then '登録' else '新規' end
                    || ' ' || to_char(v_today, 'YYYY-MM') || case when coalesce(p_is_test, false) then '（試し）' else '' end, 80);
