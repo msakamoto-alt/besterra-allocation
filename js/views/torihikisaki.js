@@ -630,7 +630,7 @@ const TorihikisakiView = {
     });
     this.el('tmk-kbd').textContent = navigator.platform.toLowerCase().includes('mac') ? '⌘ K' : 'Ctrl K';
     this.el('tmk-new').addEventListener('click', () => this.openChooser());
-    this.el('tmk-exp').addEventListener('click', () => this.expCSV());
+    this.el('tmk-exp').addEventListener('click', () => this.openExportChooser());
     this.el('tmk-imp').addEventListener('click', () => this.el('tmk-impf').click());
     this.el('tmk-impf').addEventListener('change', e => {
       if (e.target.files[0]) this.impCSV(e.target.files[0]);
@@ -680,7 +680,7 @@ const TorihikisakiView = {
           this.fetchAll('company', '*', 'company_id'),
           this.fetchAll('company_type', 'company_id,type_code'),
           this.fetchAll('system_code', 'company_id,system,code'),
-          this.fetchAll('credit_line', 'company_id,limit_amount,limit_type,valid_until,approved_on,used_amount'), // 与信の期限のアラート（2026-10-28 坂本さん）・グループの実効の与信（2026-11-04）
+          this.fetchAll('credit_line', 'company_id,limit_amount,limit_type,valid_until,approved_on,decided_by,used_amount'), // 与信の期限のアラート（2026-10-28 坂本さん）・グループの実効の与信（2026-11-04）・決裁者は CSV 出力（2026-11-19）
         ]);
         this.creditByCid = {};
         credits.forEach(c => { this.creditByCid[c.company_id] = c; }); // 1社1行（複数あれば後の行）
@@ -5018,29 +5018,151 @@ const TorihikisakiView = {
     return cid;
   },
 
-  // ===== CSV出力（モック互換ヘッダ「no:項目名」・一覧で解決できる値） =====
-  //   出すのは一覧で絞り込んだ会社だけ（状態・種別・検索語・並び順も一覧のまま）（2026-11-02 坂本さん）。
-  //   列は全項目のまま＝CSV取込でそのまま戻せる形を崩さない。
-  expCSV() {
+  // ===== CSV出力 =====
+  //   押すと出す中身を選ぶ（2026-11-19 坂本さん・経理が自由に出せるように）:
+  //   ① 取引先マスタ（いまの絞り込み）＝従来どおり（2026-11-02）② 取引先マスタ（停止も含む全件）③ 振込先口座（全件・1 口座 1 行）。
+  //   「全件」は試験の会社（is_test＝dev6・dev7 から来た箱）を入れない＝本物の会社だけ。
+  openExportChooser() {
     if (this.rows === null) return;
-    const list = this.filtered();
-    if (!list.length) { this.toast('絞り込みに当てはまる会社がありません'); return; }
-    const STATE_LABELS = { active: '有効', suspended: '欠番', temp: '申請中', test: 'テスト', credit: '与信期限切れ・間近', notice: '与信の稟議あり' };
-    const cond = [STATE_LABELS[this.stateFilter], this.typeFilter ? TM_META.TYPE_CODES[this.typeFilter] : '', this.filtQ ? '検索「' + this.filtQ + '」' : '']
-      .filter(Boolean);
-    const fields = TM_META.FIELDS;
-    const rows = [['取引先マスタ番号', 'システムコード', ...fields.map(f => f.no + ':' + f.name)]];
-    list.forEach(r => {
-      rows.push([+r.company_id, (this.codesByCid[r.company_id] || {}).tera || '',
-        ...fields.map(f => this.getListVal(r, f) || '')]);
+    const ov = this.el('tmk-ov-exp');
+    const n = this.filtered().length;
+    const all = this.rows.filter(r => !r.is_test).length;
+    const item = (k, title, sub) => `<button class="btn" data-exp="${k}" style="display:block;width:100%;text-align:left;padding:10px 12px;margin-bottom:8px"><b>${title}</b><br><span class="mf" style="font-size:11px">${sub}</span></button>`;
+    this.el('tmk-exp-body').innerHTML =
+      item('filtered', `取引先マスタ（いまの絞り込み・${n.toLocaleString()}社）`, '一覧で絞り込んだ会社だけ。CSV取込でそのまま戻せる形') +
+      item('all', `取引先マスタ（停止も含む全件・${all.toLocaleString()}社）`, '絞り込みに関係なく全部の会社。これも CSV取込でそのまま戻せる') +
+      item('bank', '振込先口座（全件）', '1 口座 1 行。1 社に口座が複数あれば複数行。停止した会社の口座も出す。直して CSV取込 すると口座の変更の申請になる（承認制）');
+    this.el('tmk-exp-body').querySelectorAll('[data-exp]').forEach(b => b.onclick = () => {
+      ov.classList.remove('on');
+      if (b.dataset.exp === 'bank') this.expBankCSV();
+      else this.expCSV(b.dataset.exp === 'all');
     });
-    const csv = '﻿' + rows.map(row => row.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+    ov.classList.add('on');
+  },
+
+  /** CSV の 1 セル。数字だけの文字列で先頭が 0 か 12 桁以上、または text=true の列の数字は ="…" で出す（Excel で開いても先頭の 0 や桁が崩れない）。
+   *  ="…" の形は CSV取込（impCSV）で外して読む */
+  csvCell(x, text) {
+    const s = x === null || x === undefined ? '' : String(x);
+    if (/^\d+$/.test(s) && (text || s[0] === '0' || s.length >= 12)) return `"=""${s}"""`;
+    return `"${s.replace(/"/g, '""')}"`;
+  },
+  /** rows（1 行目は見出し）を CSV で保存する。textCols＝数字でも文字列で出す列の番号 */
+  saveCSV(rows, name, textCols) {
+    const tc = new Set(textCols || []);
+    const csv = '﻿' + rows.map((row, ri) => row.map((x, ci) => this.csvCell(x, ri > 0 && tc.has(ci))).join(',')).join('\r\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    const tag = cond.map(s => s.replace(/[\\/:*?"<>|]/g, '')).join('_');
-    a.download = '取引先マスタ_' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + (tag ? '_' + tag : '') + '.csv';
+    a.download = name;
     a.click();
-    this.toast(`CSVを出力しました（${list.length.toLocaleString()}社${cond.length ? '・' + cond.join('・') : '・すべて'}）`);
+  },
+  ymdNow() { return new Date().toISOString().slice(0, 10).replace(/-/g, ''); },
+
+  /** 統合で寄せた会社: 統合先の番号 → 寄せてきた会社（A→B→C と続けて寄せた分も C に集める） */
+  mergedSourcesMap() {
+    const direct = {};
+    (this.rows || []).forEach(r => { if (r.suspend_merged_into) (direct[r.suspend_merged_into] = direct[r.suspend_merged_into] || []).push(r); });
+    const out = {};
+    Object.keys(direct).forEach(cid => {
+      const acc = []; const seen = new Set([cid]); const stack = direct[cid].slice();
+      while (stack.length) {
+        const r = stack.shift();
+        if (seen.has(r.company_id)) continue;
+        seen.add(r.company_id); acc.push(r);
+        (direct[r.company_id] || []).forEach(x => stack.push(x));
+      }
+      out[cid] = acc;
+    });
+    return out;
+  },
+
+  // 取引先マスタの CSV（モック互換ヘッダ「no:項目名」＝CSV取込でそのまま戻せる形）。
+  //   all=false: 一覧で絞り込んだ会社だけ（状態・種別・検索語・並び順も一覧のまま）（2026-11-02 坂本さん）
+  //   all=true : 停止も含む全件（試験の会社は除く）
+  //   後ろに「与信・停止・統合」の列を足す（2026-11-19）。見出しに「no:」が無いので CSV取込では読まない
+  expCSV(all) {
+    if (this.rows === null) return;
+    const list = all ? this.rows.filter(r => !r.is_test) : this.filtered();
+    if (!list.length) { this.toast('絞り込みに当てはまる会社がありません'); return; }
+    const STATE_LABELS = { active: '有効', suspended: '欠番', temp: '申請中', test: 'テスト', credit: '与信期限切れ・間近', notice: '与信の稟議あり' };
+    const cond = all ? ['全件'] : [STATE_LABELS[this.stateFilter], this.typeFilter ? TM_META.TYPE_CODES[this.typeFilter] : '', this.filtQ ? '検索「' + this.filtQ + '」' : '']
+      .filter(Boolean);
+    const fields = TM_META.FIELDS;
+    const tera = cid => (this.codesByCid[cid] || {}).tera || '';
+    const merged = this.mergedSourcesMap();
+    const MODE = { self: '単体で与信', group: 'グループの与信', exempt: '与信不要' };
+    const yn = b => b ? 'はい' : 'いいえ';
+    // 与信の行（credit_line）の項目は一覧では空になる（1 対多）＝CSV では会社の与信の行から埋める
+    const fieldVal = (r, f) => {
+      const m = (f.col || '').match(/^credit_line\.(.+)$/);
+      if (!m) return this.getListVal(r, f) || '';
+      const cr = this.creditByCid[r.company_id];
+      if (!cr) return '';
+      return m[1].split('/').map(s => cr[s.trim()]).filter(v => v !== null && v !== undefined && v !== '').join(' ');
+    };
+    const extraHead = ['与信限度額', '与信種類', '与信有効期限', '与信決裁日', '与信決裁者', '与信不要先', '与信の取り方',
+      '与信先の取引先マスタ番号', '与信先の社名', 'グループの与信限度額', 'グループの与信有効期限',
+      '停止フラグ', '停止の理由', '統合先の取引先マスタ番号', '統合で寄せた旧4桁コード', '統合で寄せた取引先マスタ番号'];
+    const head = ['取引先マスタ番号', 'システムコード', ...fields.map(f => f.no + ':' + f.name), ...extraHead];
+    const rows = [head];
+    list.forEach(r => {
+      const cr = this.creditByCid[r.company_id] || {};
+      const mode = this.creditModeOf(r);
+      const holder = mode === 'group' ? this.rowById(r.credit_holder_id) : null;
+      const hcr = holder ? (this.creditByCid[holder.company_id] || {}) : {};
+      const src = merged[r.company_id] || [];
+      rows.push([r.company_id, tera(r.company_id), ...fields.map(f => fieldVal(r, f)),
+        cr.limit_amount != null ? Number(cr.limit_amount) : '', cr.limit_type || '', cr.valid_until || '', cr.approved_on || '', cr.decided_by || '',
+        yn(!!r.credit_exempt), MODE[mode],
+        mode === 'group' ? r.credit_holder_id : '', holder ? holder.official_name : '',
+        hcr.limit_amount != null ? Number(hcr.limit_amount) : '', hcr.valid_until || '',
+        yn(!!r.is_suspended), r.suspend_reason || '', r.suspend_merged_into || '',
+        src.map(x => tera(x.company_id)).filter(Boolean).join('／'), src.map(x => x.company_id).join('／')]);
+    });
+    // 数字でも文字列で出す列: 取引先マスタ番号・システムコード・与信先／統合先の番号
+    const at = name => head.indexOf(name);
+    this.saveCSV(rows, '取引先マスタ_' + this.ymdNow() + '_' + cond.map(s => s.replace(/[\\/:*?"<>|]/g, '')).join('_') + '.csv',
+      [0, 1, at('与信先の取引先マスタ番号'), at('統合先の取引先マスタ番号')]);
+    this.toast(`CSVを出力しました（${list.length.toLocaleString()}社・${cond.join('・') || 'すべて'}）`);
+  },
+
+  // 振込先口座の CSV（2026-11-19）。1 口座 1 行・停止した会社も含めて全件（試験の会社は除く）・並びは一覧と同じ取引先コード順→優先順位。
+  //   承認状態は口座カード（bankStatus）と同じ決め方＝承認者あり→承認済み／変更の記録あり→承認待ち／どちらも無い→移行データ・未確認
+  async expBankCSV() {
+    this.toast('口座を読み込んでいます…');
+    let accs, hist;
+    try {
+      const sb = this.getClient();
+      accs = await this.fetchAll('bank_account', 'account_id,company_id,priority,bank_name,bank_code,branch_code,account_type,account_number,account_holder_kana,payment_method,approved_by,approved_at', 'account_id');
+      hist = [];
+      for (let start = 0; ; start += 1000) {   // 承認待ちの判定に使う口座の変更記録（口座の分だけ）
+        const res = await sb.from('company_history').select('company_id,column_name').eq('table_name', 'bank_account').order('history_id').range(start, start + 999);
+        if (res.error) throw new Error('company_history: ' + res.error.message);
+        hist.push(...(res.data || []));
+        if ((res.data || []).length < 1000) break;
+      }
+    } catch (e) { alert('口座を読み込めませんでした: ' + e.message); return; }
+    const histByCid = {};
+    hist.forEach(h => (histByCid[h.company_id] = histByCid[h.company_id] || []).push(h.column_name));
+    const order = {};
+    (this.rows || []).forEach((r, i) => { order[r.company_id] = i; });
+    const list = accs.filter(a => { const c = this.rowById(a.company_id); return c && !c.is_test; })
+      .sort((a, b) => (order[a.company_id] - order[b.company_id]) || ((a.priority || 1) - (b.priority || 1)));
+    const status = a => a.approved_by ? '承認済み'
+      : (histByCid[a.company_id] || []).some(col => this.bankHistMatch(col, a.priority || 1)) ? '承認待ち' : '移行データ・未確認';
+    const head = ['取引先マスタ番号', '旧4桁コード', '正式社名', '銀行名', '銀行コード', '支店コード', '預金種別', '口座番号', '口座名義（カナ）',
+      '支払方法', '優先順位', '承認状態', '承認者', '承認日', '会社の停止'];
+    const rows = [head];
+    list.forEach(a => {
+      const c = this.rowById(a.company_id);
+      rows.push([a.company_id, (this.codesByCid[a.company_id] || {}).tera || '', c.official_name || '',
+        ...['bank_name', 'bank_code', 'branch_code', 'account_type', 'account_number', 'account_holder_kana'].map(k => String(a[k] || '').trim()),  // CHAR(4) の後ろの空白を落とす
+        a.payment_method || '', a.priority || 1, status(a), a.approved_by || '', a.approved_at ? this.jstStamp(a.approved_at).slice(0, 10) : '',
+        c.is_suspended ? 'はい' : 'いいえ']);
+    });
+    this.saveCSV(rows, '取引先マスタ_口座_' + this.ymdNow() + '.csv', [0, 1, 4, 5, 7]);
+    const cos = new Set(list.map(a => a.company_id)).size;
+    this.toast(`口座のCSVを出力しました（${list.length.toLocaleString()}口座・${cos.toLocaleString()}社）`);
   },
 
   // ===== 複数列にまたがる項目の分解（CSV取込・外部API補完で使う） =====
@@ -5104,6 +5226,138 @@ const TorihikisakiView = {
     return defs.map(d => ({ col: d.col, label: d.label, val: s, dtype: d.dtype }));
   },
 
+  /** CSV取込で、複数列をまとめて出した項目（本社住所・社名カナ）の 1 セルを分解の前に整える（2026-11-19）。
+   *  CSV出力はこの項目を列の値を空白でつないで出す（本社住所＝都道府県 番地 建物／社名カナ＝全角カナ 半角カナ 半角社名）。
+   *  ・出したときのままなら '' を返す＝変更なし（以前は建物・半角社名まで番地・全角カナに入る差分が全件に出ていた）
+   *  ・直してあれば、後ろに今のままの値（建物／半角カナ 半角社名）が残っている分を外してから分解する */
+  csvSplitRaw(row, f, raw) {
+    const s = String(raw || '').trim();
+    if (s === String(this.getListVal(row, f) || '').trim()) return '';
+    const tailCols = f.no === 25 ? ['building'] : f.no === 3 ? ['name_kana_half', 'name_half'] : [];
+    const tail = tailCols.map(c => this.fmtVal(row[c])).filter(Boolean).join(' ');
+    if (tail && s.endsWith(' ' + tail)) return s.slice(0, -tail.length - 1).trim();
+    return s;
+  },
+
+  // ===== 振込先口座の CSV取込（2026-11-19 坂本さん） =====
+  //   口座の CSV（expBankCSV の形）を Excel で直して取り込む。鍵＝取引先マスタ番号＋優先順位。
+  //   直せる列＝下の BANK_CSV_COLS だけ（社名・旧4桁コード・承認状態・承認者・承認日・会社の停止は読まない）。
+  //   🔴口座は承認制のまま＝取り込んだ口座は未承認に戻り、本人以外の admin/accounting が口座カードで承認する（画面の「変更を申請」と同じ記録）。
+  //   ・出したときのままのセルは変えない。直したセルの全角の数字は半角に直して入れる（銀行コード・支店コード・口座番号）
+  //   ・優先順位がまだ無い行＝口座の追加（登録申請）。CSV に無い口座は消さない
+  BANK_CSV_COLS: { '銀行名': 'bank_name', '銀行コード': 'bank_code', '支店コード': 'branch_code', '預金種別': 'account_type',
+    '口座番号': 'account_number', '口座名義（カナ）': 'account_holder_kana', '支払方法': 'payment_method' },
+  async impBankCSV(rows) {
+    const head = rows[0];
+    const ni = head.indexOf('取引先マスタ番号'), pi = head.indexOf('優先順位');
+    const colIdx = {};
+    Object.entries(this.BANK_CSV_COLS).forEach(([h, c]) => { const i = head.indexOf(h); if (i >= 0) colIdx[c] = i; });
+    let accs;
+    try {
+      accs = await this.fetchAll('bank_account', 'account_id,company_id,priority,' + this.BANK_COLS.join(','), 'account_id');
+    } catch (e) { alert('口座を読み込めませんでした: ' + e.message); return; }
+    const byKey = {};
+    accs.forEach(a => { byKey[a.company_id + '|' + (a.priority || 1)] = a; });
+    const byNo = {};
+    (this.rows || []).forEach(r => { byNo[+r.company_id] = r; });
+    const z2h = s => s.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    const REQ = { bank_name: '銀行名', account_type: '預金種別', account_number: '口座番号', account_holder_kana: '口座名義（カナ）' };
+    const check = (c, v) => {
+      if (REQ[c] && !v) return `${REQ[c]}は空にできません`;
+      if (v === null) return '';
+      if (c === 'bank_code' && !/^\d{4}$/.test(v)) return `銀行コードは4桁の数字です（${v}）`;
+      if (c === 'branch_code' && !/^\d{3}$/.test(v)) return `支店コードは3桁の数字です（${v}）`;
+      if (c === 'account_number' && !/^[\dA-Za-z-]{1,20}$/.test(v)) return `口座番号に使えない文字があります（${v}）`;
+      if (this.BANK_CHOICES[c] && this.BANK_CHOICES[c].indexOf(v) < 0) return `${this.BANK_LABELS[c]}は ${this.BANK_CHOICES[c].join('／')} のどれかです（${v}）`;
+      return '';
+    };
+    const items = [], errs = [], seen = new Set();
+    rows.slice(1).forEach((rw, k) => {
+      const line = k + 2;
+      const rawNo = String(rw[ni] || '').trim();
+      if (!rawNo) return;
+      const co = byNo[+rawNo];
+      if (!co || co.is_test) { errs.push(`${line}行目: 取引先マスタ番号 ${rawNo} の会社がありません`); return; }
+      const priority = +String(rw[pi] || '').trim() || 1;
+      const key = co.company_id + '|' + priority;
+      if (seen.has(key)) { errs.push(`${line}行目: ${co.official_name} の第${priority}口座が CSV に 2 行あります`); return; }
+      seen.add(key);
+      const acc = byKey[key] || null;
+      const changes = [], bad = [];
+      Object.entries(colIdx).forEach(([c, i]) => {
+        const raw = String(rw[i] === undefined ? '' : rw[i]).trim();
+        const cur = acc && acc[c] !== null && acc[c] !== undefined ? String(acc[c]).trim() : '';   // 銀行コードは CHAR(4)＝3 桁だと後ろに空白が付いて返る
+        if (acc && raw === cur) return;                                   // 出したときのまま
+        let v = ['bank_code', 'branch_code', 'account_number'].includes(c) ? z2h(raw) : raw;
+        v = v || null;
+        if (!acc && c === 'payment_method' && !v) v = '振込';
+        if (this.sameVal(acc ? cur : null, v)) return;
+        const msg = check(c, v);
+        if (msg) bad.push(msg); else changes.push({ column: c, oldV: acc ? acc[c] : null, newV: v });
+      });
+      if (!acc) Object.keys(REQ).forEach(c => { if (!(c in colIdx)) bad.push(`${REQ[c]}の列がありません`); });
+      if (bad.length) { errs.push(`${line}行目（${co.official_name}・第${priority}口座）: ${bad.join('・')}`); return; }
+      if (changes.length) items.push({ cid: co.company_id, name: co.official_name, priority, acc, changes });
+    });
+    if (!items.length && !errs.length) { this.toast('変更はありません（口座のCSVは現在の値と同じです）'); return; }
+    if (items.length > 500) { alert(`口座の変更が${items.length}口座あります。一度に取り込めるのは500口座までです。CSVを分割してください。`); return; }
+    this.showBankCsvPreview(items, errs);
+  },
+  showBankCsvPreview(items, errs) {
+    const ov = this.el('tmk-ov-csv');
+    const body = this.el('tmk-csv-body');
+    const nNew = items.filter(it => !it.acc).length;
+    const lines = [];
+    items.forEach(it => it.changes.forEach(c => lines.push(`<div style="padding:5px 10px;border-bottom:1px solid var(--muted);font-size:11.5px"><b>${this.esc(it.name)}</b> 第${it.priority}口座${it.acc ? '' : '（追加）'} ${this.esc(this.BANK_LABELS[c.column])}: <span class="mf" style="text-decoration:line-through">${this.esc(c.oldV === null || c.oldV === undefined || c.oldV === '' ? '（空）' : String(c.oldV))}</span> → <b>${this.esc(c.newV === null ? '（空）' : String(c.newV))}</b></div>`)));
+    body.innerHTML = `<div class="mf" style="font-size:12px;margin-bottom:8px"><b>振込先口座 ${items.length}口座</b>（うち追加 ${nNew}）の変更を検出しました。` +
+      `適用すると変更履歴に記録され、<b>その口座は未承認に戻ります</b>（本人以外の admin/accounting が口座カードで承認）。` +
+      (errs.length ? `<div style="color:var(--red,#c0392b);margin-top:6px">⚠ 取り込めない行 ${errs.length}件（この行は適用しません）:<br>${errs.slice(0, 8).map(e => this.esc(e)).join('<br>')}${errs.length > 8 ? '<br>…' : ''}</div>` : '') + '</div>' +
+      `<div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:12px">${lines.slice(0, 40).join('')}` +
+      (lines.length > 40 ? `<div class="mf" style="padding:5px 10px;font-size:11px">…ほか${lines.length - 40}件</div>` : '') + '</div>' +
+      `<div style="display:flex;gap:8px"><button class="btn" data-tmk-ovclose>やめる</button><span style="flex:1"></span>` +
+      (items.length ? `<button class="btn btn-primary" id="tmk-csv-apply">申請する（${items.length}口座）</button>` : '') + '</div>';
+    ov.classList.add('on');
+    const btn = this.el('tmk-csv-apply');
+    if (btn) btn.onclick = () => this.applyBankCsv(items);
+  },
+  // 1 口座ずつ: 履歴（画面の申請と同じ形＝changed_by は本人の名前だけ。承認の「本人以外」の判定がこれを見る）→ 口座を更新／追加して未承認に
+  async applyBankCsv(items) {
+    const btn = this.el('tmk-csv-apply');
+    if (btn) { btn.disabled = true; btn.textContent = '申請中…'; }
+    const who = this.whoAmI();
+    const sb = this.getClient();
+    let done = 0;
+    try {
+      for (const it of items) {
+        const colName = c => it.priority > 1 ? `${c}#p${it.priority}` : c;
+        const ins = await sb.from('company_history').insert(it.changes.map(c => ({
+          company_id: it.cid, table_name: 'bank_account', column_name: colName(c.column),
+          old_value: c.oldV === null || c.oldV === undefined ? null : String(c.oldV),
+          new_value: c.newV === null ? null : String(c.newV), changed_by: who,
+        }))).select('history_id');
+        if (ins.error) throw new Error(`${it.name} 第${it.priority}口座の変更履歴の記録に失敗しました: ` + ins.error.message);
+        const patch = { approved_by: null, approved_at: null, updated_at: new Date().toISOString() };
+        it.changes.forEach(c => { patch[c.column] = c.newV; });
+        const res = it.acc
+          ? await sb.from('bank_account').update(patch).eq('account_id', it.acc.account_id)
+          : await sb.from('bank_account').insert(Object.assign({ company_id: it.cid, priority: it.priority, payment_method: '振込' }, patch));
+        if (res.error) {
+          const ids = (ins.data || []).map(r => r.history_id);
+          if (ids.length) await sb.from('company_history').delete().in('history_id', ids);
+          throw new Error(`${it.name} 第${it.priority}口座の保存に失敗しました: ` + res.error.message);
+        }
+        done++;
+      }
+    } catch (e) {
+      alert('口座のCSV取込が途中で止まりました。\n\n' + (e.message || e) + `\n\n${done}口座は申請済みです（変更履歴で確認できます）。`);
+      if (btn) { btn.disabled = false; btn.textContent = '申請する'; }
+      return;
+    }
+    this.el('tmk-ov-csv').classList.remove('on');
+    this.toast(`口座 ${done}件を申請しました（本人以外の承認待ち）`);
+    if (this.view === 'detail' && this.detail && items.some(it => it.cid === this.detail.company.company_id)) await this.openDetail(this.detail.company.company_id);
+  },
+
   // ===== CSV取込（モック互換形式・差分プレビュー→確定で履歴つき一括更新） =====
   parseCSV(t) {
     const rows = [];
@@ -5129,9 +5383,12 @@ const TorihikisakiView = {
   impCSV(file) {
     const rd = new FileReader();
     rd.onload = () => {
-      const rows = this.parseCSV(String(rd.result).replace(/^﻿/, ''));
+      // CSV出力が先頭の 0 を守るために付けた ="…" の形は外して読む（csvCell・2026-11-19）
+      const rows = this.parseCSV(String(rd.result).replace(/^﻿/, '')).map(rw => rw.map(c => { const m = /^="(.*)"$/.exec(c); return m ? m[1] : c; }));
       if (rows.length < 2) { this.toast('CSVが読めません'); return; }
       const head = rows[0];
+      // 口座の CSV（expBankCSV の形）は口座の取込へ（2026-11-19）
+      if (head.includes('口座番号') && head.includes('優先順位') && !head.some(h => /^\d+:/.test(h))) { this.impBankCSV(rows); return; }
       const ni = head.indexOf('取引先マスタ番号');
       if (ni < 0) { alert('ヘッダに『取引先マスタ番号』が必要です（CSV出力の形式で読み込めます）。'); return; }
       // "no:項目名" 列 → company.* 項目を取込対象にする。
@@ -5159,7 +5416,7 @@ const TorihikisakiView = {
           const raw = rw[ix] || '';
           if (this.SPLIT_COLS[f.no]) {
             // 1本の文字列を複数列へ分解する（本社住所・社名カナ）
-            this.splitValue(f, raw).forEach(part => {
+            this.splitValue(f, this.csvSplitRaw(row, f, raw)).forEach(part => {
               const oldV = row[part.col];
               if (this.sameVal(oldV, part.val)) return;
               changes.push({
