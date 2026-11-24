@@ -62,7 +62,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-11-15.1'; // 2026-11-15.1: 反社チェックの今の状態（v_compliance_status_all）＝AntisocialStatus__c・AntisocialCheckedOn__c・AntisocialValidUntil__c。本番の org へは本物の回だけ、試験の org へは試しの回も数えた状態（テスト環境のトークンで流した回を試験の SF で確かめる）・ビューが無い DB では送らない（antisocial_note）／2026-11-04.2: 種別「グループの親（取引なし）」だけの会社は送らない（設計 §8-2・counts.skipped_group_parent）・種別のメインを MainPartnerType__c に（SF の原価要素につなぐ・坂本さん 11/04）／2026-11-04.1: グループの与信（一括手続先・規程第20条）＝与信先の限度額・種類・期限・決裁日とグループの使用額（与信先＋一括手続先の合計）を一括手続先にも配る・CreditHolder__c（与信先の一文）・対象に与信先と一括手続先を足して同じ値でそろえる・送り先の Account に無い項目は読まず送らない（describe・meta.missing_fields）／2026-10-30.1: 試験の与信（credit_line_test）＝sandbox の稟議の結果はその org にだけ配り、本物の credit_line に上書きしない（坂本さん 10/30「UAT をすると確実にまた起きる」・会社 10487 の件）／2026-10-29.2: 個別配信で、出どころの違う試験の会社を「欠番」にも数えていた（連携ログの数だけ・配信は正しい）を直した／2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
+const VERSION = '2026-11-24.1'; // 2026-11-24.1: SF の標準の重複ルール（社名のあいまい一致）で新規が止まらないよう、保存のときに Sforce-Duplicate-Rule-Header: allowSave=true を付ける（鍵は会社マスタ ID・ハブが正本。11/23〜24 に 12633 が 12626 と似た社名で DUPLICATES_DETECTED）・失敗した会社と理由を連携ログの payload.failed に残す（20 社まで）／2026-11-15.1: 反社チェックの今の状態（v_compliance_status_all）＝AntisocialStatus__c・AntisocialCheckedOn__c・AntisocialValidUntil__c。本番の org へは本物の回だけ、試験の org へは試しの回も数えた状態（テスト環境のトークンで流した回を試験の SF で確かめる）・ビューが無い DB では送らない（antisocial_note）／2026-11-04.2: 種別「グループの親（取引なし）」だけの会社は送らない（設計 §8-2・counts.skipped_group_parent）・種別のメインを MainPartnerType__c に（SF の原価要素につなぐ・坂本さん 11/04）／2026-11-04.1: グループの与信（一括手続先・規程第20条）＝与信先の限度額・種類・期限・決裁日とグループの使用額（与信先＋一括手続先の合計）を一括手続先にも配る・CreditHolder__c（与信先の一文）・対象に与信先と一括手続先を足して同じ値でそろえる・送り先の Account に無い項目は読まず送らない（describe・meta.missing_fields）／2026-10-30.1: 試験の与信（credit_line_test）＝sandbox の稟議の結果はその org にだけ配り、本物の credit_line に上書きしない（坂本さん 10/30「UAT をすると確実にまた起きる」・会社 10487 の件）／2026-10-29.2: 個別配信で、出どころの違う試験の会社を「欠番」にも数えていた（連携ログの数だけ・配信は正しい）を直した／2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -561,11 +561,15 @@ async function loadSfAccounts(sf: Sf, targets: { ids: string[]; codes: string[] 
 
 type SfResult = { id?: string; success: boolean; created?: boolean; errors?: { statusCode?: string; message?: string }[] };
 
+// 重複ルールが「警告して保存を許す」設定のとき、API からの保存は既定で止まる（DUPLICATES_DETECTED）。この指定で警告を越えて保存する。
+// ルールが「ブロック」のときは越えない（そのときは失敗として連携ログに理由が残る）。
+const DUP_RULE_HEADER = { 'Sforce-Duplicate-Rule-Header': 'allowSave=true' };
+
 // 外部ID upsert（composite/sobjects・allOrNone=false）
 async function sfUpsertBatch(sf: Sf, records: Record<string, unknown>[]): Promise<SfResult[]> {
   const res = await fetch(`${sf.base}/services/data/${API_VERSION}/composite/sobjects/Account/HubCompanyId__c`, {
     method: 'PATCH',
-    headers: { Authorization: 'Bearer ' + sf.token, 'Content-Type': 'application/json' },
+    headers: { Authorization: 'Bearer ' + sf.token, 'Content-Type': 'application/json', ...DUP_RULE_HEADER },
     body: JSON.stringify({ allOrNone: false, records: records.map((r) => ({ attributes: { type: 'Account' }, ...r })) }),
   });
   const body = await res.json();
@@ -576,7 +580,7 @@ async function sfUpsertBatch(sf: Sf, records: Record<string, unknown>[]): Promis
 async function sfUpdateBatch(sf: Sf, records: Record<string, unknown>[]): Promise<SfResult[]> {
   const res = await fetch(`${sf.base}/services/data/${API_VERSION}/composite/sobjects`, {
     method: 'PATCH',
-    headers: { Authorization: 'Bearer ' + sf.token, 'Content-Type': 'application/json' },
+    headers: { Authorization: 'Bearer ' + sf.token, 'Content-Type': 'application/json', ...DUP_RULE_HEADER },
     body: JSON.stringify({ allOrNone: false, records: records.map((r) => ({ attributes: { type: 'Account' }, ...r })) }),
   });
   const body = await res.json();
@@ -874,7 +878,7 @@ Deno.serve(async (req) => {
       }
       const logged = await logRun(admin, { kind: 'run', action: 'export', caller, source: body.source, sf, t0,
         counts: { sent: records.length, created, updated, failed: failed.length, code_conflict: cls.code_conflict, writeback: wroteBack, skipped_suspended: cls.skipped_suspended, skipped_test: cls.skipped_test, skipped_group_parent: cls.skipped_group_parent, test_credit: cls.test_credit, group_member: cls.group_member, changed: totalChanged },
-        companyIds: hubIds, reason: body.reason, payload,
+        companyIds: hubIds, reason: body.reason, payload: failed.length ? { ...payload, failed: failed.slice(0, 20) } : payload,
         meta: { mode, scope, settle_ms: mode === 'direct' ? DIRECT_SETTLE_MS : 0, writeback, prod_target: isProdTarget, batch: BATCH, key: 'HubCompanyId__c', keep_if_empty: [...keepIfEmpty], guard: guardNote, test_credit_note: hub.testCreditNote, ...groupMeta } });
       return ({ ok: true, action, mode, org: { id: sf.orgId, name: sf.orgName, sandbox: sf.isSandbox },
         targets: targets.length, sent: records.length, test_credit: cls.test_credit, group_member: cls.group_member, ...groupMeta, created, updated, failed: failed.length, code_conflict: cls.code_conflict, skipped_suspended: cls.skipped_suspended,

@@ -4363,13 +4363,16 @@ const TorihikisakiView = {
     const p = r.payload;
     if (!p) return '<div class="mf" style="font-size:11px">送信内容: 記録なし（この版では未記録）</div>';
     const items = p.items || [];
-    if (!items.length) return '<div class="mf" style="font-size:11px">送信内容: 変更なし（Salesforce の値と同じ）</div>';
+    const failedHtml = (p.failed || []).length
+      ? '<div class="alert warn" style="font-size:11.5px;margin-top:3px;padding:4px 8px"><b>失敗</b>' + p.failed.map(x => `<div>${this.esc(x.name || '')}（${this.esc(x.company_id || '')}）: ${this.esc(x.message || '')}</div>`).join('') + '</div>'
+      : '';
+    if (!items.length) return failedHtml + '<div class="mf" style="font-size:11px">送信内容: 変更なし（Salesforce の値と同じ）</div>';
     const fmt = v => (v === null || v === undefined || v === '') ? '<span class="old">（空）</span>' : this.esc(typeof v === 'boolean' ? (v ? 'はい' : 'いいえ') : (typeof v === 'number' ? v.toLocaleString() : String(v)));
     const rows = items.slice(0, 8).map(it =>
       `<div style="margin-top:3px"><b>${this.esc(it.name || it.company_id)}</b>${it.action === 'create' ? ' <span class="badge b-amber">新規</span>' : ''}` +
       `<div style="padding-left:10px">` + it.fields.map(x => `<div>${this.esc(x.l || x.f)}: ${fmt(x.old)} → <b>${fmt(x.new)}</b></div>`).join('') + '</div></div>').join('');
     const more = (p.total_changed || items.length) > 8 ? `<div class="mf">ほか ${((p.total_changed || items.length) - 8).toLocaleString()} 社${p.truncated ? '（記録は200社まで）' : ''}</div>` : '';
-    return `<div class="mf" style="font-size:11px;margin-top:2px">送信内容（変わった項目・${(p.total_changed || items.length).toLocaleString()}社）</div><div style="font-size:11.5px">${rows}${more}</div>`;
+    return failedHtml + `<div class="mf" style="font-size:11px;margin-top:2px">送信内容（変わった項目・${(p.total_changed || items.length).toLocaleString()}社）</div><div style="font-size:11.5px">${rows}${more}</div>`;
   },
 
   // 会社詳細「システム連携状況」の Salesforce 行に、その会社の最終配信を後から埋める

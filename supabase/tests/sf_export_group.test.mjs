@@ -105,7 +105,11 @@ function sfMock(orgs) {  // orgs: { base: { orgId, sandbox, fields: [項目名],
     if (u.includes('/composite/sobjects/Account/HubCompanyId__c')) {
       const { records } = JSON.parse(init.body);
       state.upserts[base].push(...records);
+      (state.headers ||= []).push(init.headers || {});
+      const allow = String((init.headers || {})['Sforce-Duplicate-Rule-Header'] || '') === 'allowSave=true';
       return reply(records.map((r) => {
+        if ((org.dupWarn || []).includes(r.HubCompanyId__c) && !allow) return { success: false, errors: [{ statusCode: 'DUPLICATES_DETECTED', message: 'You are creating a duplicate record.' }] };
+        if ((org.dupBlock || []).includes(r.HubCompanyId__c)) return { success: false, errors: [{ statusCode: 'DUPLICATES_DETECTED', message: 'blocked' }] };
         const bad = Object.keys(r).find((k) => k !== 'attributes' && !known(k));
         return bad ? { success: false, errors: [{ statusCode: 'INVALID_FIELD', message: `No such column '${bad}'` }] } : { id: '001' + r.HubCompanyId__c, success: true, created: false };
       }));
@@ -190,7 +194,7 @@ for (const [label, body] of [['全件', { action: 'export' }], ['対象を絞る
   ok('SF に無い項目は読まない', s.soql['https://dev6.invalid'].every((q) => NOT_YET.every((k) => !q.includes(k))));
   same('meta.missing_fields', r.json.missing_fields, NOT_YET);
   same('失敗 0', r.json.failed, 0);
-  same('連携ログ: 版・group_member・対象・足した分', [h.log[0].meta.version, h.log[0].counts.group_member, [...h.log[0].company_ids].sort(), [...h.log[0].meta.group_added].sort()], ['2026-11-15.1', 2, [HOLDER, MEMBER_A, MEMBER_B], [HOLDER, MEMBER_B]]);
+  same('連携ログ: 版・group_member・対象・足した分', [h.log[0].meta.version, h.log[0].counts.group_member, [...h.log[0].company_ids].sort(), [...h.log[0].meta.group_added].sort()], ['2026-11-24.1', 2, [HOLDER, MEMBER_A, MEMBER_B], [HOLDER, MEMBER_B]]);
 }
 
 // ---------------- 3. SF に CreditHolder__c が入ったあと ----------------
@@ -367,6 +371,16 @@ const holdingDb = (extraTypes = []) => {
   const sN = sfMock(dev6(ALL_FIELDS)); const rN = await call(now, hubClient(data), { action: 'export', company_ids: ids });
   ok('反社: ビューが無い DB でも止まらず、3 項目は送らない（SF の値を空にしない）', rN.status === 200 && rN.json.ok === true
     && Object.values(sentBy(sN)).every((x) => !('AntisocialStatus__c' in x)) && String(rN.json.antisocial_note || '').includes('v_compliance_status_all'), rN.json);
+
+  // 重複ルール（2026-11-24.1）: 社名が似ているだけの警告では止まらない・止まったときは理由が連携ログに残る
+  const hW = hubClient(data, { noAntisocial: false });
+  const sW = sfMock(dev6(ALL_FIELDS, { dupWarn: [SOLO] })); const rW = await call(now, hW, { action: 'export', company_ids: ids });
+  ok('重複ルール: 警告の設定なら保存できる（failed 0）', rW.status === 200 && rW.json.failed === 0 && (sW.headers || []).length > 0 && sW.headers.every((h) => h['Sforce-Duplicate-Rule-Header'] === 'allowSave=true'), rW.json);
+  ok('重複ルール: 失敗が無ければ payload に failed を足さない', !('failed' in (hW.log[0].payload || {})), hW.log[0].payload);
+  const hB = hubClient(data, { noAntisocial: false });
+  sfMock(dev6(ALL_FIELDS, { dupBlock: [SOLO] })); const rB = await call(now, hB, { action: 'export', company_ids: ids });
+  const pf = (hB.log[0].payload || {}).failed || [];
+  ok('重複ルール: 止まった会社と理由が連携ログに残る', rB.json.failed === 1 && pf.length === 1 && pf[0].company_id === SOLO && String(pf[0].message).startsWith('DUPLICATES_DETECTED'), { failed: rB.json.failed, pf });
 }
 
 console.log(fails ? `\n${fails} FAIL` : '\nALL OK');
