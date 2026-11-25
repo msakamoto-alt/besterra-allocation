@@ -523,6 +523,37 @@ const TM_META = {
   ],
   "approval": false
  },
+ // 2026-11-25 経理の依頼: 登録日・失効日（国税庁の公表データ）。失効しても登録番号は消さずに残す。gen_meta_js.py で再生成するときはこの 2 つを維持すること
+ {
+  "no": 133,
+  "block": "インボイス・税務",
+  "name": "適格請求書 登録日",
+  "must": "推奨",
+  "must3": "任意",
+  "col": "company.invoice_registered_on",
+  "dtype": "DATE",
+  "source": "国税庁インボイスAPI",
+  "sansan": "×",
+  "types": [
+   "*"
+  ],
+  "approval": false
+ },
+ {
+  "no": 134,
+  "block": "インボイス・税務",
+  "name": "適格請求書 失効日",
+  "must": "推奨",
+  "must3": "任意",
+  "col": "company.invoice_expired_on",
+  "dtype": "DATE",
+  "source": "国税庁インボイスAPI",
+  "sansan": "×",
+  "types": [
+   "*"
+  ],
+  "approval": false
+ },
  {
   "no": 35,
   "block": "インボイス・税務",

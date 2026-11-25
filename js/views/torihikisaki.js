@@ -20,6 +20,7 @@ const TorihikisakiView = {
   rows: null,           // company 全列（初回取得でキャッシュ・一覧と表示列解決の源）
   typesByCid: {},       // company_id -> [type_code]
   codesByCid: {},       // company_id -> {system: code}
+  oldCodes: null,       // 旧コード（company_old_code）の全件。null＝表が無い（company_old_code.sql 未実行）＝カード・CSV の列を出さない（2026-11-25）
   detail: null,         // 詳細で開いている会社のテーブル束
   histAll: null,        // 変更履歴（グローバル）ビューのキャッシュ
 
@@ -698,6 +699,7 @@ const TorihikisakiView = {
         });
         this.rows = companies;
         await this.loadNotices(); // 承認の知らせ・試験の与信（2026-10-30・表が無ければ出さない）
+        await this.loadOldCodes(); // 旧コード（2026-11-25・表が無ければ出さない）
         const fc = this.el('tmk-foot-count');
         if (fc) fc.textContent = companies.length.toLocaleString();
         // 接続先の表示は固定文にしない（本番サイトで「学習用DB」と出ていた・2026-09-09）
@@ -779,7 +781,7 @@ const TorihikisakiView = {
     return vals.length ? vals.join(' ') : null;
   },
 
-  matches(r, q) {
+  matches(r, q, hits) {
     // 試験の会社（is_test＝dev6・dev7 などから来た箱・帯 00001〜09999）は「テストのみ」「すべて」のときだけ出す（2026-10-21）
     if (this.stateFilter === 'test') { if (!r.is_test) return false; }
     else if (this.stateFilter !== 'all' && this.stateFilter !== 'credit' && this.stateFilter !== 'notice' && r.is_test) return false;
@@ -790,6 +792,7 @@ const TorihikisakiView = {
     if (this.stateFilter === 'temp' && (r.registration_stage !== 'temp' || r.is_suspended)) return false;
     if (this.typeFilter && !(this.typesByCid[r.company_id] || []).includes(this.typeFilter)) return false;
     if (!q) return true;
+    if (hits && hits[r.company_id]) return true;   // 打った番号とぴったり同じコード・旧コード（2026-11-25）
     const code = (this.codesByCid[r.company_id] || {}).tera || '';
     return this.norm(r.official_name).includes(q) || this.norm(r.name_kana).includes(q)
       || this.norm(r.name_half).includes(q) || this.norm(r.corporate_number).includes(q)
@@ -798,7 +801,8 @@ const TorihikisakiView = {
 
   filtered() {
     const q = this.norm(this.filtQ);
-    const a = (this.rows || []).filter(r => this.matches(r, q));
+    const hits = this._codeHits = this.codeHits(q);
+    const a = (this.rows || []).filter(r => this.matches(r, q, hits));
     // 列見出しクリックのソート（空は末尾・数値は数値順・文字は日本語順）
     if (this.sortNo) {
       const f = this.sortNo === 1 ? null : this.fieldByNo(this.sortNo);
@@ -813,7 +817,54 @@ const TorihikisakiView = {
         return String(kx).localeCompare(String(ky), 'ja') * dir;
       });
     }
-    return a;
+    return q ? this.hitsFirst(a, hits) : a;   // 打った番号とぴったり同じコードの会社をいちばん上に
+  },
+
+  // ===== 旧コード（2026-11-25 経理の依頼・見本「旧コード・社名の履歴・インボイスの日付」）=====
+  //   寄せる前の取引先コード（tera と勘定奉行は全社同じ番号）。会社に何件でも持てる・番号は今のコードと合わせて 1 社だけ（DB のトリガも止める）。
+  //   統合で寄せた会社（統合先のある欠番）のコードは、入れ直さずに寄せた先へ自動で出す。Salesforce へは送らない。
+  async loadOldCodes() {
+    try { this.oldCodes = await this.fetchAll('company_old_code', 'old_code_id,company_id,code,memo,created_by,created_at', 'old_code_id'); }
+    catch (e) { this.oldCodes = null; }   // 表がまだ無い
+  },
+  /** 統合で寄せた会社から自動で出す旧コード（その会社の今のコードと、その会社に入っていた旧コード） */
+  mergedOldCodes(cid, merged) {
+    const out = [];
+    ((merged || this.mergedSourcesMap())[cid] || []).forEach(x => {
+      const t = (this.codesByCid[x.company_id] || {}).tera;
+      if (t) out.push({ code: t, from: x, memo: '' });
+      (this.oldCodes || []).filter(o => o.company_id === x.company_id).forEach(o => out.push({ code: o.code, from: x, memo: o.memo || '' }));
+    });
+    return out;
+  },
+  /** 打った番号とぴったり同じコードの会社: company_id → { rank, code, why }（rank 0＝今のコード・1＝旧コード） */
+  codeHits(nq) {
+    const out = {};
+    if (!nq) return out;
+    const put = (cid, rank, code, why) => { if (!out[cid] || rank < out[cid].rank) out[cid] = { rank, code: String(code), why: why || '' }; };
+    Object.keys(this.codesByCid).forEach(cid => { const t = this.codesByCid[cid].tera; if (t && this.norm(t) === nq) put(cid, 0, t); });
+    (this.oldCodes || []).forEach(o => { if (this.norm(o.code) === nq) put(o.company_id, 1, o.code, o.memo); });
+    const merged = this.mergedSourcesMap();
+    Object.keys(merged).forEach(cid => this.mergedOldCodes(cid, merged).forEach(m => {
+      if (this.norm(m.code) === nq) put(cid, 1, m.code, `統合で寄せた ${m.from.company_id} ${m.from.official_name || ''}`);
+    }));
+    return out;
+  },
+  hitsFirst(arr, hits) {
+    const rank = r => hits[r.company_id] ? hits[r.company_id].rank : 9;
+    return arr.slice().sort((x, y) => rank(x) - rank(y));   // 同じ順位は元の並びのまま
+  },
+  oldCodeBadge(cid, hits) {
+    const h = (hits || this._codeHits || {})[cid];
+    return h && h.rank === 1 ? `<span class="badge b-red" style="margin-left:5px" title="${this.esc(h.why)}">旧コード ${this.esc(h.code)}</span>` : '';
+  },
+  /** その番号を今のコード・旧コードに持つ会社（skipId＝直している行）。無ければ null */
+  codeOwner(code, skipId) {
+    const n = this.norm(code);
+    const cid = Object.keys(this.codesByCid).find(c => ['tera', 'obc_onpre'].some(s => this.codesByCid[c][s] && this.norm(this.codesByCid[c][s]) === n));
+    if (cid) return { kind: '今のコード', row: this.rowById(cid), cid };
+    const o = (this.oldCodes || []).find(x => this.norm(x.code) === n && x.old_code_id !== skipId);
+    return o ? { kind: '旧コード', row: this.rowById(o.company_id), cid: o.company_id } : null;
   },
 
   /** 一覧の上の与信アラートの札＝期限切れ n 社・30 日以内 m 社（押すと絞り込み・もう一度で戻す）。無ければ出さない */
@@ -866,7 +917,7 @@ const TorihikisakiView = {
       const stateB = (r.is_test ? '<span class="badge b-slate" style="margin-left:5px" title="試験の org（dev6・dev7）から来た箱。作った org にだけ配り、本番 SF・PROCES.S には出ない">テスト' + (r.source_org_label ? '（' + this.esc(r.source_org_label) + '）' : '') + '</span>' : '')
         + (r.is_suspended ? '<span class="badge b-red" style="margin-left:5px">欠番</span>'
         : r.registration_stage === 'temp' ? '<span class="draftb">申請中</span>' : '')
-        + this.creditBadge(r.company_id) + this.noticeBadge(r.company_id);
+        + this.creditBadge(r.company_id) + this.noticeBadge(r.company_id) + this.oldCodeBadge(r.company_id);
       html += `<tr data-cid="${this.esc(r.company_id)}"><td class="num">${this.esc(r.company_id)}</td>` +
         cols.map((f, i) => {
           const v = this.getListVal(r, f);
@@ -968,6 +1019,10 @@ const TorihikisakiView = {
       // AIの点検の最新 1 件（2026-11-02）。表が無い（company_ai_check.sql 未実行）なら null
       const ac = await sb.from('company_ai_check').select('*').eq('company_id', cid).order('requested_at', { ascending: false }).limit(1);
       this.aiCheck = ac.error ? null : ((ac.data || [])[0] || null);
+      // 旧コード（2026-11-25）。表が無い（company_old_code.sql 未実行）なら null＝カードを出さない
+      const oc = await sb.from('company_old_code').select('*').eq('company_id', cid).order('old_code_id');
+      this.detail.company_old_code = oc.error ? null : (oc.data || []);
+      if (!oc.error) this.oldCodes = (this.oldCodes || []).filter(o => o.company_id !== cid).concat(oc.data || []);
       await this.loadAscDetail(cid);  // 反社チェック（2026-11-15）。表が無ければ null＝枠に「まだ入っていない」
       this.sel = cid;
       this.dtab = 'basic';
@@ -1095,6 +1150,20 @@ const TorihikisakiView = {
     return this.EDITABLE_TABLES.includes(f.col.split('.')[0]);
   },
 
+  // 日付の文字列 → 'YYYY-MM-DD'。日付として読めなければ null（2026-11-25）。
+  //   CSV を Excel で開いて保存すると 2025-04-01 が 2025/4/1 になる＝CSV取込で「同じ値」と見なせるよう形をそろえる。
+  //   受ける形: 2025-04-01／2025/4/1／2025.4.1／2025年4月1日（全角の数字も）。暦に無い日（2/30 など）は読めない扱い
+  isoDate(s) {
+    const t = String(s == null ? '' : s).normalize('NFKC').trim();
+    const m = /^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/.exec(t) || /^(\d{4})年(\d{1,2})月(\d{1,2})日$/.exec(t);
+    if (!m) return null;
+    const y = +m[1], mo = +m[2], d = +m[3];
+    const dt = new Date(Date.UTC(y, mo - 1, d));
+    if (y < 1000 || dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+    return m[1] + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+  },
+  isDateDt(dtype) { const dt = (dtype || '').toUpperCase(); return dt.startsWith('DATE') && !dt.startsWith('DATETIME'); },
+
   // 入力文字列 → DB値（dtype文字列で判定。f.dtype でも sub.dtype でも使えるよう分離）
   normInDt(dtype, s, norm) {
     const dt = (dtype || '').toUpperCase();
@@ -1110,6 +1179,7 @@ const TorihikisakiView = {
       const n = Number(t.replace(/,/g, '').replace(/％|%/g, ''));
       return Number.isFinite(n) ? n : null;
     }
+    if (this.isDateDt(dtype)) return this.isoDate(t) || t;   // 2025/4/1 → 2025-04-01。読めない値はそのまま返す（inputErrorDt が断る）
     return t;
   },
   normIn(f, s) { return this.normInDt(f.dtype, s); },
@@ -1120,6 +1190,7 @@ const TorihikisakiView = {
     if (t === '') return null;
     if (/^(BIGINT|INTEGER|SMALLINT)/.test(dt) && !/^-?[\d,]+$/.test(t)) return '数値で入力してください';
     if (/^NUMERIC/.test(dt) && !/^-?\d+(\.\d+)?\s*[%％]?$/.test(t)) return '数値で入力してください（例: 62.5）';
+    if (this.isDateDt(dtype) && !this.isoDate(t)) return '日付で入力してください（例: 2026-04-01）';
     const m = dt.match(/^(VARCHAR|CHAR)\((\d+)\)/);
     if (m) {
       const len = [...t].length, max = +m[2];
@@ -1409,6 +1480,7 @@ const TorihikisakiView = {
       const off = this.linkedOff(f, api);
       const inp = this.inputByDtype(plan.path, plan.dtype, api.get(plan.path),
         plan.options ? { options: plan.options, optionLabels: plan.optionLabels } : null, off);
+      if (f.no === 34) return inp + `<span class="tmk-invexp" style="flex:none">${this.invoiceExpiryBadge(api.get('company.invoice_expired_on'))}</span>`;   // 失効の札（2026-11-25）
       // 自動判定の説明は出所バッジ「自動判定」だけでよい（坂本さん指示 2026-08-28）
       return off ? inp + `<div class="mf subnote">${this.esc(off.why)}</div>` : inp;
     }
@@ -1438,6 +1510,14 @@ const TorihikisakiView = {
       }).join('') + '</div><div id="tmk-mainbox"></div></div>';
     }
     return this.roInput(api.val(f));
+  },
+
+  /** 適格請求書の失効の札: 失効日が今日まで＝「失効 日付」・先の日付＝「失効予定 日付」・無ければ出さない（2026-11-25）。失効しても登録番号は消さない */
+  invoiceExpiryBadge(v) {
+    const d = String(v === null || v === undefined ? '' : v).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '';
+    const past = d <= this.jstToday();
+    return `<span class="badge ${past ? 'b-red' : 'b-amber'}" style="white-space:nowrap">${past ? '失効' : '失効予定'} ${d}</span>`;
   },
 
   renderFieldsGeneric(host, fields, api) {
@@ -1638,6 +1718,7 @@ const TorihikisakiView = {
       const handler = () => {
         api.set(f, inp.dataset.path, inp.dataset.amt ? this.amtRaw(inp.value) : inp.value); refreshBadge(f);
         syncLinked();                       // 連動でグレーになる欄をその場で切り替える
+        if (inp.dataset.path === 'company.invoice_expired_on') host.querySelectorAll('.tmk-invexp').forEach(el => { el.innerHTML = this.invoiceExpiryBadge(inp.value); });
       };
       inp.addEventListener('input', handler);
       if (inp.dataset.amt) inp.addEventListener('blur', () => { inp.value = this.amtFmt(inp.value); });
@@ -1825,6 +1906,7 @@ const TorihikisakiView = {
       <div class="sec"><h3>支払条件</h3>
         <div class="mf" style="font-size:11px;margin-bottom:8px">発注分類区分ごとに複数持てます。締日・支払日は「月末=31」で入力</div>
         <div id="tmk-rc-payment_term"></div></div>
+      ${this.detail.company_old_code ? '<div class="sec"><h3>旧コード</h3><div id="tmk-rc-company_old_code"></div></div>' : ''}
       <div class="sec"><h3>旧社名・社名変更履歴</h3><div id="tmk-rc-company_name_history"></div></div>
       <div class="sec"><h3>Boxの原本</h3>
         <div class="mf" style="font-size:11px;margin-bottom:8px">取引口座申請書・履歴事項全部証明書・建設業許可証などの原本は
@@ -2388,6 +2470,15 @@ const TorihikisakiView = {
       if (dup) { alert(`この法人番号は登録済みです：${dup.official_name}\n二重登録はできません。`); return; }
     }
 
+    // ②''' 正式社名が変わるとき: 前の社名を履歴に残すかを窓で選ぶ（2026-11-25 経理の依頼）。窓をやめたら保存しない
+    const nm = changes.find(c => c.p.table === 'company' && c.p.column === 'official_name' && !c.p.jsonKey && c.oldV && c.newV);
+    let rename = null;
+    if (nm) {
+      this.busy = true;   // 窓が開いている間は、保存をもう一度走らせない（Enter で後ろの［保存］が押されると窓が二重に出る）
+      try { rename = await this.askRename(nm.oldV, nm.newV); } finally { this.busy = false; }
+      if (!rename) return;
+    }
+
     // ③ 書込グループを組み立てる
     //   plain … 1社1行テーブル（JSONBはキーをマージしてオブジェクトごと更新）
     //   keyed … system_code / permit_license（キー値で行が決まる・無ければinsert）
@@ -2519,6 +2610,11 @@ const TorihikisakiView = {
         (cleanupNg ? '\n\n🔴 変更履歴の取り消しにも失敗しました。company_history を確認してください。' : ''));
       return;
     }
+    // 前の社名を履歴に残す（窓で「残す」を選んだとき）。会社の保存が済んでから書く＝ここで失敗しても社名の変更は残る
+    if (rename && rename.keep) {
+      const ng = await this.addNameHistory(cid, rename.on, nm.oldV, nm.newV, who);
+      if (ng) alert('社名は保存しましたが、前の社名を履歴に残せませんでした: ' + ng + '\n\n右の「旧社名・社名変更履歴」の［＋ 旧社名を追加］から入れてください。');
+    }
     // 一覧キャッシュへ反映
     const row = (this.rows || []).find(r => r.company_id === cid);
     if (row) changes.filter(c => c.p.table === 'company' && !c.p.jsonKey).forEach(c => { row[c.p.column] = c.newV; });
@@ -2535,6 +2631,69 @@ const TorihikisakiView = {
     this.pending = {}; this.autoPaths = {}; this.autoWhy = {}; this.apiPaths = {}; this.basisDraft = '';
     this.toast(`保存しました（${n}項目・変更履歴に記録）`);
     await this.openDetail(cid);
+  },
+
+  /** 正式社名が変わるときの小さな窓。{ keep, on } を返す。［やめる］・✕・Esc・背景は null＝保存しない（2026-11-25） */
+  askRename(oldN, newN) {
+    return new Promise(resolve => {
+      const root = this.el('tab-torihikisaki') || document.body;
+      const today = this.jstToday();
+      const ov = document.createElement('div');
+      ov.className = 'ov on';
+      ov.id = 'tmk-ov-rename';
+      ov.innerHTML = `<div class="dialog" style="max-width:480px"><div class="dhd"><h3>正式社名が変わります</h3><button class="x" data-rn="x">✕</button></div>
+        <div class="dbody"><div style="font-size:12.5px;margin-bottom:10px">${this.esc(oldN)}　→　<b>${this.esc(newN)}</b></div>
+          <div class="cmode">
+            <label class="on" style="align-items:center"><input type="radio" name="tmk-rn" value="keep" checked><span>前の社名を履歴に残す</span><span class="mf" style="margin-left:auto">変更日</span><input type="date" class="inp" id="tmk-rn-on" value="${today}" max="${today}" style="padding:3px 8px"></label>
+            <label style="align-items:center"><input type="radio" name="tmk-rn" value="skip"><span>残さない（打ち間違い・表記の直し）</span></label>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:12px"><button class="btn btn-primary" data-rn="ok">保存</button><button class="btn" data-rn="x">やめる</button></div>
+        </div></div>`;
+      const done = v => { document.removeEventListener('keydown', onKey, true); ov.remove(); resolve(v); };
+      // Esc＝やめる。Ctrl+K（会社を探す窓）は効かせない＝この窓を残したまま別の会社へ移らせない
+      const onKey = e => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
+        else if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'k') { e.preventDefault(); e.stopPropagation(); }
+      };
+      ov.addEventListener('click', e => { if (e.target === ov || e.target.closest('[data-rn="x"]')) done(null); });
+      ov.querySelectorAll('input[name="tmk-rn"]').forEach(rb => { rb.onchange = () => ov.querySelectorAll('.cmode label').forEach(l => l.classList.toggle('on', l.contains(rb))); });
+      ov.querySelector('[data-rn="ok"]').onclick = () => {
+        if (ov.querySelector('input[name="tmk-rn"]:checked').value !== 'keep') { done({ keep: false }); return; }
+        const on = ov.querySelector('#tmk-rn-on').value;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(on) || on > today) { alert('変更日は、今日までの日を入れてください。'); return; }
+        // 同じ日の行は 1 行にまとめる（最初の社名 → 最後の社名）。続きでない行が同じ日にあるときは、まとめると間の社名が消えるので止める
+        const cur = ((this.detail || {}).company_name_history || []).find(r => String(r.changed_on).slice(0, 10) === on);
+        if (cur && cur.new_name && !this.sameVal(cur.new_name, oldN)) { alert(`${on} の行がすでにあります（${this.rowSummary('company_name_history', cur)}）。\n変更日を変えるか、右の「旧社名・社名変更履歴」を直してください。`); return; }
+        done({ keep: true, on });
+      };
+      document.addEventListener('keydown', onKey, true);
+      root.appendChild(ov);
+      ov.querySelector('[data-rn="ok"]').focus();   // 焦点を窓の中へ（後ろの［保存］に残さない）
+    });
+  },
+  /** 前の社名を company_name_history に残す。同じ日の行があれば 1 行にまとめる（元の社名に戻ったら行を消す）。失敗したら理由の文を返す */
+  async addNameHistory(cid, on, oldN, newN, who) {
+    const sb = this.getClient();
+    const T = 'company_name_history';
+    const by = this.oldCodes !== null ? { recorded_by: who } : {};   // 記録した人の列は 2026-11-25 の SQL で足した（日時は DB が付ける）
+    const cur = ((this.detail || {})[T] || []).find(r => String(r.changed_on).slice(0, 10) === on);
+    let res, after;
+    if (!cur) {
+      after = { changed_on: on, old_name: oldN, new_name: newN };
+      res = await sb.from(T).insert(Object.assign({ company_id: cid }, after, by));
+    } else if (this.sameVal(cur.old_name, newN)) {
+      after = null;
+      res = await sb.from(T).delete().eq('company_id', cid).eq('changed_on', on);
+    } else {
+      after = { changed_on: on, old_name: cur.old_name, new_name: newN };
+      res = await sb.from(T).update(Object.assign({ new_name: newN }, by)).eq('company_id', cid).eq('changed_on', on);
+    }
+    if (res.error) return res.error.message;
+    const rh = await sb.from('company_history').insert({
+      company_id: cid, table_name: T, column_name: `rename_${on}`,
+      old_value: cur ? this.rowSummary(T, cur) : null, new_value: after ? this.rowSummary(T, after) : null, changed_by: who,
+    });
+    return rh.error ? '変更履歴に書けませんでした（' + rh.error.message + '）' : null;
   },
 
   // ===== 与信の稟議の知らせ・試験の与信（2026-10-30〜31 坂本さん・会社 10487 の件）=====
@@ -3013,20 +3172,21 @@ const TorihikisakiView = {
     const cid = this.view === 'detail' && !this.isNew && this.detail ? this.detail.company.company_id : null;
     host.querySelectorAll('.pk[data-picker]').forEach(pk => {
       const hid = pk.querySelector('input[data-path]'); const q = pk.querySelector('.pkq'); const list = pk.querySelector('.pkl'); const x = pk.querySelector('.pkx');
-      let items = []; let sel = 0;
+      let items = []; let sel = 0; let itemHits = {};
       // 自分と自分の下の会社は親にできない（輪）。DB のトリガも止めるが、候補から外して案内する
       const exclude = new Set(cid ? [cid].concat(this.descendantsOf(cid).map(r => r.company_id)) : []);
       const show = id => { const r = id ? this.rowById(id) : null; return r ? `${r.official_name}（${r.company_id}）` : (id || ''); };
       const commit = id => { hid.value = id || ''; q.value = show(id); x.style.display = id ? '' : 'none'; list.classList.remove('on'); hid.dispatchEvent(new Event('input', { bubbles: true })); };
       const draw = () => {
-        list.innerHTML = items.length ? items.map((r, i) => `<div class="pkr${i === sel ? ' sel' : ''}" data-i="${i}">${this.esc(r.official_name)} <span class="mf tnum">${this.esc(r.company_id)}</span>${r.is_suspended ? ' <span class="badge b-red">欠番</span>' : ''}</div>`).join('') : '<div class="pkr mf">該当なし</div>';
+        list.innerHTML = items.length ? items.map((r, i) => `<div class="pkr${i === sel ? ' sel' : ''}" data-i="${i}">${this.esc(r.official_name)} <span class="mf tnum">${this.esc(r.company_id)}</span>${r.is_suspended ? ' <span class="badge b-red">欠番</span>' : ''}${this.oldCodeBadge(r.company_id, itemHits)}</div>`).join('') : '<div class="pkr mf">該当なし</div>';
         list.classList.add('on');
         list.querySelectorAll('[data-i]').forEach(el => el.onmousedown = e => { e.preventDefault(); commit(items[+el.dataset.i].company_id); });
       };
       q.addEventListener('input', () => {
         const nq = this.norm(q.value);
         if (!nq) { items = []; list.classList.remove('on'); return; }
-        items = (this.rows || []).filter(r => !exclude.has(r.company_id) && (this.norm(r.official_name).includes(nq) || this.norm(r.name_kana).includes(nq) || String(r.company_id).includes(nq))).slice(0, 12);
+        const hits = itemHits = this.codeHits(nq);
+        items = this.hitsFirst((this.rows || []).filter(r => !exclude.has(r.company_id) && (hits[r.company_id] || this.norm(r.official_name).includes(nq) || this.norm(r.name_kana).includes(nq) || String(r.company_id).includes(nq))), hits).slice(0, 12);
         sel = 0; draw();
       });
       q.addEventListener('keydown', e => {
@@ -3175,6 +3335,7 @@ const TorihikisakiView = {
       return (m[1] === 'invoice_send_to' ? '請求書送付先' : '注文書送付先') + '（' + (this.JSONB_KEY_LABEL[m[2]] || m[2]) + '）';
     }
     if (table === 'payment_term' && (m = column.match(/^term#(\d+)$/))) return `支払条件（優先${m[1]}）`;
+    if (table === 'company_old_code' && (m = column.match(/^old_(.+)$/))) return `旧コード（${m[1]}）`;
     if (table === 'company_name_history' && (m = column.match(/^rename_(.+)$/))) return `旧社名（${m[1]}）`;
     if (table === 'document' && (m = column.match(/^doc_(\w+)$/))) return `文書（${this.DOC_TYPE_LABEL[m[1]] || m[1]}）`;
     if (table === 'bank_account' && (m = column.match(/^(\w+)#p(\d+)$/)) && this.BANK_LABELS[m[1]]) {
@@ -3499,6 +3660,20 @@ const TorihikisakiView = {
       ],
       addLabel: '＋ 支払条件を追加',
     },
+    // 旧コード（2026-11-25）: 入れるのはコードとメモだけ。登録した人・日時は自動。統合で寄せた会社の分は自動で並ぶ（この画面では直せない）
+    company_old_code: {
+      pk: ['old_code_id'],
+      cols: [
+        { c: 'code', l: '旧コード', dt: 'VARCHAR(20)', req: true },
+        { c: 'memo', l: 'メモ', dt: 'VARCHAR(200)' },
+      ],
+      addLabel: '＋ 旧コードを追加',
+      rowHtml(r) { return `<b class="tnum">${this.esc(r.code)}</b>　${this.esc(r.memo || '')}<div class="mf" style="font-size:10.5px">${this.esc(this.jstStamp(r.created_at).slice(0, 10))} ${this.esc(r.created_by || '')}</div>`; },
+      autoRows() {
+        return this.mergedOldCodes(this.detail.company.company_id).map(m =>
+          `<b class="tnum">${this.esc(m.code)}</b>　統合で寄せた ${this.esc(m.from.company_id)} ${this.esc(m.from.official_name || '')}${m.memo ? '（' + this.esc(m.memo) + '）' : ''}`);
+      },
+    },
     company_name_history: {
       pk: ['changed_on'],
       cols: [
@@ -3521,12 +3696,14 @@ const TorihikisakiView = {
   rowSummary(table, r) {
     if (!r) return null;
     if (table === 'payment_term') return this.termSummary(r);
+    if (table === 'company_old_code') return `${r.code || ''}${r.memo ? ' ' + r.memo : ''}`;
     if (table === 'company_name_history') return `${r.changed_on || ''} ${r.old_name || ''} → ${r.new_name || '（現社名）'}`;
     if (table === 'document') return `${this.DOC_TYPE_LABEL[r.doc_type] || r.doc_type}: ${r.file_url || ''}${r.valid_until ? `（期限 ${r.valid_until}）` : ''}`;
     return null;
   },
   rowHistCol(table, r) {
     if (table === 'payment_term') return `term#${r.priority || 1}`;
+    if (table === 'company_old_code') return `old_${r.code || ''}`.slice(0, 40);
     if (table === 'company_name_history') return `rename_${r.changed_on || ''}`.slice(0, 40);
     if (table === 'document') return `doc_${r.doc_type || ''}`.slice(0, 40);
     return table;
@@ -3549,12 +3726,15 @@ const TorihikisakiView = {
       const isUrl = table === 'document' && /^https?:\/\//.test(r.file_url || '');
       const body = isUrl
         ? `${this.esc(this.DOC_TYPE_LABEL[r.doc_type] || r.doc_type)}: <a href="${this.esc(r.file_url)}" target="_blank" rel="noopener">${this.esc(r.file_url.length > 42 ? r.file_url.slice(0, 42) + '…' : r.file_url)}</a>${r.valid_until ? `<span class="mf tnum">（期限 ${this.esc(r.valid_until)}）</span>` : ''}`
-        : this.esc(this.rowSummary(table, r) || '');
-      html += `<div class="slink"><span class="nm2" style="font-size:11.5px">${body}</span>
+        : def.rowHtml ? def.rowHtml.call(this, r) : this.esc(this.rowSummary(table, r) || '');
+      const tip = table === 'company_name_history' && r.recorded_at ? ` title="記録 ${this.esc(this.jstStamp(r.recorded_at))} ${this.esc(r.recorded_by || '')}"` : '';
+      html += `<div class="slink"><span class="nm2" style="font-size:11.5px"${tip}>${body}</span>
         <button class="btn btn-sm" data-rcedit="${this.esc(key)}" title="変更">✎</button>
         <button class="btn btn-sm" data-rcdel="${this.esc(key)}" title="削除">✕</button></div>`;
     });
-    if (!rows.length && editing !== 'new') html += '<div class="mf" style="font-size:11px;margin-bottom:6px">まだ登録がありません。</div>';
+    const autos = def.autoRows ? def.autoRows.call(this) : [];
+    autos.forEach(h => { html += `<div class="slink"><span class="nm2" style="font-size:11.5px">${h}</span><span class="badge b-slate">自動</span></div>`; });
+    if (!rows.length && !autos.length && editing !== 'new') html += '<div class="mf" style="font-size:11px;margin-bottom:6px">まだ登録がありません。</div>';
     if (editing === 'new') html += this.rowFormHtml(table, def, null);
     else html += `<button class="btn btn-sm" data-rcadd style="margin-top:4px">${this.esc(def.addLabel)}</button>`;
     box.innerHTML = html;
@@ -3609,6 +3789,12 @@ const TorihikisakiView = {
       });
     }
     if (table === 'document' && vals.file_url && !/^https?:\/\//.test(vals.file_url)) errs.push('・URLは https:// で始まるBox共有リンクを入れてください');
+    if (table === 'company_old_code' && vals.code) {
+      vals.code = String(vals.code).normalize('NFKC').trim();
+      const own = this.codeOwner(vals.code, cur ? cur.old_code_id : null);
+      if (own) errs.push(`・${vals.code} は ${own.cid} ${(own.row || {}).official_name || ''} の${own.kind}です` +
+        (own.row && own.row.suspend_merged_into ? '（統合で寄せた会社のコードは、寄せた先に自動で並びます）' : ''));
+    }
     if (errs.length) { alert('入力を確認してください。\n\n' + [...new Set(errs)].join('\n')); return; }
     const changed = def.cols.map(c => c.c).filter(c => !this.sameVal(cur ? cur[c] : null, vals[c]));
     if (!changed.length) { this.rowEdit = null; this.renderRowCard(table); return; }
@@ -3621,15 +3807,17 @@ const TorihikisakiView = {
       if (isNew) {
         const row = Object.assign({ company_id: cid }, vals);
         if (table === 'payment_term') row.priority = Math.max(0, ...(this.detail.payment_term || []).map(r => r.priority || 0)) + 1;
+        if (table === 'company_old_code') row.created_by = who;
+        if (table === 'company_name_history' && this.oldCodes !== null) row.recorded_by = who;   // 記録した人（日時は DB が付ける・2026-11-25）
         const res = await sb.from(table).insert(row).select('*');
         if (res.error) {
-          const msg = /duplicate|23505/i.test(res.error.message || '') ? '同じ日付の行が既にあります' : res.error.message;
+          const msg = /duplicate|23505/i.test(res.error.message || '') ? (table === 'company_old_code' ? 'この番号は、すでに旧コードに入っています' : '同じ日付の行が既にあります') : res.error.message;
           throw new Error(msg);
         }
         savedRow = (res.data || [])[0] || row;
         this.detail[table] = (this.detail[table] || []).concat([savedRow]);
       } else {
-        let q = sb.from(table).update(vals);
+        let q = sb.from(table).update(table === 'company_name_history' && this.oldCodes !== null ? Object.assign({ recorded_by: who }, vals) : vals);
         def.pk.forEach(k => { q = q.eq(k, cur[k]); });
         const res = await q.eq('company_id', cid);
         if (res.error) throw new Error(res.error.message);
@@ -3650,10 +3838,15 @@ const TorihikisakiView = {
     }
     this.busy = false;
     this.rowEdit = null;
+    this.syncOldCodes(table, cid);
     this.renderRowCard(table);
     if (this.dtab === 'basic') this.renderDbody();   // フォーム側の読み取り表示を更新（未保存の編集は保持される）
     this.refreshAiSide();
     this.toast('保存しました（変更履歴に記録）');
+  },
+  /** 旧コードのカードで足した・直した・消した分を、一覧の検索の写しへ */
+  syncOldCodes(table, cid) {
+    if (table === 'company_old_code') this.oldCodes = (this.oldCodes || []).filter(o => o.company_id !== cid).concat(this.detail.company_old_code || []);
   },
   async deleteRowCard(table, key) {
     if (this.busy || !this.detail) return;
@@ -3681,6 +3874,7 @@ const TorihikisakiView = {
     }
     this.busy = false;
     this.detail[table] = (this.detail[table] || []).filter(r => r !== cur);
+    this.syncOldCodes(table, cid);
     this.renderRowCard(table);
     if (this.dtab === 'basic') this.renderDbody();
     this.refreshAiSide();
@@ -4533,9 +4727,10 @@ const TorihikisakiView = {
       q.oninput = () => {
         const nq = this.norm(q.value);
         if (!nq) { hits.innerHTML = ''; return; }
-        const found = (this.rows || []).filter(r => !r.is_suspended &&
-          (this.norm(r.official_name).includes(nq) || this.norm((this.codesByCid[r.company_id] || {}).tera).includes(nq))).slice(0, 8);
-        hits.innerHTML = found.map(r => `<div class="cmdrow" data-dcid="${this.esc(r.company_id)}">🏢 ${this.esc(r.official_name)} <span class="mf">(コード ${this.esc((this.codesByCid[r.company_id] || {}).tera || '—')})</span></div>`).join('') || '<div class="mf" style="padding:6px">該当なし</div>';
+        const ch = this.codeHits(nq);   // 打った番号とぴったり同じコード・旧コード（2026-11-25）。候補の枠（hits）と名前を分ける
+        const found = this.hitsFirst((this.rows || []).filter(r => !r.is_suspended &&
+          (ch[r.company_id] || this.norm(r.official_name).includes(nq) || this.norm((this.codesByCid[r.company_id] || {}).tera).includes(nq))), ch).slice(0, 8);
+        hits.innerHTML = found.map(r => `<div class="cmdrow" data-dcid="${this.esc(r.company_id)}">🏢 ${this.esc(r.official_name)} <span class="mf">(コード ${this.esc((this.codesByCid[r.company_id] || {}).tera || '—')})</span>${this.oldCodeBadge(r.company_id, ch)}</div>`).join('') || '<div class="mf" style="padding:6px">該当なし</div>';
         hits.querySelectorAll('[data-dcid]').forEach(x => x.onclick = async () => {
           this.el('tmk-ov-chooser').classList.remove('on');
           await this.openDetail(x.dataset.dcid);
@@ -4704,7 +4899,7 @@ const TorihikisakiView = {
     const OMIT = ['company_id', 'official_name', 'name_kana', 'name_kana_half', 'name_half', 'corporate_number',
       'representative_name', 'search_name_normalized', 'search_rep_normalized', 'sansan_soc',
       'postal_code', 'prefecture', 'address_line', 'building', 'registered_address', 'phone', 'fax', 'website_url',
-      'invoice_reg_number', 'invoice_status', 'is_suspended', 'suspend_reason', 'suspend_merged_into',
+      'invoice_reg_number', 'invoice_status', 'invoice_registered_on', 'invoice_expired_on', 'is_suspended', 'suspend_reason', 'suspend_merged_into',
       'trade_end_on', 'last_trade_on', 'registration_stage', 'data_source', 'remarks',
       'created_at', 'created_by', 'updated_at', 'updated_by'];
     const seed = {};
@@ -5107,7 +5302,8 @@ const TorihikisakiView = {
     };
     const extraHead = ['与信限度額', '与信種類', '与信有効期限', '与信決裁日', '与信決裁者', '与信不要先', '与信の取り方',
       '与信先の取引先マスタ番号', '与信先の社名', 'グループの与信限度額', 'グループの与信有効期限',
-      '停止フラグ', '停止の理由', '統合先の取引先マスタ番号', '統合で寄せた旧4桁コード', '統合で寄せた取引先マスタ番号'];
+      '停止フラグ', '停止の理由', '統合先の取引先マスタ番号', '統合で寄せた旧4桁コード', '統合で寄せた取引先マスタ番号',
+      ...(this.oldCodes !== null ? ['旧コード'] : [])];   // 旧コード（2026-11-25）＝手で入れた分。統合で寄せた分は「統合で寄せた旧4桁コード」の列
     const head = ['取引先マスタ番号', 'システムコード', ...fields.map(f => f.no + ':' + f.name), ...extraHead];
     const rows = [head];
     list.forEach(r => {
@@ -5122,12 +5318,13 @@ const TorihikisakiView = {
         mode === 'group' ? r.credit_holder_id : '', holder ? holder.official_name : '',
         hcr.limit_amount != null ? Number(hcr.limit_amount) : '', hcr.valid_until || '',
         yn(!!r.is_suspended), r.suspend_reason || '', r.suspend_merged_into || '',
-        src.map(x => tera(x.company_id)).filter(Boolean).join('／'), src.map(x => x.company_id).join('／')]);
+        src.map(x => tera(x.company_id)).filter(Boolean).join('／'), src.map(x => x.company_id).join('／'),
+        ...(this.oldCodes !== null ? [this.oldCodes.filter(o => o.company_id === r.company_id).map(o => o.code).join('／')] : [])]);
     });
     // 数字でも文字列で出す列: 取引先マスタ番号・システムコード・与信先／統合先の番号
     const at = name => head.indexOf(name);
     this.saveCSV(rows, '取引先マスタ_' + this.ymdNow() + '_' + cond.map(s => s.replace(/[\\/:*?"<>|]/g, '')).join('_') + '.csv',
-      [0, 1, at('与信先の取引先マスタ番号'), at('統合先の取引先マスタ番号')]);
+      [0, 1, at('与信先の取引先マスタ番号'), at('統合先の取引先マスタ番号'), at('旧コード')].filter(i => i >= 0));
     this.toast(`CSVを出力しました（${list.length.toLocaleString()}社・${cond.join('・') || 'すべて'}）`);
   },
 
@@ -5512,10 +5709,11 @@ const TorihikisakiView = {
 
   buildCmd(q) {
     const nq = this.norm(q);
-    this._cmdItems = (this.rows || []).filter(r => !nq || this.norm(r.official_name).includes(nq)
-      || this.norm((this.codesByCid[r.company_id] || {}).tera).includes(nq) || this.norm(String(r.company_id)).includes(nq))
+    const hits = this.codeHits(nq);
+    this._cmdItems = this.hitsFirst((this.rows || []).filter(r => !nq || hits[r.company_id] || this.norm(r.official_name).includes(nq)
+      || this.norm((this.codesByCid[r.company_id] || {}).tera).includes(nq) || this.norm(String(r.company_id)).includes(nq)), hits)
       .slice(0, 10)
-      .map(r => ({ label: `🏢 ${r.official_name}  (No.${+r.company_id}${(this.codesByCid[r.company_id] || {}).tera ? ' / ' + (this.codesByCid[r.company_id] || {}).tera : ''})`, cid: r.company_id }));
+      .map(r => ({ label: `🏢 ${r.official_name}  (No.${+r.company_id}${(this.codesByCid[r.company_id] || {}).tera ? ' / ' + (this.codesByCid[r.company_id] || {}).tera : ''})${hits[r.company_id] && hits[r.company_id].rank === 1 ? '　旧コード ' + hits[r.company_id].code : ''}`, cid: r.company_id }));
     this.drawCmd();
   },
 
