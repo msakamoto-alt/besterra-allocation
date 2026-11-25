@@ -137,7 +137,9 @@ const TorihikisakiView = {
   // ＝company_billing と同じ「無ければinsert・あればupdate」で扱う。
   EDITABLE_TABLES: ['company', 'company_billing', 'company_subcontractor', 'company_customer', 'company_scrap',
     'credit_line', 'compliance_survey'],
-  LOCKED_COLS: ['company.company_id', 'company.created_at', 'company.created_by', 'company.updated_at', 'company.updated_by'],
+  // 人が直せない列（システムが記録する・決める）。フォームでも CSV取込でも対象にしない。
+  //   company.major_class（#55 取引先大区分）は種別から自動で決まる＝CSV の値は読まない（2026-11-25。読むと、DB の欄が空の会社が取込の下見に毎回「変更」で出る）
+  LOCKED_COLS: ['company.company_id', 'company.created_at', 'company.created_by', 'company.updated_at', 'company.updated_by', 'company.major_class'],
   BANK_COLS: ['bank_name', 'bank_code', 'branch_code', 'account_type', 'account_number', 'account_holder_kana', 'payment_method', 'is_factoring'],
   BANK_LABELS: { bank_name: '銀行名', bank_code: '銀行コード', branch_code: '支店コード', account_type: '預金種別', account_number: '口座番号', account_holder_kana: '口座名義(カナ)', payment_method: '支払方法', is_factoring: 'ファクタリング' },
 
@@ -5138,6 +5140,8 @@ const TorihikisakiView = {
     const who = this.whoAmI();
     const sb = this.getClient();
     const typeCodes = typeLabels.map(l => Object.keys(TM_META.TYPE_CODES).find(c => TM_META.TYPE_CODES[c] === l)).filter(Boolean);
+    // #55 取引先大区分は種別から自動＝新規登録でも company.major_class に入れる（2026-11-25。種別を変えて保存したときにしか入れておらず、新規登録の会社は DB の欄だけ空で残っていた）
+    const majorClass = this.majorClassOf(typeCodes);
     let cid = null;
     for (let attempt = 0; attempt < 5; attempt++) {
       // 取引先番号（親コード）は DB が振る（本物の帯 10001〜・順序＝重複しない）。試験の帯は SF の受け口（sf-intake）だけが使う（2026-10-21 案 B）
@@ -5147,7 +5151,7 @@ const TorihikisakiView = {
       const res = await sb.from('company').insert(Object.assign({
         company_id: tryId, registration_stage: 'temp', data_source: method,
         created_by: who, updated_by: who,
-      }, coVals));
+      }, coVals, { major_class: majorClass }));
       if (!res.error) { cid = tryId; break; }
       if (!/duplicate|23505/i.test(res.error.message || '')) { alert('登録に失敗しました: ' + res.error.message); return null; }
     }
@@ -5199,7 +5203,7 @@ const TorihikisakiView = {
 
     // 一覧キャッシュへ反映（company 全列キャッシュに合わせる）
     if (this.rows) {
-      const row = Object.assign({ company_id: cid, is_suspended: false, registration_stage: 'temp', created_by: who, updated_by: who, data_source: method }, coVals);
+      const row = Object.assign({ company_id: cid, is_suspended: false, registration_stage: 'temp', created_by: who, updated_by: who, data_source: method }, coVals, { major_class: majorClass });
       this.rows.push(row);
       this.typesByCid[cid] = typeCodes.slice();
       (keyedRows || []).filter(g => g.table === 'system_code' && g.patch.code).forEach(g => {
