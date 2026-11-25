@@ -5613,16 +5613,23 @@ const TorihikisakiView = {
       (this.rows || []).forEach(r => byNo[+r.company_id] = r);
       const changes = [];   // {cid, f, oldV, newV}
       const skipped = [];
+      // 取り込めない値（数値・日付・桁数・文字数・はい／いいえ）は適用しない。黙ってとばさず、下見の窓に 1 行で知らせる（2026-11-25 坂本さん）
+      const unread = [];    // {cid, name, f, raw, msg}
+      const note = (row, f, raw, msg) => unread.push({ cid: row.company_id, name: row.official_name, f, raw: String(raw).trim(), msg });
       rows.slice(1).forEach(rw => {
-        const no = +rw[ni];
-        const row = byNo[no];
-        if (!row) { if (rw[ni] !== '') skipped.push(no); return; }
+        const rawNo = String(rw[ni] === undefined ? '' : rw[ni]).trim();
+        const no = +rawNo;
+        const row = rawNo === '' ? null : byNo[no];
+        if (!row) { if (rawNo !== '') skipped.push(Number.isNaN(no) ? rawNo : no); return; }   // 番号の欄が数字でない行（「合計」など）は書いてある文字のまま知らせる
         for (const ix in colIdx) {
           const f = colIdx[ix];
           const raw = rw[ix] || '';
           if (this.SPLIT_COLS[f.no]) {
             // 1本の文字列を複数列へ分解する（本社住所・社名カナ）
-            this.splitValue(f, this.csvSplitRaw(row, f, raw)).forEach(part => {
+            const parts = this.splitValue(f, this.csvSplitRaw(row, f, raw));
+            const bad = parts.map(part => this.inputErrorDt(part.dtype, part.val)).find(Boolean);
+            if (bad) { note(row, f, raw, bad); continue; }   // 列に入りきらない長さ＝適用すると履歴だけ書かれて DB で失敗する
+            parts.forEach(part => {
               const oldV = row[part.col];
               if (this.sameVal(oldV, part.val)) return;
               changes.push({
@@ -5633,33 +5640,73 @@ const TorihikisakiView = {
             });
             continue;
           }
-          const newV = this.normIn(f, raw);
+          const isBool = /^BOOLEAN/i.test(f.dtype || '');
+          const msg = isBool ? (this.csvBool(raw) === undefined ? 'はい・いいえで入力してください' : null) : this.inputError(f, raw);
+          if (msg) {
+            // 出したときのままのセル（前から入っている値が今の入力の決まりに合わないだけ）は知らせない
+            if (String(raw).trim() !== String(this.getListVal(row, f) || '').trim()) note(row, f, raw, msg);
+            continue;
+          }
+          const newV = isBool ? this.csvBool(raw) : this.normIn(f, raw);
           const oldV = row[f.col.split('.')[1]];
-          if (this.inputError(f, raw)) continue;
           if (!this.sameVal(oldV, newV)) changes.push({ cid: row.company_id, name: row.official_name, f, oldV, newV });
         }
       });
-      if (!changes.length) { this.toast('変更はありません（CSVは現在の値と同じです）'); return; }
+      if (!changes.length && !unread.length && !skipped.length) { this.toast('変更はありません（CSVは現在の値と同じです）'); return; }
       if (changes.length > 500) { alert(`変更が${changes.length}件あります。一度に取り込めるのは500件までです。CSVを分割してください。`); return; }
-      this.showCsvPreview(changes, skipped);
+      this.showCsvPreview(changes, skipped, null, unread);
     };
     rd.readAsText(file, 'utf-8');
   },
 
+  // CSV取込の はい／いいえ の欄: はい・いいえ（true・false も可。大文字小文字・全角半角は問わない）→ true／false、空 → null。
+  //   それ以外（○・1 など）は undefined＝読めない値（以前は「いいえ」と読んでいた）
+  csvBool(raw) {
+    const t = String(raw == null ? '' : raw).normalize('NFKC').trim().toLowerCase();
+    if (t === '') return null;
+    if (t === 'はい' || t === 'true') return true;
+    if (t === 'いいえ' || t === 'false') return false;
+    return undefined;
+  },
+
+  // CSV取込の下見に出す「取り込めない値」の 1 行。項目ごとに件数と例を 1 つ（番号「値」＝理由）・多い順に 3 項目まで。
+  //   1 件ずつの中身（30 件まで）は、行にマウスを乗せると出る
+  csvUnreadNote(unread) {
+    if (!unread || !unread.length) return '';
+    const cut = s => { const a = [...String(s)]; return a.length > 16 ? a.slice(0, 16).join('') + '…' : a.join(''); };
+    const groups = [], byNo = {};
+    unread.forEach(u => { let g = byNo[u.f.no]; if (!g) { g = byNo[u.f.no] = { f: u.f, items: [] }; groups.push(g); } g.items.push(u); });
+    groups.sort((a, b) => b.items.length - a.items.length);
+    const text = `⚠ 取り込めない値 ${unread.length}件はとばします: ` +
+      groups.slice(0, 3).map(g => {
+        const u = g.items[0];
+        return `${g.f.name} ${g.items.length}件（${u.cid}「${cut(u.raw)}」${g.items.length > 1 ? 'ほか' : ''}＝${u.msg.replace(/（.*$/, '')}）`;
+      }).join('・') + (groups.length > 3 ? ` …ほか${groups.length - 3}項目` : '');
+    const all = unread.slice(0, 30).map(u => `${u.cid} ${u.name} ${u.f.name}「${cut(u.raw)}」${u.msg}`).join('\n') +
+      (unread.length > 30 ? `\n…ほか${unread.length - 30}件` : '');
+    return `<div id="tmk-csv-unread" style="color:var(--red,#c0392b);margin-top:6px" title="${this.esc(all)}">${this.esc(text)}</div>`;
+  },
+
   // sourceTag: 反映経路の出所ラベル（'gBizINFO' 等）。履歴の changed_by に「(gBizINFO)」の形で残り、
   //   画面の出所バッジが「gBizINFO API」と表示する根拠になる。省略時は手動のCSV取込。
-  showCsvPreview(changes, skipped, sourceTag) {
+  //   unread: CSV取込で取り込めなかった値（impCSV）。変更が 0 件でも、知らせるものがあれば窓を出す（一覧と適用のボタンは出さない）
+  showCsvPreview(changes, skipped, sourceTag, unread) {
     this._csvSourceTag = sourceTag || 'CSV取込';
     const ov = this.el('tmk-ov-csv');
     const body = this.el('tmk-csv-body');
     const nCo = new Set(changes.map(c => c.cid)).size;
-    body.innerHTML = `<div class="mf" style="font-size:12px;margin-bottom:8px"><b>${nCo}社・${changes.length}件</b>の変更を検出しました。適用すると1件ずつ変更履歴に記録されます。${skipped.length ? `<br>⚠ マスタ番号が見つからない行: ${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? ' …' : ''}` : ''}</div>
-      <div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:12px">` +
-      changes.slice(0, 30).map(c => `<div style="padding:5px 10px;border-bottom:1px solid var(--muted);font-size:11.5px"><b>${this.esc(c.name)}</b> ${this.esc(c.f.name)}: <span class="mf" style="text-decoration:line-through">${this.esc(c.oldV === null || c.oldV === undefined ? '（空）' : String(c.oldV))}</span> → <b>${this.esc(c.newV === null ? '（空）' : String(c.newV))}</b></div>`).join('') +
-      (changes.length > 30 ? `<div class="mf" style="padding:5px 10px;font-size:11px">…ほか${changes.length - 30}件</div>` : '') +
-      `</div><div style="display:flex;gap:8px"><button class="btn" data-tmk-ovclose>やめる</button><span style="flex:1"></span><button class="btn btn-primary" id="tmk-csv-apply">適用する（${changes.length}件）</button></div>`;
+    const has = changes.length > 0;
+    body.innerHTML = `<div class="mf" style="font-size:12px;margin-bottom:8px">` +
+      (has ? `<b>${nCo}社・${changes.length}件</b>の変更を検出しました。適用すると1件ずつ変更履歴に記録されます。` : '取り込める変更はありません。') +
+      `${skipped.length ? `<br>⚠ マスタ番号が見つからない行: ${skipped.slice(0, 5).map(x => this.esc(x)).join(', ')}${skipped.length > 5 ? ' …' : ''}` : ''}${this.csvUnreadNote(unread)}</div>` +
+      (has ? `<div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:12px">` +
+        changes.slice(0, 30).map(c => `<div style="padding:5px 10px;border-bottom:1px solid var(--muted);font-size:11.5px"><b>${this.esc(c.name)}</b> ${this.esc(c.f.name)}: <span class="mf" style="text-decoration:line-through">${this.esc(c.oldV === null || c.oldV === undefined ? '（空）' : String(c.oldV))}</span> → <b>${this.esc(c.newV === null ? '（空）' : String(c.newV))}</b></div>`).join('') +
+        (changes.length > 30 ? `<div class="mf" style="padding:5px 10px;font-size:11px">…ほか${changes.length - 30}件</div>` : '') + '</div>' : '') +
+      `<div style="display:flex;gap:8px"><button class="btn" data-tmk-ovclose>${has ? 'やめる' : '閉じる'}</button><span style="flex:1"></span>` +
+      (has ? `<button class="btn btn-primary" id="tmk-csv-apply">適用する（${changes.length}件）</button>` : '') + '</div>';
     ov.classList.add('on');
-    this.el('tmk-csv-apply').onclick = () => this.applyCsv(changes);
+    const btn = this.el('tmk-csv-apply');
+    if (btn) btn.onclick = () => this.applyCsv(changes);
   },
 
   async applyCsv(changes) {
