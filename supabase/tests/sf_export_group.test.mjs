@@ -3,7 +3,7 @@
 // 使い方（npm install は要らない・Node 24 の型の除去だけ）:
 //   cd C:\Users\sakamoto\besterra-allocation\supabase\tests
 //   node sf_export_group.test.mjs            → 最後に ALL OK
-// 確かめること: グループが無ければ前の版（10-30.1）と同じものを送る／対象の広げ方／実効の与信／SF に無い項目は読まず送らない／列が無い DB でも止まらない／試験の与信／dry_run は書かない／取引の無い親は送らない／種別のメイン
+// 確かめること: グループが無ければ前の版（10-30.1）と同じものを送る／対象の広げ方／与信は会社ごと（2026-11-25.1・グループの与信の会社も自分の行）／SF に無い項目は読まず送らない／列が無い DB でも止まらない／試験の与信／dry_run は書かない／取引の無い親は送らない／種別のメイン
 import { stripTypeScriptTypes } from 'node:module';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -146,6 +146,7 @@ const db = (group = true) => ({
     { credit_id: 1, company_id: HOLDER, limit_amount: 1500000000, limit_type: '普通', valid_until: '2099-12-31', approved_on: '2025-04-01', used_amount: 410000000 },
     { credit_id: 2, company_id: MEMBER_B, limit_amount: null, limit_type: null, valid_until: null, approved_on: null, used_amount: 100000000 },
     { credit_id: 3, company_id: SOLO, limit_amount: 5000000, limit_type: '臨時', valid_until: '2027-01-31', approved_on: '2026-02-01', used_amount: 1000000 },
+    { credit_id: 4, company_id: MEMBER_A, limit_amount: 50000000, limit_type: '普通', valid_until: '2027-01-31', approved_on: '2026-01-26', used_amount: null },
   ],
   credit_line_test: [],
 });
@@ -188,13 +189,15 @@ for (const [label, body] of [['全件', { action: 'export' }], ['対象を絞る
   ok('一括手続先の保存: 200・ok', r.status === 200 && r.json.ok === true, r);
   same('与信先と同じ与信先の一括手続先も一緒に送る', keys(sent), [HOLDER, MEMBER_A, MEMBER_B]);
   same('group_added は足した分', [...r.json.group_added].sort(), [HOLDER, MEMBER_B]);
-  same('一括手続先に与信先の限度額・種類・期限・決裁日', [sent[MEMBER_A].CreditLimit__c, sent[MEMBER_A].CreditLimitType__c, sent[MEMBER_A].CreditExpiry__c, sent[MEMBER_A].CreditDecisionDate__c], [1500000000, '普通限度', '2099-12-31', '2025-04-01']);
-  same('使用額はグループの合計（与信先 4.1 億＋B 1 億）', [sent[HOLDER].CreditUsedAmount__c, sent[MEMBER_A].CreditUsedAmount__c, sent[MEMBER_B].CreditUsedAmount__c], [510000000, 510000000, 510000000]);
+  same('一括手続先には会社ごとの限度額・種類・期限・決裁日（与信先の 15 億は配らない）', [sent[MEMBER_A].CreditLimit__c, sent[MEMBER_A].CreditLimitType__c, sent[MEMBER_A].CreditExpiry__c, sent[MEMBER_A].CreditDecisionDate__c], [50000000, '普通限度', '2027-01-31', '2026-01-26']);
+  same('限度額が入っていない一括手続先は空のまま（SF では与信未）', [sent[MEMBER_B].CreditLimit__c, sent[MEMBER_B].CreditLimitType__c, sent[MEMBER_B].CreditExpiry__c, sent[MEMBER_B].CreditDecisionDate__c], [null, null, null, null]);
+  same('与信先は自分の限度額のまま', [sent[HOLDER].CreditLimit__c, sent[HOLDER].CreditLimitType__c, sent[HOLDER].CreditExpiry__c], [1500000000, '普通限度', '2099-12-31']);
+  same('使用額も会社ごと（与信先 4.1 億・A なし・B 1 億）', [sent[HOLDER].CreditUsedAmount__c, sent[MEMBER_A].CreditUsedAmount__c, sent[MEMBER_B].CreditUsedAmount__c], [410000000, null, 100000000]);
   ok('SF に無い項目は送らない（CreditHolder__c・MainPartnerType__c）', Object.values(sent).every((x) => NOT_YET.every((k) => !(k in x))));
   ok('SF に無い項目は読まない', s.soql['https://dev6.invalid'].every((q) => NOT_YET.every((k) => !q.includes(k))));
   same('meta.missing_fields', r.json.missing_fields, NOT_YET);
   same('失敗 0', r.json.failed, 0);
-  same('連携ログ: 版・group_member・対象・足した分', [h.log[0].meta.version, h.log[0].counts.group_member, [...h.log[0].company_ids].sort(), [...h.log[0].meta.group_added].sort()], ['2026-11-24.1', 2, [HOLDER, MEMBER_A, MEMBER_B], [HOLDER, MEMBER_B]]);
+  same('連携ログ: 版・group_member・対象・足した分', [h.log[0].meta.version, h.log[0].counts.group_member, [...h.log[0].company_ids].sort(), [...h.log[0].meta.group_added].sort()], ['2026-11-25.1', 2, [HOLDER, MEMBER_A, MEMBER_B], [HOLDER, MEMBER_B]]);
 }
 
 // ---------------- 3. SF に CreditHolder__c が入ったあと ----------------
@@ -218,7 +221,7 @@ for (const [label, body] of [['全件', { action: 'export' }], ['対象を絞る
   same('全件: 欠番を除く全社', keys(sent), [HOLDER, MEMBER_A, MEMBER_B, SOLO, NO_CREDIT]);
   same('全件: group_added は空・group_member 2', [r.json.group_added, r.json.group_member], [[], 2]);
   same('全件: 与信なしの会社は空のまま', [sent[NO_CREDIT].CreditLimit__c, sent[NO_CREDIT].CreditUsedAmount__c, sent[NO_CREDIT].CreditExempt__c], [null, null, true]);
-  same('全件でも使用額は同じ合計', sent[MEMBER_A].CreditUsedAmount__c, 510000000);
+  same('全件でも会社ごと（A の限度額と使用額・B の限度額と使用額）', [sent[MEMBER_A].CreditLimit__c, sent[MEMBER_A].CreditUsedAmount__c, sent[MEMBER_B].CreditLimit__c, sent[MEMBER_B].CreditUsedAmount__c], [50000000, null, null, 100000000]);
 }
 
 // ---------------- 5. SF の項目名の大文字小文字が違っても落とさない（SOQL も更新も区別しない） ----------------
@@ -272,13 +275,16 @@ for (const [label, body] of [['全件', { action: 'export' }], ['対象を絞る
   const data = db();
   data.credit_line_test.push({ id: 1, company_id: HOLDER, org_id: ORG6 + 'AAA', org_label: 'dev6', application_no: 'X', limit_amount: 99000000, limit_type: '普通', valid_until: '2027-03-31', approved_on: '2026-10-01' });
   const s = sfMock(dev6(WITHOUT_HOLDER)); const r = await call(now, hubClient(data), { action: 'export', company_ids: [MEMBER_A] });
-  same('試験の与信: 与信先の試験の行を一括手続先にも', [sentBy(s)[MEMBER_A].CreditLimit__c, sentBy(s)[HOLDER].CreditLimit__c], [99000000, 99000000]);
-  same('試験の与信: 使用額は本物の合計のまま', sentBy(s)[MEMBER_A].CreditUsedAmount__c, 510000000);
-  same('試験の与信: 数', r.json.test_credit, 3);
+  same('試験の与信: 与信先の試験の行は与信先だけ（一括手続先へは配らない）', [sentBy(s)[MEMBER_A].CreditLimit__c, sentBy(s)[HOLDER].CreditLimit__c], [50000000, 99000000]);
+  same('試験の与信: 使用額は本物の値のまま', sentBy(s)[HOLDER].CreditUsedAmount__c, 410000000);
+  same('試験の与信: 数', r.json.test_credit, 1);
+  data.credit_line_test.push({ id: 2, company_id: MEMBER_A, org_id: ORG6 + 'AAA', org_label: 'dev6', application_no: 'Y', limit_amount: 77000000, limit_type: '臨時', valid_until: '2027-06-30', approved_on: '2026-11-01' });
+  const s2 = sfMock(dev6(WITHOUT_HOLDER)); const r2 = await call(now, hubClient(data), { action: 'export', company_ids: [MEMBER_A] });
+  same('試験の与信: 一括手続先の自分の試験の行はその会社に', [sentBy(s2)[MEMBER_A].CreditLimit__c, sentBy(s2)[MEMBER_A].CreditLimitType__c, sentBy(s2)[MEMBER_B].CreditLimit__c, r2.json.test_credit], [77000000, '臨時限度', null, 2]);
 
   ENV.SF_PROD_ORG_IDS = ORG6;
   const sp = sfMock(dev6(WITHOUT_HOLDER)); await call(now, hubClient(data), { action: 'export', company_ids: [MEMBER_A] });
-  same('本番の org には試験の与信を使わない', sentBy(sp)[MEMBER_A].CreditLimit__c, 1500000000);
+  same('本番の org には試験の与信を使わない', [sentBy(sp)[MEMBER_A].CreditLimit__c, sentBy(sp)[HOLDER].CreditLimit__c], [50000000, 1500000000]);
   ENV.SF_PROD_ORG_IDS = '';
 }
 
@@ -287,6 +293,7 @@ const holdingDb = (extraTypes = []) => {
   const d = db();
   d.company_type = d.company_type.filter((t) => t.company_id !== HOLDER);
   d.company_type.push({ company_id: HOLDER, type_code: 'group_parent' }, ...extraTypes.map((t) => ({ company_id: HOLDER, type_code: t })));
+  d.credit_line = d.credit_line.filter((c) => c.company_id !== HOLDER);  // 取引の無い親は与信の欄が空のまま
   return d;
 };
 {
@@ -294,7 +301,7 @@ const holdingDb = (extraTypes = []) => {
   const r = await call(now, h, { action: 'export', company_ids: [MEMBER_A] });
   const sent = sentBy(s);
   same('取引の無い親: 親は送らず子会社だけ送る', keys(sent), [MEMBER_A, MEMBER_B]);
-  same('取引の無い親: 子会社の与信は親の行・使用額は合計', [sent[MEMBER_A].CreditLimit__c, sent[MEMBER_A].CreditUsedAmount__c], [1500000000, 510000000]);
+  same('取引の無い親: 親に限度額が無くても、子会社には会社ごとの与信が届く', [sent[MEMBER_A].CreditLimit__c, sent[MEMBER_A].CreditExpiry__c, sent[MEMBER_A].CreditUsedAmount__c, sent[MEMBER_B].CreditLimit__c], [50000000, '2027-01-31', null, null]);
   same('取引の無い親: 子会社の一文に親の名前', sent[MEMBER_A].CreditHolder__c, `グループの与信（与信先 試験親会社株式会社 ${HOLDER}）`);
   same('取引の無い親: 数（欠番の数に混ざらない）', [r.json.skipped_group_parent, r.json.skipped_suspended], [1, 0]);
   same('取引の無い親: 連携ログの数', h.log[0].counts.skipped_group_parent, 1);
@@ -343,7 +350,7 @@ const holdingDb = (extraTypes = []) => {
   ok('メインの列が無い DB: 200・ok', rOld.status === 200 && rOld.json.ok === true, rOld);
   ok('メインの列が無い DB: group_note に理由', String(rOld.json.group_note || '').includes('main_type_code'), rOld.json.group_note);
   same('メインの列が無い DB: 1 つならそれ・選べない分は空', [sentBy(sOld)[V.ONE].MainPartnerType__c, sentBy(sOld)[V.TWO_MAIN].MainPartnerType__c], ['外注（請負）', null]);
-  same('メインの列が無い DB: グループの与信は動く', sentBy(sOld)[MEMBER_A].CreditLimit__c, 1500000000);
+  same('メインの列が無い DB: グループの与信は動く（会社ごとの限度額・与信先の一文）', [sentBy(sOld)[MEMBER_A].CreditLimit__c, sentBy(sOld)[MEMBER_A].CreditHolder__c], [50000000, `グループの与信（与信先 試験親会社株式会社 ${HOLDER}）`]);
 }
 
 // ---------------- 4. 反社チェックの 3 項目（2026-11-15.1） ----------------

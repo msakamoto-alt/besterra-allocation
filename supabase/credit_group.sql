@@ -6,6 +6,9 @@
 --                   トリガが 1 行ずつ残す（常務会の日・決裁番号・入れた人。日時は DB が付ける＝人が決めない）。
 --   実効の与信（グループの子会社の限度額・期限・グループの使用額）は view v_credit_effective で読める。画面と sf-export は同じ決まりで計算する。
 --   credit_line.use_parent_credit（旧「一括手続先」・本番 29 行すべて false）は使わない。画面からは外した。列を消すのは末尾（後日）。
+-- 2026-11-25 改定「限度額は会社ごと、グループの限度額は合計」: グループの与信の会社も、限度額・種類・期限・決裁日は自分の与信の行（credit_line）に持つ。
+--   グループの限度額・使用額は、与信先＋その下の一括手続先の合計。4.2 の view をその形に作り直した（表・トリガ・別紙の記録・権限の形は 11/04 のまま）。
+--   もう流してある DB（本番ハブ）へは credit_group_per_company.sql を貼る（同じ view の定義だけ）。経緯はそちらの頭書き。
 -- 使い方: SQL Editor で実行（学習用 DB → 本番ハブ の順・何度流しても同じ）。
 --   権限（4.3）は環境で分かれる: app_role() がある本番ハブは RLS（admin・accounting だけ読める）、
 --   app_role() も user_roles も Auth ユーザーも無い学習用 DB（画面は anon・RLS 無し）は anon が読めて消せる形（書けないのは同じ）。
@@ -28,7 +31,7 @@ comment on column public.company.parent_company_id is '直接の親会社（取�
 comment on column public.company.parent_ownership_pct is '親の持株比率（%・分からなければ空）';
 comment on column public.company.parent_confirmed_on is '親子関係を確かめた日';
 comment on column public.company.parent_source is '何で確かめたか（有価証券報告書・登記・帝国データバンク・Sansan など）';
-comment on column public.company.credit_holder_id is '与信先。この会社の与信を、どの会社の限度額でまかなうか（同じグループの上の会社・単体で与信を取っている会社に限る）。空＝単体の与信。規程 KG-10 第20条の一括手続先';
+comment on column public.company.credit_holder_id is '与信先（同じグループの上の会社・自分がグループの与信でない会社に限る）。入っている会社＝規程 KG-10 第20条の一括手続先。空＝単体の与信。限度額は会社ごとに credit_line に持ち、グループの限度額は与信先＋一括手続先の合計（2026-11-25）';
 comment on column public.company.credit_listing_decided_on is '別紙『一括手続先一覧』に載せた（外した）常務会の日';
 comment on column public.company.credit_listing_ref is 'その決裁番号など';
 create index if not exists ix_company_parent on public.company (parent_company_id) where parent_company_id is not null;
@@ -159,8 +162,14 @@ select up.company_id, up.parent_company_id, up.root_id, up.depth, up.path,
 from up;
 comment on view public.v_company_group is 'グループ（親をたどった頂点・深さ・道）。輪になった会社は出ない（トリガで防いでいる）';
 
--- 4.2 実効の与信: 与信の取り方（自分／グループ／不要）・与信先・限度額など（与信先の行）・グループの使用額（与信先＋一括手続先の合計）・確認が要る印
-create or replace view public.v_credit_effective with (security_invoker = true) as
+-- 4.2 与信（会社ごとの行）とグループの合計（2026-11-25 改定「限度額は会社ごと、グループの限度額は合計」）
+--   限度額・種類・期限・決裁日・使用額・残りは会社ごとの行（グループの与信の会社も自分の行）。
+--   グループ＝与信先＋その下の一括手続先。group_limit_amount・group_used_amount・group_remaining はその合計（欠番の会社の限度額は数えない）。
+--   どちらでもない会社は、グループ＝自分 1 社（group_* は自分の値）。
+--   11/04 の形（一括手続先は与信先の行・own_credit_conflict・holder_without_credit）から列が変わるので作り直す（create or replace では列を変えられない）。
+--   権限は下の 4.3 で付け直す。この定義は credit_group_per_company.sql と同じ（tests/credit_group.test.mjs が確かめる）。
+drop view if exists public.v_credit_effective;
+create view public.v_credit_effective with (security_invoker = true) as
 with cl as (  -- credit_line は 1 社 1 行の運用。複数あれば後の行（credit_id の大きい方＝sf-export と同じ）
   select distinct on (company_id) company_id, limit_amount, limit_type, valid_until, approved_on, decided_by, used_amount
   from public.credit_line order by company_id, credit_id desc
@@ -171,30 +180,34 @@ mem as (  -- 与信先ごとの「与信先＋その下の一括手続先」
   select credit_holder_id, company_id from public.company where credit_holder_id is not null
 ),
 grp as (
-  select m.holder_id, sum(cl.used_amount) as used_sum, count(*) filter (where m.member_id <> m.holder_id) as member_count
-  from mem m left join cl on cl.company_id = m.member_id
+  select m.holder_id,
+         sum(cl.limit_amount) filter (where not coalesce(mc.is_suspended, false)) as limit_sum,
+         sum(cl.used_amount) as used_sum,
+         count(*) filter (where m.member_id <> m.holder_id) as member_count
+  from mem m
+  join public.company mc on mc.company_id = m.member_id
+  left join cl on cl.company_id = m.member_id
   group by m.holder_id
 )
 select c.company_id, c.official_name,
        case when c.credit_exempt then '不要' when c.credit_holder_id is not null then 'グループ' else '自分' end as credit_mode,
        coalesce(c.credit_holder_id, c.company_id) as holder_id,
        h.official_name as holder_name,
-       hc.limit_amount, hc.limit_type, hc.valid_until, hc.approved_on, hc.decided_by,
+       own.limit_amount, own.limit_type, own.valid_until, own.approved_on, own.decided_by,
        own.used_amount as own_used_amount,
+       case when own.limit_amount is not null then own.limit_amount - coalesce(own.used_amount, 0) end as remaining,
+       g.limit_sum as group_limit_amount,
        g.used_sum as group_used_amount,
-       case when hc.limit_amount is not null then hc.limit_amount - coalesce(g.used_sum, 0) end as remaining,
+       case when g.limit_sum is not null then g.limit_sum - coalesce(g.used_sum, 0) end as group_remaining,
        coalesce(g.member_count, 0) as member_count,
        c.credit_listing_decided_on, c.credit_listing_ref,
-       (c.credit_holder_id is not null and own.limit_amount is not null) as own_credit_conflict,      -- 第4条「1 件限り」に反する（自分の行が残っている）
-       (c.credit_holder_id is not null and hc.limit_amount is null)      as holder_without_credit,   -- 与信先に限度額が無い
        (c.credit_holder_id is not null and not (c.credit_holder_id = any(coalesce(vg.path, array[]::varchar[])))) as holder_not_ancestor  -- 親を付け替えて与信先が上の会社でなくなった
 from public.company c
 left join public.v_company_group vg on vg.company_id = c.company_id
 left join public.company h on h.company_id = coalesce(c.credit_holder_id, c.company_id)
-left join cl hc on hc.company_id = coalesce(c.credit_holder_id, c.company_id)
 left join cl own on own.company_id = c.company_id
 left join grp g on g.holder_id = coalesce(c.credit_holder_id, c.company_id);
-comment on view public.v_credit_effective is '実効の与信（グループの子会社は与信先の行・使用額はグループの合計）。画面と sf-export は同じ決まりで計算する（credit_group.sql・2026-11-04）';
+comment on view public.v_credit_effective is '与信（会社ごとの行）とグループの合計（与信先＋一括手続先・欠番の会社の限度額は数えない）。画面と sf-export は同じ決まりで計算する（credit_group.sql・2026-11-25 改定）';
 -- 4.3 権限（取引先マスタの表と同じ＝admin・accounting だけ読める。別紙の記録は人が書けない＝select 以外のポリシー無し）
 --   学習用 DB（iinbncpofqaldpygfryz）には user_roles も app_role() も Auth ユーザーも無く、画面も検証スクリプトも anon で動く（RLS 無し・2026-08-26 の前提）。
 --   app_role() が無ければ学習用と見なし、anon が読めて消せる形にする（本番と同じ形は作れないため）。本番ハブには app_role() がある。

@@ -62,7 +62,7 @@ const cors = {
 };
 const API_VERSION = 'v61.0';
 const BATCH = 200; // composite/sobjects の上限
-const VERSION = '2026-11-24.1'; // 2026-11-24.1: SF の標準の重複ルール（社名のあいまい一致）で新規が止まらないよう、保存のときに Sforce-Duplicate-Rule-Header: allowSave=true を付ける（鍵は会社マスタ ID・ハブが正本。11/23〜24 に 12633 が 12626 と似た社名で DUPLICATES_DETECTED）・失敗した会社と理由を連携ログの payload.failed に残す（20 社まで）／2026-11-15.1: 反社チェックの今の状態（v_compliance_status_all）＝AntisocialStatus__c・AntisocialCheckedOn__c・AntisocialValidUntil__c。本番の org へは本物の回だけ、試験の org へは試しの回も数えた状態（テスト環境のトークンで流した回を試験の SF で確かめる）・ビューが無い DB では送らない（antisocial_note）／2026-11-04.2: 種別「グループの親（取引なし）」だけの会社は送らない（設計 §8-2・counts.skipped_group_parent）・種別のメインを MainPartnerType__c に（SF の原価要素につなぐ・坂本さん 11/04）／2026-11-04.1: グループの与信（一括手続先・規程第20条）＝与信先の限度額・種類・期限・決裁日とグループの使用額（与信先＋一括手続先の合計）を一括手続先にも配る・CreditHolder__c（与信先の一文）・対象に与信先と一括手続先を足して同じ値でそろえる・送り先の Account に無い項目は読まず送らない（describe・meta.missing_fields）／2026-10-30.1: 試験の与信（credit_line_test）＝sandbox の稟議の結果はその org にだけ配り、本物の credit_line に上書きしない（坂本さん 10/30「UAT をすると確実にまた起きる」・会社 10487 の件）／2026-10-29.2: 個別配信で、出どころの違う試験の会社を「欠番」にも数えていた（連携ログの数だけ・配信は正しい）を直した／2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
+const VERSION = '2026-11-25.1'; // 2026-11-25.1: グループの与信の会社にも、会社ごとの与信（限度額・種類・期限・決裁日・使用額）を送る。与信先の値を一括手続先へ配るのをやめた（与信管理表は一括の会社ごとに枠を決めている＝経理 11/25。試験の与信もその会社の分だけ・view は credit_group_per_company.sql）。2026-11-24.1: SF の標準の重複ルール（社名のあいまい一致）で新規が止まらないよう、保存のときに Sforce-Duplicate-Rule-Header: allowSave=true を付ける（鍵は会社マスタ ID・ハブが正本。11/23〜24 に 12633 が 12626 と似た社名で DUPLICATES_DETECTED）・失敗した会社と理由を連携ログの payload.failed に残す（20 社まで）／2026-11-15.1: 反社チェックの今の状態（v_compliance_status_all）＝AntisocialStatus__c・AntisocialCheckedOn__c・AntisocialValidUntil__c。本番の org へは本物の回だけ、試験の org へは試しの回も数えた状態（テスト環境のトークンで流した回を試験の SF で確かめる）・ビューが無い DB では送らない（antisocial_note）／2026-11-04.2: 種別「グループの親（取引なし）」だけの会社は送らない（設計 §8-2・counts.skipped_group_parent）・種別のメインを MainPartnerType__c に（SF の原価要素につなぐ・坂本さん 11/04）／2026-11-04.1: グループの与信（一括手続先・規程第20条）＝与信先の限度額・種類・期限・決裁日とグループの使用額（与信先＋一括手続先の合計）を一括手続先にも配る・CreditHolder__c（与信先の一文）・対象に与信先と一括手続先を足して同じ値でそろえる・送り先の Account に無い項目は読まず送らない（describe・meta.missing_fields）／2026-10-30.1: 試験の与信（credit_line_test）＝sandbox の稟議の結果はその org にだけ配り、本物の credit_line に上書きしない（坂本さん 10/30「UAT をすると確実にまた起きる」・会社 10487 の件）／2026-10-29.2: 個別配信で、出どころの違う試験の会社を「欠番」にも数えていた（連携ログの数だけ・配信は正しい）を直した／2026-10-29.1: 試験の会社は作った org（company.source_org_id）にだけ配る・link の候補からも外す／2026-10-21.3: // 連携ログ meta.version（画面の「版」に出る）。2026-10-20.1: 法人番号→HubCorporateNumber__c・登録状態・与信不要・与信の種類/期限/決裁日/使用額（与信設計書 第4版）／2026-10-21.1: 鍵＝取引先番号（親コード）＝AccountCode__c を送る・試験の会社は本番 SF に送らない・action=rekey（坂本さん 10/21 案 B）／.2: rekey の読取を 1,000 行ずつに／.3: 送り先を複数に（SF_EXPORT_TARGETS・body.target）
 const PAYLOAD_MAX_ITEMS = 200;  // 連携ログ payload に残す会社数の上限（夜間全件の初回など）
 // 送信項目の表示ラベル（連携ログの「送信内容」に出す。SF 側のラベルと同じにしてある）
 const FIELD_LABELS: Record<string, string> = {
@@ -232,8 +232,8 @@ async function fetchRows(admin: Admin, table: string, select: string, order: str
 const COMPANY_COLS = 'company_id,official_name,name_kana,corporate_number,representative_name,postal_code,prefecture,address_line,building,phone,fax,invoice_reg_number,invoice_status,capital_amount,remarks,last_trade_on,is_suspended,registration_stage,credit_exempt,is_test,legacy_company_id,source_org_id';
 
 // グループの与信（2026-11-04.1）: 対象（company_ids）に与信先と一括手続先を足す。
-//   一括手続先を保存した → 与信先の行で実効の値を組むので与信先も読む／与信先の与信が変わった → その下の一括手続先にも配り直す。
-//   どちらも同じ与信先の下の会社をそろえて送る＝グループの使用額の合計が全員で同じになる。
+//   同じ与信先の下の会社をそろえて送る＝CreditHolder__c の一文（与信先の社名・一括手続先の社数）が全員でそろう。
+//   2026-11-25.1 から与信の値（限度額・種類・期限・決裁日・使用額）は会社ごとの行＝足した会社の与信の値は変わらない（同じ値を送り直すだけ）。
 //   credit_holder_id の列が無い（credit_group.sql 未実行）などは note を残して今までどおり対象だけ
 async function expandGroupIds(admin: Admin, ids: string[] | null): Promise<{ ids: string[] | null; added: string[]; note: string | null }> {
   if (!ids) return { ids, added: [], note: null };
@@ -359,21 +359,11 @@ function mainTypeOf(hub: Hub, c: Record<string, unknown>): string | null {
   if (pay.includes(main)) return TYPE_MAP[main];
   return pay.length === 1 ? TYPE_MAP[pay[0]] : null;
 }
-// 実効の与信を組む会社（グループの与信なら与信先・それ以外は自分）
-function creditHolderOf(hub: Hub, cid: string): string { return hub.holders.get(cid) || cid; }
-// グループの使用額＝与信先＋その下の一括手続先の使用額の合計（設計 §4.3）。どこにも無ければ null
-function groupUsed(hub: Hub, holderId: string): number | null {
-  let sum: number | null = null;
-  for (const id of [holderId, ...(hub.membersByHolder.get(holderId) || [])]) {
-    const r = hub.credit.get(id);
-    if (r && r.used_amount != null) sum = (sum || 0) + Number(r.used_amount);
-  }
-  return sum;
-}
 
 // ハブ1社 → Account upsert レコード。ハブが空の項目は null（SF を空にする）。keepIfEmpty の項目だけ送らない
 // testCr: 送り先が sandbox で、その org の試験の与信（credit_line_test）があるとき、その行。与信の 5 項目だけ本物の credit_line の代わりに使う（2026-10-30.1）
-//   グループの与信（2026-11-04.1）: 与信の行は与信先の行（試験の与信も与信先の分）。使用額はグループの合計。CreditHolder__c に与信先の一文
+//   グループの与信（2026-11-25.1 改定）: 与信の行は会社ごと（グループの与信の会社も自分の行・試験の与信もその会社の分・使用額も自分の分）。
+//   限度額が入っていない一括手続先は、SF では今までどおり「与信未」のまま。CreditHolder__c に与信先の一文（11-04.1 のまま）
 // sandboxTarget: 送り先が本番の org でない＝反社チェックは試しの回も数えた状態を送る（2026-11-15.1）
 function buildRecord(hub: Hub, c: Record<string, unknown>, keepIfEmpty: Set<string>, testCr?: Record<string, unknown>, sandboxTarget = false): Record<string, unknown> {
   const cid = String(c.company_id);
@@ -386,10 +376,9 @@ function buildRecord(hub: Hub, c: Record<string, unknown>, keepIfEmpty: Set<stri
   const wasteNo = waste ? String(waste.permit_number || '') : '';
   const licenses = cons ? convertPermit(cons.construction_types as string) : [];
   const holderId = hub.holders.get(cid) || null;
-  const effId = holderId || cid;
-  const real = hub.credit.get(effId);
-  // 使用額は会計の実績＝試験の与信でも本物の値のまま（グループなら合計）
-  const used = groupUsed(hub, effId);
+  const real = hub.credit.get(cid);
+  // 使用額は会計の実績＝試験の与信でも本物の値のまま
+  const used = real && real.used_amount != null ? Number(real.used_amount) : null;
   const cr = testCr ? { ...testCr, used_amount: used } : (real ? { ...real, used_amount: used } : undefined);
   const nMembers = (hub.membersByHolder.get(cid) || []).length;
   const holderText = holderId ? `グループの与信（与信先 ${hub.names.get(holderId) || ''} ${holderId}）`.replace(/\s+/g, ' ')
@@ -813,7 +802,7 @@ Deno.serve(async (req) => {
       const conflictIds = new Set<string>();
       for (const c of targets) {
         const cid = String(c.company_id);
-        const testCr = orgTestCredit ? orgTestCredit.get(creditHolderOf(hub, cid)) : undefined;
+        const testCr = orgTestCredit ? orgTestCredit.get(cid) : undefined;
         const rec = buildRecord(hub, c, keepIfEmpty, testCr, !isProdTarget);
         for (const k of missingFields) delete rec[k];
         if (hub.holders.has(cid)) cls.group_member++;
