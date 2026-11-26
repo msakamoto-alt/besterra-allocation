@@ -5679,11 +5679,13 @@ const TorihikisakiView = {
       // 取り込めない値（数値・日付・桁数・文字数・はい／いいえ）は適用しない。黙ってとばさず、下見の窓に 1 行で知らせる（2026-11-25 坂本さん）
       const unread = [];    // {cid, name, f, raw, msg}
       const note = (row, f, raw, msg) => unread.push({ cid: row.company_id, name: row.official_name, f, raw: String(raw).trim(), msg });
+      // 会社を指す欄（#16 親会社・#50 与信先）と与信不要（#49）は、行の単位で DB の決まりと照らす＝csvGroupCheck（2026-11-26）
       rows.slice(1).forEach(rw => {
         const rawNo = String(rw[ni] === undefined ? '' : rw[ni]).trim();
         const no = +rawNo;
         const row = rawNo === '' ? null : byNo[no];
         if (!row) { if (rawNo !== '') skipped.push(Number.isNaN(no) ? rawNo : no); return; }   // 番号の欄が数字でない行（「合計」など）は書いてある文字のまま知らせる
+        const at0 = changes.length;   // この行の変更の始まり（会社を指す欄は、行の単位で DB の決まりと照らす＝csvGroupCheck）
         for (const ix in colIdx) {
           const f = colIdx[ix];
           const raw = rw[ix] || '';
@@ -5704,22 +5706,56 @@ const TorihikisakiView = {
             continue;
           }
           const isBool = /^BOOLEAN/i.test(f.dtype || '');
-          const msg = isBool ? (this.csvBool(raw) === undefined ? 'はい・いいえで入力してください' : null) : this.inputError(f, raw);
+          const isRef = !!this.CSV_REF_COLS[f.col];   // 会社を指す欄（親会社・与信先）＝番号かどうかは csvGroupCheck が確かめる（文字数の決まりで先に断らない）
+          const msg = isRef ? null : isBool ? (this.csvBool(raw) === undefined ? 'はい・いいえで入力してください' : null) : this.inputError(f, raw);
           if (msg) {
             // 出したときのままのセル（前から入っている値が今の入力の決まりに合わないだけ）は知らせない
             if (String(raw).trim() !== String(this.getListVal(row, f) || '').trim()) note(row, f, raw, msg);
             continue;
           }
-          const newV = isBool ? this.csvBool(raw) : this.normIn(f, raw);
+          const newV = isRef ? this.csvRefId(raw) : isBool ? this.csvBool(raw) : this.normIn(f, raw);
           const oldV = row[f.col.split('.')[1]];
-          if (!this.sameVal(oldV, newV)) changes.push({ cid: row.company_id, name: row.official_name, f, oldV, newV });
+          if (!this.sameVal(oldV, newV)) changes.push({ cid: row.company_id, name: row.official_name, f, oldV, newV, raw });
         }
+        this.csvGroupCheck(row, changes, at0, note);
       });
       if (!changes.length && !unread.length && !skipped.length) { this.toast('変更はありません（CSVは現在の値と同じです）'); return; }
       if (changes.length > 500) { alert(`変更が${changes.length}件あります。一度に取り込めるのは500件までです。CSVを分割してください。`); return; }
       this.showCsvPreview(changes, skipped, null, unread);
     };
     rd.readAsText(file, 'utf-8');
+  },
+
+  // CSV取込の「会社を指す欄」（2026-11-26）。きっかけ＝塩田さんの報告: 10864 の「50:与信の取り方」に「グループの与信」と入れて取り込むと、
+  //   変更履歴にだけ残って値は変わらなかった（列の中身は与信先の取引先マスタ番号。文字をそのまま DB に送り、DB の決まりで更新が止まった）。
+  //   #16 親会社（company.parent_company_id）・#50 与信の取り方＝与信先（company.credit_holder_id）・#49 与信不要（company.credit_exempt）は、
+  //   DB のトリガ company_group_guard（supabase/credit_group.sql）が決まりを守る＝合わない値は、適用の前に「取り込めない値」として知らせる。
+  //   与信先を付ける・替えるのは画面だけ（別紙に載せた常務会の日が要る＝save の ②''）。CSV では「変えない」「外す（空にする）」だけ受ける。
+  //   確かめるのは今の一覧の姿（同じ CSV のほかの行の変更は見ない）。すり抜けた分は DB が止め、applyCsv が履歴を残さずに知らせる
+  CSV_REF_COLS: { 'company.parent_company_id': 1, 'company.credit_holder_id': 1 },
+  /** 会社を指す欄の値 → 取引先マスタ番号の形（全角の数字・前後の空白をそろえ、5 桁に満たない数字は先頭を 0 で埋める）。空は null */
+  csvRefId(raw) { return this.normInDt('VARCHAR(8)', String(raw == null ? '' : raw).normalize('NFKC'), 'cid'); },
+  /** 1 行ぶんの変更（changes の at0 から後ろ）のうち、親会社・与信先・与信不要が DB の決まりに合わないものを外して、note で知らせる */
+  csvGroupCheck(row, changes, at0, note) {
+    const pick = col => { for (let i = at0; i < changes.length; i++) if (changes[i].f.col === col) return changes[i]; return null; };
+    const drop = (c, msg) => { changes.splice(changes.indexOf(c), 1); note(row, c.f, c.raw, msg); };
+    const cid = row.company_id;
+    const h = pick('company.credit_holder_id');
+    if (h && h.newV !== null) drop(h, '画面の「与信の取り方」で入れてください（この列は与信先の取引先マスタ番号です。付けるには、別紙に載せた常務会の日が要ります）');
+    const holder = (h && h.newV === null) ? null : (row.credit_holder_id || null);   // この行を取り込んだあとの与信先（CSV で変えられるのは「外す」だけ）
+    let p = pick('company.parent_company_id');
+    if (p && p.newV !== null) {
+      const msg = !this.rowById(p.newV) ? '取引先マスタ番号で入力してください（マスタに無い番号・社名は入れられません）'
+        : p.newV === cid ? '自分自身は親会社にできません'
+        : this.ancestorsOf(p.newV).some(a => a.company_id === cid) ? '親会社の指定が輪になります（指定した会社の上に、この会社があります）' : null;
+      if (msg) { drop(p, msg); p = null; }
+    }
+    // 親を替える・外すと、今の与信先が上の会社でなくなる
+    if (p && holder && !(p.newV !== null && (p.newV === holder || this.ancestorsOf(p.newV).some(a => a.company_id === holder)))) {
+      drop(p, '先にグループの与信を外してください（親会社を変えると、与信先が上の会社でなくなります）');
+    }
+    const x = pick('company.credit_exempt');
+    if (x && x.newV === true && holder) drop(x, '先にグループの与信を外してください（与信の取り方は 1 社に 1 つです）');
   },
 
   // CSV取込の はい／いいえ の欄: はい・いいえ（true・false も可。大文字小文字・全角半角は問わない）→ true／false、空 → null。
@@ -5772,40 +5808,66 @@ const TorihikisakiView = {
     if (btn) btn.onclick = () => this.applyCsv(changes);
   },
 
+  // 適用（CSV取込・外部 API の下見から）。会社ごとに「会社の更新 → その会社の履歴」の順で書く（2026-11-26）。
+  //   以前は全社分の履歴を先に書いていた＝会社の更新が DB の決まりで止まると、止まった会社と残りの会社の履歴だけが残った
+  //   （11/26 10:45 の 10864。変更履歴を消せるのは管理者だけ＝経理の画面からは片づけられない）。
+  //   履歴は CSV_HIST_CHUNK 社ごとにまとめて書く（1 社ずつ書くと、会社の多い取込が倍の時間になる）。
+  //   止まったら、更新が通った会社の履歴を書いてから知らせ、窓を閉じる（開いたままもう一度適用すると、取り込み済みの会社の履歴が二重になる）
+  CSV_HIST_CHUNK: 20,
   async applyCsv(changes) {
     const sourceTag = this._csvSourceTag || 'CSV取込';
     const btn = this.el('tmk-csv-apply');
     if (btn) { btn.disabled = true; btn.textContent = '適用中…'; }
     const who = this.whoAmI();
     const sb = this.getClient();
-    try {
-      // 履歴を先に書く（1件ずつの記録・ブリーフ§6）
-      const ins = await sb.from('company_history').insert(changes.map(c => ({
-        company_id: c.cid, table_name: 'company', column_name: c.f.col.split('.')[1],
+    const text = e => String((e && e.message) || e);
+    const byCid = {}, histBy = {};
+    changes.forEach(c => {
+      const col = c.f.col.split('.')[1];
+      (byCid[c.cid] = byCid[c.cid] || {})[col] = c.newV;
+      (histBy[c.cid] = histBy[c.cid] || []).push({
+        company_id: c.cid, table_name: 'company', column_name: col,
         old_value: c.oldV === null || c.oldV === undefined ? null : String(c.oldV),
         new_value: c.newV === null ? null : String(c.newV),
         changed_by: who + '(' + (c.src || sourceTag) + ')',
-      })));
-      if (ins.error) throw new Error('変更履歴の記録に失敗しました: ' + ins.error.message);
-      // 会社ごとにまとめて更新
-      const byCid = {};
-      changes.forEach(c => { (byCid[c.cid] = byCid[c.cid] || {})[c.f.col.split('.')[1]] = c.newV; });
-      let doneN = 0;
-      for (const cid of Object.keys(byCid)) {
-        const patch = Object.assign({}, byCid[cid], { updated_at: new Date().toISOString(), updated_by: who });
-        const res = await sb.from('company').update(patch).eq('company_id', cid);
-        if (res.error) throw new Error(`${cid} の更新に失敗しました（${doneN}社適用済み）: ` + res.error.message);
-        const row = (this.rows || []).find(r => r.company_id === cid);
-        if (row) Object.assign(row, byCid[cid]);
-        doneN++;
-      }
-      this.el('tmk-ov-csv').classList.remove('on');
-      this.toast(`${doneN}社を更新しました（CSV取込・履歴記録済み）`);
-      if (this.view === 'list') this.renderList();
-    } catch (e) {
-      alert('CSV取込に失敗しました。\n\n' + (e.message || e) + '\n\n適用済みの分は変更履歴で確認できます。');
-      if (btn) { btn.disabled = false; btn.textContent = '適用する'; }
+      });
+    });
+    const cids = Object.keys(byCid);
+    let doneN = 0;
+    let wait = [];        // 更新が通って、履歴をまだ書いていない会社
+    let noHist = null;    // 履歴を書けなかった会社（更新は済んでいる）
+    const flush = async () => {
+      if (!wait.length) return null;
+      const part = wait; wait = [];
+      let ng = null;
+      try { const ins = await sb.from('company_history').insert(part.reduce((a, cid) => a.concat(histBy[cid]), [])); if (ins.error) ng = text(ins.error); }
+      catch (e) { ng = text(e); }
+      if (ng === null) return null;
+      noHist = (noHist || []).concat(part);
+      return '変更履歴の記録に失敗しました: ' + ng;
+    };
+    let fail = null;
+    for (const cid of cids) {
+      const patch = Object.assign({}, byCid[cid], { updated_at: new Date().toISOString(), updated_by: who });
+      let res;
+      try { res = await sb.from('company').update(patch).eq('company_id', cid); } catch (e) { res = { error: { message: text(e) } }; }
+      if (res.error) { fail = `${cid} の更新に失敗しました: ` + text(res.error); break; }
+      const row = (this.rows || []).find(r => r.company_id === cid);
+      if (row) Object.assign(row, byCid[cid]);
+      doneN++;
+      wait.push(cid);
+      if (wait.length >= this.CSV_HIST_CHUNK) { fail = await flush(); if (fail) break; }
     }
+    const tail = await flush();   // 止まったときも、更新が通った会社の履歴は書く
+    this.el('tmk-ov-csv').classList.remove('on');
+    if (!fail && !tail) this.toast(`${doneN}社を更新しました（CSV取込・履歴記録済み）`);
+    else {
+      const rest = cids.length - doneN;
+      alert('CSV取込に失敗しました。\n\n' + [fail, tail].filter(Boolean).join('\n') + '\n\n' +
+        (doneN ? `※ ${doneN}社は取り込み済みです${noHist ? '' : '（変更履歴で確認できます）'}。` + (rest ? `残りの${rest}社は取り込んでいません。` : '') : '※ 変更は反映されていません。') +
+        (noHist ? '\n\n🔴 次の会社は更新済みですが、変更履歴を書けていません: ' + noHist.join('・') + '\n管理者に知らせてください。' : ''));
+    }
+    if (this.view === 'list') this.renderList();
   },
 
   // ===== ⌘K コマンドパレット =====
