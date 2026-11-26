@@ -7,7 +7,7 @@
   <title>ベステラ 統合管理ツール</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="css/styles.css?v=202606262000">
-  <link rel="stylesheet" href="css/torihikisaki.css?v=202611041438">
+  <link rel="stylesheet" href="css/torihikisaki.css?v=202611261253">
 </head>
 <body class="bg-slate-50">
 
@@ -343,6 +343,8 @@
         <div class="ov" id="tmk-ov-cmd" style="align-items:flex-start;padding-top:80px"><div class="dialog" style="max-width:540px"><div class="dhd" style="padding:10px 14px"><input class="inp" id="tmk-cmd-input" placeholder="会社名・コードで検索…" style="width:100%;border:none;box-shadow:none;font-size:14px" autocomplete="off"></div><div class="dbody" style="padding:8px"><div id="tmk-cmd-list" style="max-height:340px;overflow:auto"></div></div></div></div>
         <div class="ov" id="tmk-ov-exp"><div class="dialog" style="max-width:480px"><div class="dhd"><h3>CSV出力：出す中身を選ぶ</h3><button class="x" data-tmk-ovclose>✕</button></div><div class="dbody" id="tmk-exp-body"></div></div></div>
         <div class="ov" id="tmk-ov-csv"><div class="dialog"><div class="dhd"><h3>CSV取込の確認</h3><button class="x" data-tmk-ovclose>✕</button></div><div class="dbody" id="tmk-csv-body"></div></div></div>
+        <div class="ov" id="tmk-ov-bank"><div class="dialog"><div class="dhd"><h3>銀行・支店を探す</h3><button class="x" data-tmk-ovclose>✕</button></div><div class="dbody" id="tmk-bank-body"></div></div></div>
+        <div class="ov" id="tmk-ov-bankimp"><div class="dialog"><div class="dhd"><h3>銀行マスタ：CSV 取込の確認</h3><button class="x" data-tmk-ovclose>✕</button></div><div class="dbody" id="tmk-bankimp-body"></div></div></div>
       </section>
       <div id="tmk-toast"></div>
 
@@ -932,7 +934,9 @@
   <script src="js/views/contacts.js?v=202607151900"></script>
   <script src="js/views/torihikisaki_meta.js?v=202611251412"></script>
   <script src="js/views/torihikisaki_enrich.js?v=202609170840"></script>
-  <script src="js/views/torihikisaki.js?v=202611260920"></script>
+  <script src="js/views/torihikisaki.js?v=202611261253"></script>
+  <script src="js/views/torihikisaki_bank_csv.js?v=202611261253"></script>
+  <script src="js/views/torihikisaki_bank.js?v=202611261253"></script>
   <script src="js/views/member_add.js?v=202607061100"></script>
   <script src="js/views/orgchart.js?v=202607061100"></script>
   <script src="js/views/accounts.js?v=202607061100"></script>

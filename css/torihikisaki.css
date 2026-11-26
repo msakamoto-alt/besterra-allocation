@@ -91,6 +91,9 @@ background:var(--bg);color:var(--fg);font-size:13px;line-height:1.55;font-featur
 #tab-torihikisaki .tbl thead th.sorted{color:var(--primary);}
 #tab-torihikisaki .tbl tbody tr{cursor:pointer;}
 #tab-torihikisaki .tbl tbody tr:hover{background:var(--accent-bg);}
+/* 行を選べない表（読むだけ・2026-11-26 銀行マスタ）: 指の形にも、ホバーの色にもしない */
+#tab-torihikisaki .tbl.ro tbody tr{cursor:default;}
+#tab-torihikisaki .tbl.ro tbody tr:hover{background:transparent;}
 #tab-torihikisaki .tbl tr:last-child td{border-bottom:none;}
 #tab-torihikisaki .tbl td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--mf);}
 #tab-torihikisaki .tbl .nm{font-weight:600;}

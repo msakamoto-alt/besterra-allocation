@@ -57,8 +57,8 @@ const TorihikisakiView = {
   LS: { cols: 'tmk_cols', fmt: 'tmk_fmt', theme: 'tmk_theme' },
   FORMATS: ['単票フォーム', '2カラム', 'カード', 'フォーカス', 'Excel風グリッド'],
   NAV: [['list', '▦', '会社一覧'], ['new', '＋', '新規登録・編集'], ['group', '⛓', 'グループ・グループの与信'], ['asc', '🛡', '反社チェック'], ['apichk', '🔄', 'API更新チェック'],
-    ['sys', '⇄', 'システム連携'], ['history', '🕘', '変更履歴'], ['ilog', '📡', '連携ログ']],
-  TITLES: { list: '会社一覧', new: '新規登録・編集', group: 'グループ・グループの与信', apichk: 'API更新チェック', sys: 'システム連携', history: '変更履歴', ilog: '連携ログ', detail: '' },
+    ['bank', '🏦', '銀行マスタ'], ['sys', '⇄', 'システム連携'], ['history', '🕘', '変更履歴'], ['ilog', '📡', '連携ログ']],
+  TITLES: { list: '会社一覧', new: '新規登録・編集', group: 'グループ・グループの与信', apichk: 'API更新チェック', bank: '銀行マスタ', sys: 'システム連携', history: '変更履歴', ilog: '連携ログ', detail: '' },
 
   // ===== Box 埋め込み（2026-08-28 坂本さん指示） =====
   // 対象＝Box `030_財務経理課 / 00_取引先コード`。
@@ -619,7 +619,8 @@ const TorihikisakiView = {
 
     // サイドナビ
     const snav = this.el('tmk-snav');
-    snav.innerHTML = this.NAV.map(([v, i, t]) => `<a data-v="${v}"><span class="i">${i}</span>${t}</a>`).join('');
+    // 「銀行マスタ」は DB に銀行マスタがあるときだけ出す（torihikisaki_bank.js の bmNavShow）
+    snav.innerHTML = this.NAV.map(([v, i, t]) => `<a data-v="${v}"${v === 'bank' ? ' style="display:none"' : ''}><span class="i">${i}</span>${t}</a>`).join('');
     snav.querySelectorAll('a').forEach(a => a.addEventListener('click', () => this.go(a.dataset.v)));
 
     // トップバー
@@ -702,6 +703,7 @@ const TorihikisakiView = {
         this.rows = companies;
         await this.loadNotices(); // 承認の知らせ・試験の与信（2026-10-30・表が無ければ出さない）
         await this.loadOldCodes(); // 旧コード（2026-11-25・表が無ければ出さない）
+        this.bmLoad(); // 銀行マスタ（2026-11-26・表が無ければ左の並びに出さない。読み終わるのは待たない）
         const fc = this.el('tmk-foot-count');
         if (fc) fc.textContent = companies.length.toLocaleString();
         // 接続先の表示は固定文にしない（本番サイトで「学習用DB」と出ていた・2026-09-09）
@@ -732,6 +734,7 @@ const TorihikisakiView = {
     this.el('tmk-title').textContent = this.TITLES[v] || '';
     if (v === 'list') this.renderList();
     else if (v === 'apichk') this.renderApiCheck();
+    else if (v === 'bank') this.renderBankGlobal();
     else if (v === 'sys') this.renderSysGlobal();
     else if (v === 'history') this.renderHistGlobal();
     else if (v === 'ilog') this.renderIlogGlobal();
@@ -1011,6 +1014,7 @@ const TorihikisakiView = {
         payment_term: pt.data || [], company_name_history: nh.data || [],
         document: dc.data || [], compliance_survey: cs.data || [],
       };
+      await this.bmWarm(this.detail.bank_account);   // 口座カードに銀行マスタの名前を出す（2026-11-26・銀行マスタが無い／空なら何もしない）
       // 試験の与信・届いている承認の知らせ（2026-10-30）。表が無い（credit_notice.sql 未実行）なら null＝出さない
       const [tc, nt] = await Promise.all([
         sb.from('credit_line_test').select('*').eq('company_id', cid).order('org_id'),
@@ -3948,11 +3952,14 @@ const TorihikisakiView = {
       const st = this.bankStatus(acc);
       const actor = this.lastBankActor(acc);
       const canApprove = st.key !== 'approved' && actor !== me;
-      const line = [acc.bank_name, acc.branch_code ? `支店${acc.branch_code}` : '', acc.account_type, acc.account_number].filter(Boolean).map(s => this.esc(s)).join('　');
+      // 銀行マスタが使えてコードが合うときは「銀行名　支店名（支店コード）」。合わなければ今までどおり入っている銀行名（2026-11-26）
+      const bmName = this.bmNameOf(acc);
+      const line = this.bankLineParts(acc).map(s => this.esc(s)).join('　');
       html += `<div style="border:1px solid var(--border);border-radius:8px;padding:9px 11px;margin-bottom:8px">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           ${accs.length > 1 ? `<span class="badge b-slate">第${acc.priority || 1}口座</span>` : ''}
           <span class="badge ${st.cls}">${this.esc(st.label)}</span>
+          ${bmName && bmName.abolished ? '<span class="badge b-red">廃止の店</span>' : ''}
           ${st.key === 'pending' && actor ? `<span class="mf" style="font-size:10px">申請: ${this.esc(actor)}</span>` : ''}
           <span style="flex:1"></span>
           ${st.key !== 'approved' && canApprove ? `<button class="btn btn-success btn-sm" data-bapprove="${this.esc(String(acc.account_id))}">承認する</button>` : ''}
@@ -3979,8 +3986,10 @@ const TorihikisakiView = {
     if (save) save.onclick = () => this.saveBank();
     const cancel = box.querySelector('[data-bcancel]');
     if (cancel) cancel.onclick = () => { this.bankEdit = null; this.renderBanks(); };
+    this.bankFormWire(box);   // 銀行マスタが使えるときの、コードの下の名前と「名前から探す」
   },
 
+  // 銀行マスタが使えるとき（2026-11-26）: 銀行名を打つ欄は無く、銀行コード・支店コードが必須。銀行名と支店名は銀行マスタから出る（bankCodeFieldsHtml）
   bankFormHtml(acc) {
     const v = c => acc && acc[c] !== null && acc[c] !== undefined ? String(acc[c]) : '';
     const txt = (c, ph, extra) => `<input class="inp" data-bank="${c}" value="${this.esc(v(c))}" placeholder="${ph}" ${extra || ''} style="width:100%;min-width:0;margin-bottom:6px">`;
@@ -3996,8 +4005,8 @@ const TorihikisakiView = {
     const kanaLen = [...v('account_holder_kana')].length;
     return `<div style="border:1.5px solid var(--amber);background:var(--amber-bg);border-radius:8px;padding:10px 11px;margin-bottom:8px;font-size:12px">
       <div style="font-weight:800;color:var(--amber);margin-bottom:6px">${acc ? '口座変更の申請' : '口座の登録申請'}</div>
-      ${txt('bank_name', '銀行名 *', 'maxlength="100"')}
-      <div style="display:flex;gap:6px">${txt('bank_code', '銀行コード(4桁)', 'maxlength="4"')}${txt('branch_code', '支店コード(3桁)', 'maxlength="4"')}</div>
+      ${this.bmReady() ? this.bankCodeFieldsHtml(acc) : `${txt('bank_name', '銀行名 *', 'maxlength="100"')}
+      <div style="display:flex;gap:6px">${txt('bank_code', '銀行コード(4桁)', 'maxlength="4"')}${txt('branch_code', '支店コード(3桁)', 'maxlength="4"')}</div>`}
       <div style="display:flex;gap:6px">${sel('account_type', '預金種別 *')}${txt('account_number', '口座番号 *', 'maxlength="20"')}</div>
       ${txt('account_holder_kana', '口座名義(カナ) *', 'maxlength="100"')}
       ${kanaLen > 30 ? `<div style="font-size:10px;color:var(--amber);margin-bottom:4px">※名義${kanaLen}字。全銀フォーマットは30字上限（原文は保持されます）</div>` : ''}
@@ -4026,12 +4035,24 @@ const TorihikisakiView = {
       vals[c] = (el.type === 'checkbox') ? el.checked : (String(el.value).trim() || null);
     });
     const errs = [];
-    if (!vals.bank_name) errs.push('・銀行名は必須です');
+    // 銀行マスタが使えるとき（2026-11-26）: コードは必須で、銀行マスタにある店（廃止でない）であること。銀行名は銀行マスタの名前で入れる
+    const useMaster = this.bmReady();
+    if (useMaster) {
+      if (this._bankChecking) return;
+      this._bankChecking = true;
+      let chk;
+      try {
+        vals.bank_code = TorihikisakiBankCsv.halfAlnum(vals.bank_code || '').trim() || null;
+        vals.branch_code = TorihikisakiBankCsv.halfAlnum(vals.branch_code || '').trim() || null;
+        chk = await this.bmCheckCodes(vals.bank_code, vals.branch_code);
+      } finally { this._bankChecking = false; }
+      if (chk.error) errs.push('・' + chk.error); else vals.bank_name = chk.bank_name;
+    } else if (!vals.bank_name) errs.push('・銀行名は必須です');
     if (!vals.account_type) errs.push('・預金種別は必須です');
     if (!vals.account_number) errs.push('・口座番号は必須です');
     if (!vals.account_holder_kana) errs.push('・口座名義(カナ)は必須です');
-    if (vals.bank_code && !/^\d{4}$/.test(vals.bank_code)) errs.push('・銀行コードは4桁の数字です');
-    if (vals.branch_code && !/^\d{3}$/.test(vals.branch_code)) errs.push('・支店コードは3桁の数字です（全銀形式）');
+    if (!useMaster && vals.bank_code && !/^\d{4}$/.test(vals.bank_code)) errs.push('・銀行コードは4桁の数字です');
+    if (!useMaster && vals.branch_code && !/^\d{3}$/.test(vals.branch_code)) errs.push('・支店コードは3桁の数字です（全銀形式）');
     if (vals.account_number && !/^[\dA-Za-z-]{1,20}$/.test(vals.account_number)) errs.push('・口座番号に使えない文字があります');
     if (errs.length) { alert('入力を確認してください。\n\n' + errs.join('\n')); return; }
     if (!vals.payment_method) vals.payment_method = '振込';
@@ -4099,7 +4120,7 @@ const TorihikisakiView = {
     if (!acc) return;
     const me = this.whoAmI();
     if (this.lastBankActor(acc) === me) { alert('申請者本人は承認できません。別の admin/accounting に依頼してください。'); return; }
-    const line = [acc.bank_name, acc.branch_code ? `支店${acc.branch_code}` : '', acc.account_type, acc.account_number].filter(Boolean).join('　');
+    const line = this.bankLineParts(acc).join('　');
     if (!confirm(`この口座を承認しますか？\n\n${line}\n${acc.account_holder_kana || ''}\n\n承認すると振込先として有効になります。`)) return;
     const sb = this.getClient();
     this.busy = true;
@@ -4449,7 +4470,9 @@ const TorihikisakiView = {
   // ===== 連携ログ（integration_log）＝接続の記録・最終配信・会社ごとの最終配信の共通データ源 =====
   async ilogFetch(limit, filter) {
     const sb = Sync.getSupabase();   // audit_logs と同じくアプリ本体のログイン済みクライアントで読む（取引先マスタ用クライアントは匿名）
-    let q = sb.from('integration_log').select('*').eq('system', 'salesforce').order('at', { ascending: false }).limit(limit);
+    // withTera＝銀行マスタを tera の形式で書き出した記録も並べる（連携ログのページだけ。接続の記録・最終配信は Salesforce だけを見る）
+    let q = sb.from('integration_log').select('*');
+    q = (filter && filter.withTera ? q.in('system', ['salesforce', 'tera']) : q.eq('system', 'salesforce')).order('at', { ascending: false }).limit(limit);
     if (filter && filter.kind) q = q.eq('kind', filter.kind);
     if (filter && filter.cid) q = q.contains('company_ids', [filter.cid]);
     const res = await q;
@@ -4571,7 +4594,7 @@ const TorihikisakiView = {
     };
     const list = this.el('tmk-ilog-list');
     try {
-      const rows = await this.ilogFetch(300, kind ? { kind } : null);
+      const rows = await this.ilogFetch(300, kind ? { kind, withTera: true } : { withTera: true });
       if (!rows.length) { list.innerHTML = '<div class="fcard mf">まだ記録はありません。</div>'; return; }
       const nameByCid = {};
       (this.rows || []).forEach(r => nameByCid[r.company_id] = r.official_name);
@@ -5501,9 +5524,11 @@ const TorihikisakiView = {
     const byNo = {};
     (this.rows || []).forEach(r => { byNo[+r.company_id] = r; });
     const z2h = s => s.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    await this.bmLoad();
+    const useMaster = this.bmReady();   // 銀行マスタが使えるとき（2026-11-26）: 銀行名は銀行マスタから入る＝CSV の銀行名は空でもよい
     const REQ = { bank_name: '銀行名', account_type: '預金種別', account_number: '口座番号', account_holder_kana: '口座名義（カナ）' };
     const check = (c, v) => {
-      if (REQ[c] && !v) return `${REQ[c]}は空にできません`;
+      if (REQ[c] && !v) return c === 'bank_name' && useMaster ? '' : `${REQ[c]}は空にできません`;
       if (v === null) return '';
       if (c === 'bank_code' && !/^\d{4}$/.test(v)) return `銀行コードは4桁の数字です（${v}）`;
       if (c === 'branch_code' && !/^\d{3}$/.test(v)) return `支店コードは3桁の数字です（${v}）`;
@@ -5531,14 +5556,18 @@ const TorihikisakiView = {
         let v = ['bank_code', 'branch_code', 'account_number'].includes(c) ? z2h(raw) : raw;
         v = v || null;
         if (!acc && c === 'payment_method' && !v) v = '振込';
+        if (!acc && !v && REQ[c]) { const m0 = check(c, v); if (m0) bad.push(m0); return; }   // 新しい口座: 必須の欄が空（口座の入力と同じ決まり）
         if (this.sameVal(acc ? cur : null, v)) return;
         const msg = check(c, v);
         if (msg) bad.push(msg); else changes.push({ column: c, oldV: acc ? acc[c] : null, newV: v });
       });
-      if (!acc) Object.keys(REQ).forEach(c => { if (!(c in colIdx)) bad.push(`${REQ[c]}の列がありません`); });
+      if (!acc) Object.keys(REQ).forEach(c => { if (!(c in colIdx) && !(c === 'bank_name' && useMaster)) bad.push(`${REQ[c]}の列がありません`); });
       if (bad.length) { errs.push(`${line}行目（${co.official_name}・第${priority}口座）: ${bad.join('・')}`); return; }
-      if (changes.length) items.push({ cid: co.company_id, name: co.official_name, priority, acc, changes });
+      if (changes.length) items.push({ cid: co.company_id, name: co.official_name, priority, acc, changes, line });
     });
+    // 銀行マスタと合わない口座（無い店・廃止の店・コードが空）は「取り込めない行」へ。銀行名は銀行マスタの名前にそろえる
+    if (useMaster) await this.bmCheckCsvItems(items, errs);
+    errs.sort((x, y) => (parseInt(x, 10) || 0) - (parseInt(y, 10) || 0));   // 取り込めない行は CSV の行の順に並べる
     if (!items.length && !errs.length) { this.toast('変更はありません（口座のCSVは現在の値と同じです）'); return; }
     if (items.length > 500) { alert(`口座の変更が${items.length}口座あります。一度に取り込めるのは500口座までです。CSVを分割してください。`); return; }
     this.showBankCsvPreview(items, errs);
