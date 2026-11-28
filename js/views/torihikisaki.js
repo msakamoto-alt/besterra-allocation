@@ -1045,7 +1045,7 @@ const TorihikisakiView = {
       this.markNav();
       this.applyAutoJudgeDetail();
       this.renderDetail();
-      const firstOpen = (this.detail.notices || []).find(n => this.noticeActive(n));
+      const firstOpen = (this.detail.notices || []).find(n => this.noticeShown(n));
       if (!keep && firstOpen) this.showNoticeWindow(firstOpen); // 会社を開いたら稟議の窓（審査中・承認済み。差し戻し中は与信の段に 1 行だけ）
       const scroller = document.scrollingElement || document.documentElement;
       scroller.scrollTop = 0;
@@ -2732,7 +2732,10 @@ const TorihikisakiView = {
   },
   /** 一覧・窓に出す知らせ＝審査中と承認済み（差し戻し中は出さない） */
   noticeActive(n) { return n && !n.done_at && (n.stage === '申請中' || n.stage === '承認' || !n.stage); },
-  noticeFor(cid) { return (this.notices || []).find(n => n.company_id === cid && this.noticeActive(n)) || null; },
+  /** 試験の知らせ（is_prod=false＝dev6・dev7 などの稟議）は「テストのみ」のときだけ、本物の知らせは「テストのみ」以外のときだけ出す（2026-11-28 坂本さん） */
+  noticeVisible(n) { return !!n && ((this.stateFilter === 'test') === (n.is_prod === false)); },
+  noticeShown(n) { return this.noticeActive(n) && this.noticeVisible(n); },
+  noticeFor(cid) { return (this.notices || []).find(n => n.company_id === cid && this.noticeShown(n)) || null; },
   draftReady(n) { return !!(n && n.draft_limit_amount > 0 && n.draft_limit_type && n.draft_valid_until && n.draft_decided_by); },
   /** 状態の札（審査中／承認済み・入力待ち／本登録の番） */
   stageBadge(n) {
@@ -2747,14 +2750,15 @@ const TorihikisakiView = {
       : '<span class="badge b-amber" style="margin-left:5px">与信の稟議 承認済み</span>';
   },
   noticeSummary() {
-    const n = (this.notices || []).filter(x => this.noticeActive(x)).length;
+    const n = (this.notices || []).filter(x => this.noticeShown(x)).length;
+    if (n && this.stateFilter === 'test') return `<span class="badge b-amber">与信の稟議 ${n}</span>`; // 「テストのみ」では絞り込みに切り替えない（押すと試験の知らせが消えるため）
     return n ? `<button class="btn" id="tmk-notice-filter" title="与信の稟議が届いている会社だけに絞る（もう一度押すと戻す）"><span class="badge b-amber">与信の稟議 ${n}</span></button>` : '';
   },
   orgBadge(label, isProd) {
     return `<span class="badge ${isProd ? 'b-green' : 'b-slate'}">${this.esc(isProd ? (label || '本番') : (label || '試験'))}</span>`;
   },
   noticePanelHtml() {
-    const ns = (this.notices || []).filter(x => this.noticeActive(x));
+    const ns = (this.notices || []).filter(x => this.noticeShown(x));
     if (!ns.length) return '';
     const fmt = v => v == null ? '—' : Number(v).toLocaleString();
     const name = n => { const r = (this.rows || []).find(x => x.company_id === n.company_id); return r ? r.official_name : (n.account_name || '（会社を選ぶ）'); };
@@ -2961,7 +2965,7 @@ const TorihikisakiView = {
   creditExtraHtml(host) {
     if (!host || host.id !== 'tmk-fields' || this.view !== 'detail' || !this.detail) return '';
     const tcs = this.detail.credit_line_test || [];
-    const ns = (this.detail.notices || []).filter(n => n.kind !== '取引開始');
+    const ns = (this.detail.notices || []).filter(n => n.kind !== '取引開始' && this.noticeVisible(n)); // 試験の知らせは「テストのみ」のときだけ（2026-11-28）
     if (!tcs.length && !ns.length) return '';
     const fmt = v => v == null ? '—' : Number(v).toLocaleString();
     const nline = n => {
